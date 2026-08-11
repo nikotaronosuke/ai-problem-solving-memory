@@ -11,8 +11,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -20,17 +20,28 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "db:status": "supabase status",
+    "db:reset": "supabase db reset",
+    "db:migration:new": "supabase migration new",
+    "db:check": "tsx --env-file-if-exists=.env src/db/check-connection.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^22.19.2",
+    "@types/pg": "^8.21.0",
     "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.6.2",
+    "supabase": "^2.113.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.4",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
   }
 }
