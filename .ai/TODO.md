@@ -7,20 +7,41 @@ Updated: 2026-08-11
 Follow the private task breakdown:
 `nikotaronosuke/ai-problem-solving-memory-spec/docs/implementation/phase1-task-breakdown.md`
 
-### P1-01 — NEXT
+### P1-01 — DONE
 Public implementation repository foundation:
-- inspect current repository state
-- initialize TypeScript / Node.js implementation structure
-- choose/fix package manager
-- configure typecheck
-- configure lint
-- configure format
-- configure test runner
-- add `.env.example`
-- establish minimal `src / tests / db / docs` structure
-- verify secret hygiene
+- [x] inspect current repository state
+- [x] initialize TypeScript / Node.js implementation structure
+- [x] choose/fix package manager (npm, lockfile committed)
+- [x] configure typecheck (`npm run typecheck`)
+- [x] configure lint (`npm run lint`)
+- [x] configure format (`npm run format` / `npm run format:check`)
+- [x] configure test runner (`npm test`, Vitest)
+- [x] add `.env.example`
+- [x] establish minimal `src / tests / db / docs` structure
+- [x] verify secret hygiene
 
-### P1-02 onward
+Definition of Done verified: dependency install, typecheck, lint, format check and tests all succeed; no secrets in the repository.
+
+### P1-02 — DONE
+AI development operating files. Verified against the private task breakdown; satisfied by files that already existed, so no new operating files were added.
+
+- [x] `CLAUDE.md`
+- [x] `.ai/CURRENT.md`
+- [x] `.ai/DECISIONS.md`
+- [x] `.ai/TODO.md`
+
+`.ai/sessions/` is optional in the task breakdown and no current rule requires it, so it was not created.
+
+All five required rules have a corresponding statement in `CLAUDE.md`: read the source-of-truth spec and `.ai/` at session start; update CURRENT / TODO / DECISIONS at session end; do not settle a specification change in code alone; push only on explicit instruction; stop and confirm when a change would break the Memory product invariants.
+
+Definition of Done verified: a new AI session can establish its position from `CLAUDE.md`, `.ai/CURRENT.md` and `.ai/TODO.md`, with `docs/development.md` supplying the commands — no verbal explanation required.
+
+### P1-03 — NEXT implementation task
+Supabase / PostgreSQL connection and migration foundation. Not started.
+
+Note: `.env.example` currently documents `DATABASE_URL` as a commented placeholder only. Nothing in the code reads it yet.
+
+### P1-04 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:

@@ -33,3 +33,13 @@ Memory Server/API is the source of truth. AI-specific behavior belongs behind ad
 ## D-007 — Git operating rule
 
 AI agents must not push unless explicitly requested by the user. Destructive git operations require explicit approval.
+
+## D-008 — Development toolchain (P1-01)
+
+The implementation toolchain is fixed as: npm as package manager with a committed lockfile, TypeScript in strict mode, ESM with `NodeNext` module resolution, ESLint 9 flat config with type-aware rules, Prettier for formatting, and Vitest as the test runner.
+
+Verification commands are `npm run typecheck`, `npm run lint`, `npm run format:check` and `npm test`, aggregated as `npm run check`.
+
+Prettier does not format `README.md`, `CLAUDE.md` or `.ai/`. Those are hand-maintained prose edited by humans and AI sessions, and automated reformatting would create noise without benefit.
+
+`.gitattributes` fixes the working tree to LF so formatting checks behave identically on every platform.

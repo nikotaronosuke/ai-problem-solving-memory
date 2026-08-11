@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+package-lock.json
+
+# Hand-maintained prose. These are edited by humans and by AI sessions as
+# operating state, and are intentionally left out of automated reformatting.
+README.md
+CLAUDE.md
+.ai/
