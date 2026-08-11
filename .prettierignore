@@ -3,6 +3,11 @@ dist/
 coverage/
 package-lock.json
 
+# Supabase CLI working state. Generated, git-ignored via supabase/.gitignore,
+# and not ours to format.
+supabase/.temp/
+supabase/.branches/
+
 # Hand-maintained prose. These are edited by humans and by AI sessions as
 # operating state, and are intentionally left out of automated reformatting.
 README.md

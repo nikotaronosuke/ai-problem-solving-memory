@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-11
+Updated: 2026-08-12
 
 ## Current implementation state
 
@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 and P1-02 are complete. P1-03 has not been started.
+P1-01, P1-02 and P1-03 are complete. P1-04 has not been started.
 
 ## P1-01 — DONE
 
@@ -51,13 +51,39 @@ See `docs/development.md` for setup and command details.
 
 AI development operating files. Satisfied by `CLAUDE.md`, `.ai/CURRENT.md`, `.ai/DECISIONS.md` and `.ai/TODO.md`, which already existed and were verified against the private task breakdown. No new operating files were needed; `.ai/sessions/` is optional and was not created.
 
+## P1-03 — DONE
+
+Supabase / PostgreSQL connection and migration foundation. No domain schema — the database is reachable and migrations run, nothing more.
+
+Established:
+- Supabase CLI pinned as a devDependency (no global install); run through npm scripts
+- Local stack via Supabase CLI + Docker. No cloud project, no `login`, no `link`, no `db push`
+- `supabase/config.toml` committed; only the services this project uses are enabled. Auth, Storage, Realtime, Edge Runtime, local SMTP and analytics are off
+- `supabase/migrations/` is the schema source of truth. Baseline migration adds no schema on purpose
+- `pg` (node-postgres) with a connection pool for application access
+- `src/db/` is the database boundary: `config.ts` resolves configuration, `pool.ts` owns lifecycle, `health.ts` probes reachability. Importing any of them opens no connection
+- `DATABASE_URL` read only from the environment, validated where a connection is actually opened, so non-database code and tests run without it
+- Connection strings never reach an error message, log line or test fixture
+- While `NODE_ENV=test`, a non-local database host is refused
+
+Fixed commands:
+- `npm run supabase:start` / `npm run supabase:stop`
+- `npm run db:status`
+- `npm run db:reset` — rebuilds the local database from migrations
+- `npm run db:migration:new <name>`
+- `npm run db:check` — opens a pool, runs `select 1`, closes it
+
+Verified end to end: start → migration applied → `select 1` from the service → `db reset` → migrations reapplied → `select 1` again.
+
+Integration tests run against the local database when `DATABASE_URL` is set and skip cleanly when it is not.
+
 ## Immediate objective
 
-P1-03 — Supabase / PostgreSQL connection and migration foundation.
+P1-04 — shared enum / domain type definitions, consistent between application types and database constraints.
 
-Not started. There is no database code, no connection configuration and no migration in this repository yet. `.env.example` documents `DATABASE_URL` as a commented placeholder only, and nothing reads it.
+Not started. P1-04 and P1-05 can run in parallel once started.
 
-Two things to settle before implementing P1-03: whether a Supabase project already exists, and whether local development runs against Supabase CLI or Docker.
+Note for whoever picks this up: the baseline migration deliberately defines no schema. P1-04 is where the first real DDL lands.
 
 ## Module boundary reminder
 

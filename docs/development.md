@@ -6,6 +6,11 @@ Local setup and the fixed commands for this repository.
 
 - Node.js >= 22.12.0 (Node 24 is also supported)
 - npm (the package manager for this repository; `package-lock.json` is committed)
+- Docker, running. The local Supabase stack runs in containers, so starting it,
+  resetting the database and the integration tests all need a live Docker daemon.
+
+The Supabase CLI is a devDependency, not a global install. Every command below
+resolves it from `node_modules`.
 
 ## Setup
 
@@ -17,33 +22,89 @@ cp .env.example .env
 `.env` is git-ignored. `.env.example` contains placeholders only and must never
 hold real values.
 
+## Local database
+
+```bash
+npm run supabase:start   # start the local stack (first run pulls images)
+npm run db:status        # show local URLs, including the DB URL
+npm run supabase:stop    # stop the stack
+```
+
+Copy the `DB URL` printed by `npm run db:status` into `DATABASE_URL` in `.env`.
+That URL contains a password: keep it in `.env`, and never in a committed file,
+a doc or a commit message.
+
+Only the services this project uses are enabled in `supabase/config.toml`.
+Auth, Storage, Realtime, Edge Runtime, the local SMTP catcher and analytics are
+turned off — the Memory service talks to PostgreSQL directly, and owner
+identity is the Memory Server's own responsibility.
+
+> Docker publishes these ports on all interfaces, not just loopback. Stop the
+> stack with `npm run supabase:stop` when you are not using it.
+
+## Migrations
+
+Supabase migrations under `supabase/migrations/` are the source of truth for
+schema. They are plain SQL, applied in filename order.
+
+```bash
+npm run db:migration:new <name>   # create a timestamped migration file
+npm run db:reset                  # rebuild the local DB from scratch
+```
+
+`db:reset` drops the local database and replays every migration in order, which
+is how you verify a migration works on a clean database. Run it before relying
+on any schema change.
+
+There is no domain schema yet. The baseline migration establishes the pipeline
+only; Owner, Project, Environment, Problem, Event and Verification are designed
+from P1-04 onward.
+
+## Checking the database connection
+
+```bash
+npm run db:check
+```
+
+Opens a pool, runs `select 1`, prints the host and round-trip time, then closes
+the pool. It reports the host but never the connection string.
+
 ## Commands
 
-| Command                | Purpose                                         |
-| ---------------------- | ----------------------------------------------- |
-| `npm run dev`          | Run the entrypoint from TypeScript, with watch  |
-| `npm run build`        | Compile `src/` to `dist/`                       |
-| `npm start`            | Run the compiled entrypoint                     |
-| `npm run typecheck`    | Type-check `src/` and `tests/` without emitting |
-| `npm run lint`         | ESLint (type-aware rules enabled)               |
-| `npm run lint:fix`     | ESLint with autofix                             |
-| `npm run format`       | Prettier, writing changes                       |
-| `npm run format:check` | Prettier, verifying only                        |
-| `npm test`             | Vitest, single run                              |
-| `npm run test:watch`   | Vitest, watch mode                              |
-| `npm run check`        | typecheck + lint + format:check + test          |
+| Command                    | Purpose                                         |
+| -------------------------- | ----------------------------------------------- |
+| `npm run dev`              | Run the entrypoint from TypeScript, with watch  |
+| `npm run build`            | Compile `src/` to `dist/`                       |
+| `npm start`                | Run the compiled entrypoint                     |
+| `npm run typecheck`        | Type-check `src/` and `tests/` without emitting |
+| `npm run lint`             | ESLint (type-aware rules enabled)               |
+| `npm run lint:fix`         | ESLint with autofix                             |
+| `npm run format`           | Prettier, writing changes                       |
+| `npm run format:check`     | Prettier, verifying only                        |
+| `npm test`                 | Vitest, single run                              |
+| `npm run test:watch`       | Vitest, watch mode                              |
+| `npm run check`            | typecheck + lint + format:check + test          |
+| `npm run supabase:start`   | Start the local Supabase stack                  |
+| `npm run supabase:stop`    | Stop the local Supabase stack                   |
+| `npm run db:status`        | Show local stack URLs                           |
+| `npm run db:reset`         | Rebuild the local DB from migrations            |
+| `npm run db:migration:new` | Create a new migration file                     |
+| `npm run db:check`         | Verify the service can reach PostgreSQL         |
 
 Run `npm run check` before reporting a task complete.
 
 ## Layout
 
-| Path     | Contents                                               |
-| -------- | ------------------------------------------------------ |
-| `src/`   | Service implementation                                 |
-| `tests/` | Automated tests, mirroring `src/`                      |
-| `db/`    | Schema and migrations (from P1-03)                     |
-| `docs/`  | Public implementation documentation                    |
-| `.ai/`   | Implementation state for AI sessions — see `CLAUDE.md` |
+| Path                   | Contents                                               |
+| ---------------------- | ------------------------------------------------------ |
+| `src/`                 | Service implementation                                 |
+| `src/db/`              | Database access boundary — importing it opens nothing  |
+| `tests/`               | Automated tests, mirroring `src/`                      |
+| `supabase/migrations/` | Schema migrations, in filename order                   |
+| `supabase/config.toml` | Local stack configuration                              |
+| `db/`                  | Database notes                                         |
+| `docs/`                | Public implementation documentation                    |
+| `.ai/`                 | Implementation state for AI sessions — see `CLAUDE.md` |
 
 ## Conventions
 

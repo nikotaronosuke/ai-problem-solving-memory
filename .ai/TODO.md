@@ -1,6 +1,6 @@
 # TODO
 
-Updated: 2026-08-11
+Updated: 2026-08-12
 
 ## NOW — Implementation Phase 1
 
@@ -36,12 +36,28 @@ All five required rules have a corresponding statement in `CLAUDE.md`: read the 
 
 Definition of Done verified: a new AI session can establish its position from `CLAUDE.md`, `.ai/CURRENT.md` and `.ai/TODO.md`, with `docs/development.md` supplying the commands — no verbal explanation required.
 
-### P1-03 — NEXT implementation task
-Supabase / PostgreSQL connection and migration foundation. Not started.
+### P1-03 — DONE
+Supabase / PostgreSQL connection and migration foundation.
 
-Note: `.env.example` currently documents `DATABASE_URL` as a commented placeholder only. Nothing in the code reads it yet.
+- [x] PostgreSQL connected as the persistent source of truth
+- [x] Supabase usable as the first-choice MVP environment (local stack, no cloud project)
+- [x] DB connection settings read only from the environment
+- [x] migration creation and application fixed (`supabase/migrations/`, Supabase CLI)
+- [x] local and test environments depend on no production secret
+- [x] Supabase CLI pinned as a devDependency, not a global install
 
-### P1-04 onward
+Definition of Done verified: the service reaches the database (`select 1`), `db reset` replays every migration onto a clean database and the service reaches it again, and no connection secret is in the repository.
+
+Deliberately not done here: no domain schema. The baseline migration adds none.
+
+### P1-04 — NEXT implementation task
+Shared enum / domain type definitions, kept consistent between application types and database constraints. Not started.
+
+Depends on P1-03, which is satisfied. P1-05 (owner boundary and minimal auth model) can proceed in parallel.
+
+This is where the first real DDL lands.
+
+### P1-05 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:
@@ -50,6 +66,12 @@ Phase 1 order:
 ## BLOCKED
 
 None currently documented.
+
+## SETTLED — local stack network exposure
+
+Docker publishes the local Supabase ports on all interfaces, not only loopback. Enabling fewer services reduced the published ports to three, but the binding address is a Docker daemon setting, not a repository one.
+
+Decided: not a blocker. The Docker daemon bind configuration is left unchanged, and the operating rule is to stop the local stack when it is not in use (`npm run supabase:stop`). Revisit only if the stack ever needs to run on an untrusted network.
 
 ## LATER
 

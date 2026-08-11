@@ -4,8 +4,12 @@
  * This is deliberately plain, deterministic code: reading and validating
  * configuration must never depend on model inference.
  *
- * Only values the current code actually uses are read here. Connection
- * settings for PostgreSQL / Supabase arrive with P1-03.
+ * `DATABASE_URL` is read separately from `loadEnv`, because it is required only
+ * by code that actually opens a database connection. Configuration that does
+ * not touch the database must stay usable without it.
+ *
+ * A connection string carries credentials. Nothing in this module may put its
+ * value into an error message, a log line or a test snapshot.
  */
 
 export const NODE_ENVS = ['development', 'test', 'production'] as const;
@@ -69,4 +73,84 @@ export function loadEnv(source: EnvSource = process.env): AppEnv {
     nodeEnv: readEnum('NODE_ENV', source['NODE_ENV'], NODE_ENVS, 'development'),
     logLevel: readEnum('LOG_LEVEL', source['LOG_LEVEL'], LOG_LEVELS, 'info'),
   };
+}
+
+/** Name of the variable holding the PostgreSQL connection string. */
+export const DATABASE_URL_VAR = 'DATABASE_URL';
+
+const POSTGRES_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
+
+/** Raised when a required environment variable is absent. */
+export class MissingEnvError extends Error {
+  readonly variable: string;
+
+  constructor(variable: string) {
+    super(`${variable} is not set. See .env.example.`);
+    this.name = 'MissingEnvError';
+    this.variable = variable;
+  }
+}
+
+/**
+ * Raised when a connection string is present but unusable.
+ *
+ * The offending value is never included: it holds credentials.
+ */
+export class InvalidConnectionStringError extends Error {
+  readonly variable: string;
+
+  constructor(variable: string, reason: string) {
+    super(`${variable} is not a usable PostgreSQL connection string: ${reason}.`);
+    this.name = 'InvalidConnectionStringError';
+    this.variable = variable;
+  }
+}
+
+/**
+ * Reads `DATABASE_URL` if it is set, without requiring it.
+ *
+ * Use this where a missing database is an acceptable state — for example
+ * deciding whether an integration test can run.
+ */
+export function readDatabaseUrl(source: EnvSource = process.env): string | undefined {
+  const raw = source[DATABASE_URL_VAR];
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  const value = raw.trim();
+  return value === '' ? undefined : value;
+}
+
+/**
+ * Reads `DATABASE_URL` and validates its shape.
+ *
+ * Use this at the point a database connection is actually opened. Throws when
+ * the variable is absent or malformed; neither error exposes the value.
+ */
+export function requireDatabaseUrl(source: EnvSource = process.env): string {
+  const value = readDatabaseUrl(source);
+  if (value === undefined) {
+    throw new MissingEnvError(DATABASE_URL_VAR);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new InvalidConnectionStringError(DATABASE_URL_VAR, 'it is not a valid URL');
+  }
+
+  if (!POSTGRES_PROTOCOLS.has(parsed.protocol)) {
+    throw new InvalidConnectionStringError(
+      DATABASE_URL_VAR,
+      'the scheme must be postgres:// or postgresql://',
+    );
+  }
+
+  if (parsed.hostname === '') {
+    throw new InvalidConnectionStringError(DATABASE_URL_VAR, 'it has no host');
+  }
+
+  return value;
 }
