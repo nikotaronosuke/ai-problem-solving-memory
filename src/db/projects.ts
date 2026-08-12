@@ -14,12 +14,8 @@
  */
 
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
-import {
-  generateProjectId,
-  normaliseOptionalText,
-  toProjectName,
-  type ProjectId,
-} from '../domain/project.js';
+import { generateProjectId, toProjectName, type ProjectId } from '../domain/project.js';
+import { normaliseOptionalText } from '../domain/text.js';
 import type { DatabasePool } from './pool.js';
 
 export interface ProjectRecord {

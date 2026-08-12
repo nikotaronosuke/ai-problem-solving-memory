@@ -161,3 +161,37 @@ The composite key also guarantees the owner exists transitively, since `projects
 Deleting a project that still has environments is refused (`on delete restrict`), following D-017. The full delete lifecycle is settled in P1-11.
 
 A consequence worth keeping: creating an environment against an unknown project and against another owner's project both fail on the same missing pair, so the outcome cannot be used to discover whether someone else's project id is real.
+
+## D-022 — Problem identity and required relations (P1-08)
+
+`problem_id` is an application-issued UUID with no database default, consistent with the entities before it.
+
+`environment_id` is required. A Problem always occurred under some set of conditions, and when those conditions have not been captured the Environment carries an empty snapshot — which P1-07 already allows. Making the column nullable would create a second way to express "not known yet", and the two would drift.
+
+Owner, project and environment are checked as one triple by a composite foreign key to `environments (owner_id, project_id, environment_id)`, extending D-021 by one level. This required a unique key on that triple, added in the P1-08 migration without modifying P1-07. The environment's existence transitively guarantees the project's and the owner's, so no further foreign key is needed, and deleting an environment a Problem depends on is refused.
+
+## D-023 — Problem text fields stay free-form in the MVP (P1-08)
+
+`symptoms` is required `text`, not an array and not a structured shape. Several symptoms read perfectly well in prose, and fixing a symptom taxonomy now would commit to categories the retrieval work has not justified. Search-oriented features are derived separately in a later phase, so the stored Memory keeps the meaningful description rather than a parsed form.
+
+`title` is required and non-blank: a Problem with no title cannot be recognised later, which defeats the point of recording it. Both are enforced in the application and by database CHECKs.
+
+`problem_domain`, `suspected_boundary` and `source_ai` are nullable free-form text. Not knowing the domain or the suspected boundary at the start of an investigation is the normal case, and `source_ai` is nullable and unconstrained because manual and imported entries exist and no vendor's identifier shape should be baked in.
+
+## D-024 — Problem initial values are set by the database, not the caller (P1-08)
+
+A new Problem starts `INVESTIGATING`, confidence `LOW`, freshness `CURRENT`, reads and writes enabled, not suppressed, not important, `version` 1, with `fix_kind` null. These come from column defaults, and the creation input has no field for any of them.
+
+Confidence starts at the lowest value because a new Problem has not been verified; assuming otherwise would let unverified Memory look trustworthy. `fix_kind` is null because at the start there is no fix, and `ROOT_FIX` / `WORKAROUND` is a separate axis from status rather than a later stage of it.
+
+`importance` is a boolean. It is the user's "this matters" flag and is completely independent of confidence — important does not mean correct, and correct does not mean important. The specification gives no basis for a score or a scale, so none is invented; a wider type can be introduced by migration if evidence appears.
+
+`version` exists from the start with a `>= 1` check so that Phase 2 can add optimistic locking without a backfill. Nothing increments it yet.
+
+`updated_at` exists but has no trigger. Phase 2's update path sets it and `version` explicitly, so a write that forgets to is a visible bug rather than something a trigger quietly papers over.
+
+## D-025 — VERIFIED enforcement and locking are Phase 2 (P1-08)
+
+P1-08 establishes storage only. The schema does not attempt to make a Verification-less `VERIFIED` impossible at the database level, and there is no update path.
+
+The state transition rules, including that `VERIFIED` requires at least one successful Verification, belong to P2-06, and optimistic locking to P2-07. Partially enforcing them here would produce a rule split across two layers with neither owning it.

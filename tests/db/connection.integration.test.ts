@@ -55,11 +55,12 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
       "select table_name from information_schema.tables where table_schema = 'public'",
     );
 
-    // P1-05 adds `owners`, P1-06 `projects`, P1-07 `environments`. Problem,
-    // Event, Verification and Relation are designed from P1-08 onward.
+    // P1-05 adds `owners`, P1-06 `projects`, P1-07 `environments`, P1-08
+    // `problems`. Event, Verification and Relation are from P1-09 onward.
     expect(result.rows.map((row) => row.table_name).sort()).toEqual([
       'environments',
       'owners',
+      'problems',
       'projects',
     ]);
   });
