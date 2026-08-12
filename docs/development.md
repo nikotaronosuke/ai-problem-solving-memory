@@ -58,11 +58,14 @@ local database and replays every migration in order, which is how you verify a
 migration works on a clean database. Run `db:reset` before relying on any
 schema change.
 
-So far the migrations establish the pipeline, the shared value sets
-(PostgreSQL DOMAINs over `text` with CHECK constraints, mirroring
-`src/domain/enums.ts`) and the `owners` table. Project, Environment, Problem,
-Event and Verification are designed from P1-06 onward, and will reuse those
-DOMAINs as column types and reference `owners.owner_id`.
+The migrations establish the pipeline, the shared value sets (PostgreSQL
+DOMAINs over `text` with CHECK constraints, mirroring `src/domain/enums.ts`),
+the six tables — `owners`, `projects`, `environments`, `problems`, `events`,
+`verifications` — and the Phase 1 integrity and index set.
+
+Every foreign key deletes with `RESTRICT`, so a parent with children cannot be
+removed. That prevents implicit deletion, not deletion: a deliberate removal
+works from the leaves up.
 
 Changing an allowed value means changing both sides: the tuple in
 `src/domain/enums.ts` and a new migration. `tests/db/enums.integration.test.ts`
@@ -131,6 +134,7 @@ Run `npm run check` before reporting a task complete.
 | `src/domain/`          | Domain types, shared value sets and owner identity     |
 | `src/owner/`           | Owner context resolution and local bootstrap           |
 | `src/db/`              | Database access boundary — importing it opens nothing  |
+| `src/repository/`      | Owner-scoped storage seam the service layer works with |
 | `tests/`               | Automated tests, mirroring `src/`                      |
 | `supabase/migrations/` | Schema migrations, in filename order                   |
 | `supabase/config.toml` | Local stack configuration                              |
