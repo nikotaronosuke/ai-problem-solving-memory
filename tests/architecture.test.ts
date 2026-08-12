@@ -30,9 +30,24 @@ async function readModules(directory: string): Promise<{ path: string; source: s
   );
 }
 
-/** Module specifiers a file imports from, ignoring type-only or not. */
+/**
+ * Module specifiers a file imports from, however it spells them.
+ *
+ * Static imports in either quote style, and dynamic `import()`. A detector
+ * that only understood one form would report a clean result for a violation
+ * written in the other, which is worse than not checking.
+ */
 function importsOf(source: string): string[] {
-  return [...source.matchAll(/from\s+'([^']+)'/g)].map((match) => match[1] ?? '');
+  const staticImports = [...source.matchAll(/from\s+["']([^"']+)["']/g)];
+  const dynamicImports = [...source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)];
+  const bareSideEffect = [...source.matchAll(/^\s*import\s+["']([^"']+)["']/gm)];
+
+  return [...staticImports, ...dynamicImports, ...bareSideEffect].map((match) => match[1] ?? '');
+}
+
+/** Whether a specifier reaches the database driver or a vendor SDK. */
+function isDriverOrVendor(specifier: string): boolean {
+  return specifier === 'pg' || specifier.startsWith('pg/') || specifier.startsWith('@supabase');
 }
 
 describe('domain layer', () => {
@@ -118,6 +133,107 @@ describe('repository layer', () => {
     expect(exported).not.toContain('DatabasePool');
     expect(exported).not.toContain('PoolClient');
     expect(exported).toContain('DatabaseExecutor');
+  });
+});
+
+describe('transport layer', () => {
+  it('depends on no driver, vendor or database module', async () => {
+    const modules = await readModules(join(SRC, 'http'));
+    expect(modules.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // Transport talks to application services. Reaching past them would
+        // make what a client learns a consequence of how the driver answers.
+        if (isDriverOrVendor(specifier) || specifier.includes('/db/')) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('writes no SQL', async () => {
+    const modules = await readModules(join(SRC, 'http'));
+
+    const offenders = modules
+      .filter((module) =>
+        /\b(select\s|insert\s+into|update\s+public\.|delete\s+from)\b/i.test(module.source),
+      )
+      .map((module) => module.path);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('reaches storage only through the application layer', async () => {
+    const modules = await readModules(join(SRC, 'http'));
+
+    const internalTargets = new Set<string>();
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        if (specifier.startsWith('.')) {
+          internalTargets.add(specifier.replace(/^\.+\//, '').replace(/\.js$/, ''));
+        }
+      }
+    }
+
+    // Whatever else it imports, the way out of transport is `app/`.
+    expect([...internalTargets].some((target) => target.startsWith('app/'))).toBe(true);
+    expect([...internalTargets].some((target) => target.startsWith('repository/'))).toBe(false);
+  });
+});
+
+describe('application layer', () => {
+  it('imports no driver or vendor SDK directly', async () => {
+    const modules = await readModules(join(SRC, 'app'));
+    expect(modules.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        if (isDriverOrVendor(specifier)) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('writes no SQL, leaving that to the database layer', async () => {
+    const modules = await readModules(join(SRC, 'app'));
+
+    const offenders = modules
+      .filter((module) =>
+        /\b(select\s|insert\s+into|update\s+public\.|delete\s+from)\b/i.test(module.source),
+      )
+      .map((module) => module.path);
+
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('import detector', () => {
+  it('finds a specifier however it is written', () => {
+    const sample = [
+      "import a from 'single';",
+      'import b from "double";',
+      "const c = await import('dynamic-single');",
+      'const d = await import("dynamic-double");',
+      "import 'side-effect';",
+    ].join('\n');
+
+    // The detector is the thing every other test in this file relies on, so
+    // its blind spots would be invisible failures elsewhere.
+    expect(importsOf(sample).sort()).toEqual([
+      'double',
+      'dynamic-double',
+      'dynamic-single',
+      'side-effect',
+      'single',
+    ]);
   });
 });
 

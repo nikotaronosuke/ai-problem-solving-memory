@@ -21,6 +21,15 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 export interface AppEnv {
   readonly nodeEnv: NodeEnv;
   readonly logLevel: LogLevel;
+  /**
+   * Interface the HTTP server binds to.
+   *
+   * Loopback by default. This is a personal server holding one person's
+   * memory, so reaching the network is a decision someone makes explicitly,
+   * not something that happens because a default was convenient.
+   */
+  readonly host: string;
+  readonly port: number;
 }
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -62,6 +71,41 @@ function readEnum<T extends string>(
   return match;
 }
 
+/** Loopback, so an unconfigured server is not reachable from the network. */
+export const DEFAULT_HOST = '127.0.0.1';
+export const DEFAULT_PORT = 3000;
+
+function readHost(variable: string, raw: string | undefined): string {
+  if (raw === undefined) {
+    return DEFAULT_HOST;
+  }
+
+  const value = raw.trim();
+  if (value === '') {
+    // Blank is refused rather than defaulted: an empty HOST is far more likely
+    // to be a broken deployment script than a request for loopback.
+    throw new EnvValidationError(variable, raw, ['a non-empty host or IP address']);
+  }
+
+  return value;
+}
+
+function readPort(variable: string, raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') {
+    return DEFAULT_PORT;
+  }
+
+  const value = raw.trim();
+  // Number() would accept '3000.5', '0x0bb8' and ' 3e3 '. A port is digits.
+  const port = /^\d+$/.test(value) ? Number.parseInt(value, 10) : Number.NaN;
+
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new EnvValidationError(variable, raw, ['an integer between 1 and 65535']);
+  }
+
+  return port;
+}
+
 /**
  * Reads the supported environment variables, applying defaults.
  *
@@ -72,6 +116,8 @@ export function loadEnv(source: EnvSource = process.env): AppEnv {
   return {
     nodeEnv: readEnum('NODE_ENV', source['NODE_ENV'], NODE_ENVS, 'development'),
     logLevel: readEnum('LOG_LEVEL', source['LOG_LEVEL'], LOG_LEVELS, 'info'),
+    host: readHost('HOST', source['HOST']),
+    port: readPort('PORT', source['PORT']),
   };
 }
 
