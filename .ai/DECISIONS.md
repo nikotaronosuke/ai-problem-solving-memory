@@ -233,3 +233,43 @@ No URL type, no provider-specific format, and no structure for multiple referenc
 Events are listed by `created_at` ascending, with `event_id` as a tie-breaker.
 
 Timestamps can collide, and without a second key the order of colliding rows is whatever the database happens to return, which can differ between reads. The tie-breaker makes repeated reads agree. No sequence column is added: it is not in the specification, and the existing keys are enough.
+
+Verifications follow the same rule, ordered by `created_at` then `verification_id`.
+
+## D-030 — Verification is an entity independent of Event (P1-10)
+
+A Verification is not the fix. It is the record of something actually checking whether the state holds, and it is a separate entity from the FIX Event that describes the change.
+
+It attaches to the Problem directly, never to an Event. There is no `event_id` column, and the verification module imports nothing from the event module. A Problem may have a Verification and no Events at all, and that record still means exactly what it says — which is the point of separating them.
+
+This follows the product invariant that an assistant reporting "it works" is not evidence that it does. A fix and a confirmation are different claims, and collapsing them would let the first pass as the second.
+
+`verification_id` is an application-issued UUID with no database default. Verifications are append-only, like Events: no `updated_at`, no trigger, no update path. A later check is another Verification.
+
+## D-031 — Verification result is a boolean (P1-10)
+
+`result` is `boolean not null`. True means the check was carried out and confirmed the state; false means it was carried out and did not.
+
+It is not free text, because P2-06 has to determine mechanically whether at least one successful Verification exists before allowing a Problem to become `VERIFIED`. Prose cannot be judged that way without inference, and this is precisely a decision that should not depend on it.
+
+The account of what happened lives in `summary`, which is required and non-blank. A failed check is kept rather than discarded: it is evidence too.
+
+`verified_by` is nullable free-form text naming who or what performed the check — a person, a test runner, CI, a build, a device operator, an assistant. It is not an enum and not tied to any vendor. Null when unknown, because a plausible-looking placeholder would misrepresent the evidence. It is distinct from `verification_type`, which is how the check was done, and from `evidence_ref`, which is where to look.
+
+`evidence_ref` follows D-028 unchanged: a reference to material, never the material.
+
+## D-032 — client_event_id namespaces are per table (P1-10)
+
+Verification reuses the shared `ClientEventId` type and the same `(owner_id, client_event_id)` uniqueness, but the constraint lives on the verifications table.
+
+Event and Verification appends are separate logical writes, so the same value may exist once in each. Merging the namespaces would make a Verification retry collide with an unrelated Event, which is a different failure than the one the identifier is meant to prevent. In practice an adapter issues a distinct id per write.
+
+If a single identifier spanning every kind of write is ever needed — an operation or request id — it will be added as its own concept rather than by overloading this column.
+
+`ProblemNotAvailableError` and `DuplicateClientEventIdError` live in `src/db/errors.ts`, shared by both append paths so that neither module depends on the other.
+
+## D-033 — Recording a Verification does not change Problem status (P1-10)
+
+Appending a Verification with `result = true` does not move the Problem to `VERIFIED`, and there is no trigger preventing `VERIFIED` without one.
+
+Deciding a Problem is solved is a domain judgement, made in P2-06 after checking that a successful Verification exists. Making it a side effect of a write would put the rule in the storage layer, where it could not account for the rest of the transition rules, and splitting it across both layers would leave neither owning it.

@@ -57,13 +57,17 @@ export {
   type ProblemRecord,
 } from './problems.js';
 
+// Raised by both append paths.
+export { DuplicateClientEventIdError, ProblemNotAvailableError } from './errors.js';
+
 // Append and list only. Events are append-only, so no update or delete path
 // is offered.
+export { appendEvent, listEvents, type AppendEventInput, type EventRecord } from './events.js';
+
+// Verifications attach to a Problem, not to an Event, and are append-only too.
 export {
-  appendEvent,
-  listEvents,
-  DuplicateClientEventIdError,
-  ProblemNotAvailableError,
-  type AppendEventInput,
-  type EventRecord,
-} from './events.js';
+  appendVerification,
+  listVerifications,
+  type AppendVerificationInput,
+  type VerificationRecord,
+} from './verifications.js';
