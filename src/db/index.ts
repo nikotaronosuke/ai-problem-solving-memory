@@ -56,3 +56,14 @@ export {
   type CreateProblemInput,
   type ProblemRecord,
 } from './problems.js';
+
+// Append and list only. Events are append-only, so no update or delete path
+// is offered.
+export {
+  appendEvent,
+  listEvents,
+  DuplicateClientEventIdError,
+  ProblemNotAvailableError,
+  type AppendEventInput,
+  type EventRecord,
+} from './events.js';
