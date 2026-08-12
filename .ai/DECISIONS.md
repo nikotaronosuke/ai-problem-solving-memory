@@ -195,3 +195,41 @@ Confidence starts at the lowest value because a new Problem has not been verifie
 P1-08 establishes storage only. The schema does not attempt to make a Verification-less `VERIFIED` impossible at the database level, and there is no update path.
 
 The state transition rules, including that `VERIFIED` requires at least one successful Verification, belong to P2-06, and optimistic locking to P2-07. Partially enforcing them here would produce a rule split across two layers with neither owning it.
+
+## D-026 — Events are append-only (P1-09)
+
+`event_id` is an application-issued UUID with no database default, consistent with the entities before it.
+
+An Event records what was true at the moment it happened. There is no update path, no `updated_at`, no trigger and no application delete path. A later correction is another Event — that is what `USER_CORRECTION` exists for — so the record of how understanding changed is preserved rather than overwritten. Dead ends are kept for the same reason: knowing which direction did not work is half of what makes past experience reusable.
+
+Owner and problem are checked as one pair by a composite foreign key to `problems (owner_id, problem_id)`, following D-021. This required a unique key on that pair, added in the P1-09 migration without modifying P1-08. Deleting a Problem that still has events is refused.
+
+`summary` is required and non-blank: an Event with nothing to say records that something occurred without recording what. `result`, `reason` and `source_ai` are nullable free-form text, because not every kind of Event has a result or a reason, and manual, imported and user-corrected entries exist alongside AI-recorded ones.
+
+## D-027 — Retry protection is keyed on (owner_id, client_event_id) (P1-09)
+
+`client_event_id` is a required UUID the client mints before its first attempt and reuses if that attempt has to be retried. It is not optional: anything that can record a write can generate a UUID first, including manual entry, so making it optional would only lose the protection.
+
+The append path never generates one itself. An id minted per attempt would be different on every retry and protect nothing.
+
+Uniqueness is `(owner_id, client_event_id)`:
+- Not per Problem, because a retry that lands against a different Problem is still the same client write and must not register twice.
+- Not global, because that would couple separate owners' identifier namespaces for no benefit; two owners may independently generate the same value.
+
+`ClientEventId` is a shared domain type rather than one per entity, since Verification writes need exactly the same guarantee.
+
+P1-09 refuses a duplicate. Turning a duplicate into a replay of the original result — so a retry becomes a no-op rather than an error — is P2-04.
+
+## D-028 — evidence_ref is a provider-independent free-form reference (P1-09)
+
+`evidence_ref` is nullable text holding a pointer to supporting material: a repository path, a commit, an issue or PR, a test name, where a log was kept, an official document, a note about a device check.
+
+It is a reference, not the material. Events are not a home for raw conversations, raw logs or code dumps, and widening this column would quietly turn them into one.
+
+No URL type, no provider-specific format, and no structure for multiple references. Which of those shapes is needed is not yet known, and first-class structure can be introduced when a real need shows what it should be.
+
+## D-029 — Event listing order is stable (P1-09)
+
+Events are listed by `created_at` ascending, with `event_id` as a tie-breaker.
+
+Timestamps can collide, and without a second key the order of colliding rows is whatever the database happens to return, which can differ between reads. The tie-breaker makes repeated reads agree. No sequence column is added: it is not in the specification, and the existing keys are enough.
