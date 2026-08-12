@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-12 are complete. P1-13 has not been started.
+P1-01 through P1-13 are complete. P1-14 has not been started.
 
 ## P1-01 — DONE
 
@@ -232,16 +232,31 @@ Established:
 
 Architecture is checked, not assumed. `tests/architecture.test.ts` verifies that `src/domain/` imports no driver, storage or vendor module and contains no SQL; that the repository writes no SQL and imports no driver; that its public surface exposes no pool or client type; and that only `db/config.ts`, `db/executor.ts` and `db/pool.ts` name `pg` at all.
 
+## P1-13 — DONE
+
+The Phase 1 integration test. No source change, no migration, no new behaviour — `src/` is untouched.
+
+`tests/integration/phase1.integration.test.ts` follows one problem from first suspicion to confirmed fix: owner context, Project, Environment, Problem, then HYPOTHESIS → ATTEMPT → DEAD_END → FIX events, a successful Verification, and a re-read of everything from the database rather than reuse of the returned objects.
+
+Every step of the normal path goes through `MemoryRepository`. Raw SQL appears only in three helpers at the bottom of the file — two constraint probes and cleanup — and never in the scenario itself.
+
+The negative cases all hold: another owner cannot read the Project, Environment, Problem, events or verifications; cannot append an Event or Verification to the Problem, and gets the same error as for a Problem that does not exist; a replayed `client_event_id` is refused with nothing written; an event type outside the value set is refused by the database DOMAIN; and an event against a nonexistent Problem is refused by the foreign key.
+
+The boundary from P1-10 holds under a full flow: after a successful Verification the Problem is still `INVESTIGATING` at version 1. Nothing in Phase 1 moves it to `VERIFIED`.
+
+The fixture is self-contained. It generates its own owner every run, never touches the developer's owner or anything a previous run left, and removes only what it created, leaf to root. Verified by running it against a database freshly reset with no bootstrap owner present, after which every table was empty again.
+
 ## Immediate objective
 
-P1-13 — the Phase 1 integration test.
+P1-14 — documentation and the Phase 1 completion review.
 
-Not started. One scenario end to end: establish an owner context, create Project, Environment and Problem, append HYPOTHESIS, ATTEMPT, DEAD_END and FIX events, append a Verification, then re-read everything within owner scope.
+Not started. This closes the phase.
 
 Notes for whoever picks this up:
-- The required negative cases are: another owner cannot read it, another owner cannot append to it, a duplicate `client_event_id` is refused, an invalid enum value is refused, and a foreign key violation is refused
-- It must be reproducible from a clean database, so it needs to create its own owner rather than relying on the developer's
-- `tests/repository/memory-repository.integration.test.ts` already covers the repository surface; P1-13 is the whole-phase scenario, not a repeat of it
+- Add the minimum needed to `README.md` about how the implementation currently works — P1-01 deliberately left the README alone for this task
+- Update `.ai/CURRENT.md` and `.ai/TODO.md` to a Phase 2 starting state, and record any Phase 1 decisions not yet written down
+- Re-run migrations, tests, typecheck and lint; check for secrets; review `git diff` and `git status`
+- Then check the Phase 1 Definition of Done in the private breakdown item by item before declaring the phase complete
 
 ## Module boundary reminder
 

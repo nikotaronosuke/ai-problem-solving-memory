@@ -342,3 +342,11 @@ The dependency direction is domain ← service/API ← repository ← db ← Pos
 It verifies that `src/domain/` imports nothing from `pg`, Supabase, `src/db/` or `src/repository/` and contains no SQL; that the repository writes no SQL and imports no driver; that the repository's public surface exposes no pool or client type; and that `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
 A layering rule that is only written down erodes quietly. This one fails the build instead.
+
+## D-041 — Integration tests are self-contained and repository-driven (P1-13)
+
+The Phase 1 scenario exercises the normal path entirely through `MemoryRepository`. Raw SQL is confined to test-only helpers: probing constraints the repository cannot express — an invalid enum value, a foreign key violation — and cleaning up afterwards.
+
+That split is the point. Reaching into the database for a step the application would perform through the repository would test the schema while claiming to test the flow, and the two can drift apart without anyone noticing.
+
+Fixtures generate their own owner on every run, depend on no bootstrap owner or previous run, and remove only what they created, leaf to root. A test that assumed an empty database or a particular developer's owner id would pass on one machine and fail on another, which is worse than not having it.
