@@ -26,16 +26,59 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 
 ## Current status
 
-上流設計の Phase 0〜4 が完了しました。
+実装 Phase 1（保存基盤）が完了しました。
 
-- Phase 0: 基本原則
-- Phase 1: 利用シナリオ・UX
-- Phase 2: データ設計
-- Phase 3: 複数AI連携設計
-- Phase 4: 技術構成・MVP実装計画
+現時点で動作するもの:
 
-次は、各Phaseを横断した実装前の最終仕様整理を行い、その後MVP実装へ進む予定です。
+- TypeScript / Node.js のサービス基盤
+- PostgreSQL への migration 基盤（ローカル開発は Supabase CLI + Docker）
+- owner 単位の所有境界。すべてのデータが owner scope を持ち、他 owner のデータへは到達できません
+- Project / Environment / Problem の保存
+- Event の append-only 記録（HYPOTHESIS / ATTEMPT / DEAD_END / DISCOVERY / FIX / USER_CORRECTION）
+- Verification を Event とは独立した検証記録として保存
+- owner scope を固定した Repository 境界
+- 上記を1本の流れとして通す統合テスト
 
-MVPでは、問題・試行・dead-end・解決・検証の記録、プロジェクト横断の類似Memory検索、複数AIからの共通Memory利用を中心に検証します。
+現時点では、まだ HTTP API も AI 連携もありません。保存基盤だけの状態です。
+
+次は Phase 2 で、Memory の中核操作を HTTP/JSON API として成立させます。
 
 詳細な内部仕様は現時点では非公開です。
+
+## Development
+
+必要なもの:
+
+- Node.js 22.12 以上
+- npm
+- Docker（ローカルの PostgreSQL をコンテナで動かすため）
+
+```bash
+npm install
+```
+
+`.env.example` を `.env` としてコピーします（Windows なら手動コピーでも構いません）。
+
+```bash
+cp .env.example .env
+```
+
+ローカルスタックを起動し、接続情報を確認します。
+
+```bash
+npm run supabase:start
+npm run db:status
+```
+
+`db:status` が表示する DB URL を `.env` の `DATABASE_URL` に設定し、`MEMORY_OWNER_ID` には自分用の UUID を設定します。
+
+```bash
+npm run db:reset          # migration をクリーンな DB へ適用
+npm run owner:bootstrap   # MEMORY_OWNER_ID の owner を作成
+npm run check             # typecheck + lint + format + test
+npm run build
+```
+
+使わないときは `npm run supabase:stop` で停止してください。
+
+コマンド一覧・構成・規約は [docs/development.md](docs/development.md) を参照してください。
