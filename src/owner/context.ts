@@ -12,7 +12,7 @@
  * anything here.
  */
 
-import { createOwnerContext, toOwnerId, type OwnerContext } from '../domain/owner.js';
+import { toOwnerId, type OwnerContext, type OwnerId } from '../domain/owner.js';
 import { findOwnerRecord } from '../db/owners.js';
 import type { EnvSource } from '../config/env.js';
 import type { DatabasePool } from '../db/pool.js';
@@ -37,6 +37,17 @@ export class OwnerContextError extends Error {
     this.name = 'OwnerContextError';
     this.reason = reason;
   }
+}
+
+/**
+ * Asserts a context for an owner already confirmed to exist.
+ *
+ * Not exported: this is the single point where a context comes into being,
+ * and it sits directly under the existence check below so the two cannot be
+ * separated. Everything else receives a context rather than making one.
+ */
+function establishOwnerContext(ownerId: OwnerId): OwnerContext {
+  return { ownerId } as OwnerContext;
 }
 
 /** Reads the configured owner id without validating or checking it. */
@@ -87,5 +98,5 @@ export async function resolveOwnerContext(
     );
   }
 
-  return createOwnerContext(ownerId);
+  return establishOwnerContext(ownerId);
 }
