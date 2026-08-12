@@ -185,15 +185,26 @@ Definition of Done verified: all ten operations are callable through the reposit
 
 Deliberately not done here: no list/update/delete/search, no Relation, UsageLog or ChangeLog, no transaction helper, no HTTP API, no migration.
 
-### P1-13 — NEXT implementation task
-Phase 1 integration test. Not started.
+### P1-13 — DONE
+Phase 1 integration test.
 
-Depends on P1-12, which is satisfied. One scenario end to end — owner context, Project, Environment, Problem, HYPOTHESIS/ATTEMPT/DEAD_END/FIX events, Verification, then re-read in owner scope — plus the negative cases: cross-owner read, cross-owner append, duplicate `client_event_id`, invalid enum, foreign key violation.
+- [x] all ten required steps, in `tests/integration/phase1.integration.test.ts`
+- [x] normal path entirely through `MemoryRepository`; raw SQL confined to constraint probes and cleanup
+- [x] cross-owner read refused
+- [x] cross-owner Event and Verification append refused, indistinguishably from an unknown problem
+- [x] duplicate `client_event_id` refused, with nothing written
+- [x] invalid enum refused by the database DOMAIN
+- [x] foreign key violation refused
+- [x] reproducible from a clean database, with a self-contained fixture
 
-It must be reproducible from a clean database.
+Definition of Done verified: the scenario ran against a database freshly reset with no bootstrap owner present, and left every table empty afterwards. A successful Verification leaves the Problem `INVESTIGATING` at version 1, so the P1-10 boundary holds under a full flow.
 
-### P1-14
+No source change and no migration. `src/` is untouched.
+
+### P1-14 — NEXT implementation task
 Documentation and Phase 1 completion review. Not started.
+
+Depends on P1-13, which is satisfied. Add the minimum to `README.md` about how the implementation works — P1-01 left it alone for this task — move `.ai/` to a Phase 2 starting state, re-run everything, check for secrets, and walk the Phase 1 Definition of Done item by item before declaring the phase complete.
 
 Phase 1 order:
 `P1-01 → P1-02 → P1-03 → P1-04/P1-05 → P1-06 → P1-07 → P1-08 → P1-09/P1-10 → P1-11 → P1-12 → P1-13 → P1-14`
