@@ -40,3 +40,11 @@ export {
   type CreateProjectInput,
   type ProjectRecord,
 } from './projects.js';
+
+export {
+  createEnvironment,
+  getEnvironment,
+  ProjectNotAvailableError,
+  type CreateEnvironmentInput,
+  type EnvironmentRecord,
+} from './environments.js';

@@ -94,12 +94,28 @@ Definition of Done verified against the real database: a project created under o
 
 Deliberately not done here: no project detection from repo or working directory, and no general repository layer (P1-12).
 
-### P1-07 — NEXT implementation task
-Environment table. Not started.
+### P1-07 — DONE
+Environment table.
 
-Depends on P1-06, which is satisfied. Environment records the conditions at the time a problem occurred and belongs to a Project. The spec is explicit that a full package listing must not be required — keep it to a relevant-conditions snapshot.
+- [x] `public.environments` created by a new migration; earlier migrations unchanged
+- [x] `environment_id` is an application-issued UUID with no database default
+- [x] conditions stored as a single `jsonb` object, not a column per field
+- [x] object-only enforced in the application and by a database CHECK; empty object allowed
+- [x] `owner_id` carried directly, so owner scope needs no join
+- [x] owner/project consistency guaranteed by a composite foreign key
+- [x] `on delete restrict` from project to environment
+- [x] no `updated_at` and no update path — a snapshot is a point in time
 
-### P1-08 onward
+Definition of Done verified against the real database: snapshots round-trip nested objects unchanged; empty objects store; arrays, strings, numbers and JSON null are refused by both the application and the CHECK; an environment for an unknown project and one for another owner's project fail with the identical error; a mismatched owner/project pair is refused by the composite foreign key even in raw SQL; owner A and B cannot see each other's environments in either direction, with another owner's environment indistinguishable from absent; deleting a project with environments is refused and permitted once they are gone; and after `db:reset` all five migrations reapplied in order.
+
+Deliberately not done here: no update path, and no search indexes beyond the foreign key's.
+
+### P1-08 — NEXT implementation task
+Problem table. Not started.
+
+Depends on P1-04 through P1-07, all satisfied. This is the first table to use the P1-04 DOMAINs as column types. `version` must exist from the start for later optimistic locking; read/write flags default true and `suppressed` defaults false, and the two are separate concepts.
+
+### P1-09 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:

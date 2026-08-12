@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-06 are complete. P1-07 has not been started.
+P1-01 through P1-07 are complete. P1-08 has not been started.
 
 ## P1-01 — DONE
 
@@ -124,13 +124,34 @@ Established:
 
 Detecting a project from repo or working directory is deliberately not implemented. The general repository layer remains P1-12.
 
+## P1-07 — DONE
+
+The Environment table. Tables are now `owners`, `projects` and `environments`.
+
+Established:
+- `public.environments` holds `environment_id`, `owner_id`, `project_id`, `snapshot`, `created_at`
+- An Environment is a point in time. There is no `updated_at` and no update path: changed conditions are a new snapshot, not an edit to an old one
+- Conditions live in a single `jsonb` object rather than a column per field. Which conditions matter differs by project and problem, so columns would mean demanding values nobody has, or migrating whenever a new one appears
+- Only a JSON object is accepted, enforced in the application and by a database CHECK on `jsonb_typeof`. Arrays and scalars are refused on both sides
+- An empty object is allowed, meaning the relevant conditions have not been captured yet. Forcing a placeholder would record something untrue
+- `owner_id` is carried directly, so owner-scoped reads need no join
+- Owner and project are checked together by a composite foreign key to `projects (owner_id, project_id)`, so an environment cannot pair one owner with another owner's project. This also guarantees the owner exists transitively, so no separate owner foreign key is needed
+- `on delete restrict`, so a project with environments cannot be deleted until they are gone
+- Creating against an unknown project and against another owner's project fail identically, so the outcome cannot reveal whether someone else's project id is real
+
+The snapshot is explicitly not a dependency dump, a log store or a place for secrets.
+
 ## Immediate objective
 
-P1-07 — the Environment table.
+P1-08 — the Problem table.
 
-Not started. Environment is the snapshot of conditions at the time a problem occurred — OS, device, framework, runtime, browser, SDK, library, relevant versions, deployment, branch, commit — and belongs to a Project.
+Not started. Problem is the centre of the model and the largest table in Phase 1: `id`, `owner_id`, `project_id`, `environment_id`, `title`, `status`, `fix_kind`, `problem_domain`, `symptoms`, `suspected_boundary`, `source_ai`, `importance`, `confidence`, `freshness`, the three flags, `version`, and timestamps.
 
-Note for whoever picks this up: the spec is explicit that a full package listing must not be required. Keep the responsibility to a relevant-conditions snapshot rather than a complete dependency dump.
+Notes for whoever picks this up:
+- This is the first table to use the P1-04 DOMAINs as column types
+- `version` exists from the start for later optimistic locking, even though nothing uses it in Phase 1
+- `memory_read_enabled` and `memory_write_enabled` default true, `suppressed` defaults false; read/write control and suppression are separate concepts
+- Full `VERIFIED` consistency is Phase 2, but the schema must not make it impossible
 
 ## Module boundary reminder
 

@@ -133,3 +133,31 @@ This sets the default for owner-scoped tables. The full delete lifecycle, includ
 A project may legitimately have no repository, and its platform may be undetermined. Constraining either now would encode a provider's shape — a GitHub URL, a fixed platform list — into the schema before the retrieval work has shown what the fields need to carry. Free-form text with null for "unknown" keeps that open.
 
 The only normalisation applied is trimming, with blank collapsing to null, so "unknown" has one representation rather than several that compare unequal.
+
+## D-019 — Environment is an immutable point-in-time snapshot (P1-07)
+
+`environment_id` is an application-issued UUID with no database default, consistent with owner and project.
+
+An Environment records the conditions in place when a problem occurred. It has no `updated_at` and no update path: when conditions change, the answer is a new snapshot rather than an edit. Editing would rewrite what was true at the time a problem was investigated, which is exactly the evidence the Memory exists to keep.
+
+## D-020 — Environment conditions are one JSONB object (P1-07)
+
+Conditions are stored in a single `jsonb` column rather than a column per field.
+
+Which conditions matter differs by project and by problem. Columns would mean either requiring values nobody has, or a migration each time a new kind of condition appears. A JSON object keeps that open without widening the schema.
+
+Only a JSON object is accepted — arrays and scalars are refused — enforced both in the application and by a database CHECK on `jsonb_typeof`, so the two cannot disagree. An empty object is allowed, because "the relevant conditions have not been captured yet" is a real state and a placeholder value would record something untrue.
+
+This is not licence to store everything. The snapshot holds what is relevant to the problem, and is not a full dependency listing, a log store or a place for secrets. Search-oriented derivatives are built separately in a later phase rather than by widening this column's responsibility.
+
+## D-021 — Owner and project consistency is enforced by a composite foreign key (P1-07)
+
+Owner-scoped tables below Project carry `owner_id` directly as well as `project_id`, so owner scope can be enforced without a join.
+
+Carrying both creates the possibility of disagreement, so it is closed in the database: `environments (owner_id, project_id)` references `projects (owner_id, project_id)`, which required adding a unique key on that pair in the P1-07 migration. The P1-06 migration was not modified. An environment pairing one owner with another owner's project cannot be stored, even by raw SQL.
+
+The composite key also guarantees the owner exists transitively, since `projects.owner_id` already references `owners`, so a separate owner foreign key would add nothing.
+
+Deleting a project that still has environments is refused (`on delete restrict`), following D-017. The full delete lifecycle is settled in P1-11.
+
+A consequence worth keeping: creating an environment against an unknown project and against another owner's project both fail on the same missing pair, so the outcome cannot be used to discover whether someone else's project id is real.

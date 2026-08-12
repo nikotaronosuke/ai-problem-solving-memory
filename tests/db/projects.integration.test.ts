@@ -91,17 +91,15 @@ describe.skipIf(databaseUrl === undefined)('projects', () => {
       expect(nullable['owner_id']).toBe('NO');
     });
 
-    it('holds the phase to owners and projects, with the value sets intact', async () => {
-      const tables = await pool.query<{ table_name: string }>(
-        "select table_name from information_schema.tables where table_schema = 'public'",
-      );
+    it('leaves the shared value sets intact', async () => {
+      // The full set of tables the phase should have is pinned once, in
+      // `connection.integration.test.ts`, rather than restated per entity.
       const domains = await pool.query<{ count: string }>(
         `select count(*)::text as count
            from pg_type t join pg_namespace n on n.oid = t.typnamespace
           where t.typtype = 'd' and n.nspname = 'public'`,
       );
 
-      expect(tables.rows.map((row) => row.table_name).sort()).toEqual(['owners', 'projects']);
       expect(domains.rows[0]?.count).toBe('6');
     });
   });
