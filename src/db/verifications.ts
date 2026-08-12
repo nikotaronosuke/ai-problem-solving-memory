@@ -32,7 +32,7 @@ import {
   UNIQUE_VIOLATION,
   violatesConstraint,
 } from './errors.js';
-import type { DatabasePool } from './pool.js';
+import type { DatabaseExecutor } from './executor.js';
 
 const OWNER_PROBLEM_FK = 'verifications_owner_id_problem_id_fkey';
 const CLIENT_EVENT_ID_KEY = 'verifications_owner_id_client_event_id_key';
@@ -108,7 +108,7 @@ const VERIFICATION_COLUMNS = `verification_id, owner_id, problem_id, verificatio
  * appear once there.
  */
 export async function appendVerification(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   input: AppendVerificationInput,
 ): Promise<VerificationRecord> {
@@ -119,7 +119,7 @@ export async function appendVerification(
 
   let inserted;
   try {
-    inserted = await pool.query<VerificationRow>(
+    inserted = await executor.query<VerificationRow>(
       `insert into public.verifications
               (verification_id, owner_id, problem_id, verification_type, result, summary,
                evidence_ref, verified_by, client_event_id)
@@ -167,11 +167,11 @@ export async function appendVerification(
  * an empty list, so the result cannot confirm an id exists.
  */
 export async function listVerifications(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   problemId: ProblemId,
 ): Promise<VerificationRecord[]> {
-  const result = await pool.query<VerificationRow>(
+  const result = await executor.query<VerificationRow>(
     `select ${VERIFICATION_COLUMNS}
        from public.verifications
       where owner_id = $1 and problem_id = $2

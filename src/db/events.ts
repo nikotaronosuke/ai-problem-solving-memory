@@ -25,7 +25,7 @@ import {
   UNIQUE_VIOLATION,
   violatesConstraint,
 } from './errors.js';
-import type { DatabasePool } from './pool.js';
+import type { DatabaseExecutor } from './executor.js';
 
 const OWNER_PROBLEM_FK = 'events_owner_id_problem_id_fkey';
 const CLIENT_EVENT_ID_KEY = 'events_owner_id_client_event_id_key';
@@ -102,7 +102,7 @@ const EVENT_COLUMNS = `event_id, owner_id, problem_id, event_type, summary, resu
  * write cannot land twice.
  */
 export async function appendEvent(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   input: AppendEventInput,
 ): Promise<EventRecord> {
@@ -115,7 +115,7 @@ export async function appendEvent(
 
   let inserted;
   try {
-    inserted = await pool.query<EventRow>(
+    inserted = await executor.query<EventRow>(
       `insert into public.events
               (event_id, owner_id, problem_id, event_type, summary, result, reason,
                source_ai, evidence_ref, client_event_id)
@@ -164,11 +164,11 @@ export async function appendEvent(
  * an empty list, so the result cannot confirm an id exists.
  */
 export async function listEvents(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   problemId: ProblemId,
 ): Promise<EventRecord[]> {
-  const result = await pool.query<EventRow>(
+  const result = await executor.query<EventRow>(
     `select ${EVENT_COLUMNS}
        from public.events
       where owner_id = $1 and problem_id = $2

@@ -306,3 +306,39 @@ Vector, embedding and full-text indexes belong to the retrieval phase. Planner b
 P1-11 added no entity, value set, column, API or repository abstraction. The audit found the foreign keys, delete actions, `client_event_id` uniqueness and NOT NULL policy already correct, so the migration changes only indexes.
 
 Nullable columns were left nullable. Tightening one because it looks safe would encode an assumption the entity task deliberately avoided: those values can genuinely be unknown.
+
+## D-037 — The repository is an owner-scoped instance (P1-12)
+
+`MemoryRepository` is created for one owner by `createMemoryRepository(executor, ownerContext)`, and none of its methods takes an owner argument.
+
+The layer below takes an `OwnerContext` per call because it has no other way to know whose data it is handling. Making that a property of the object instead means the question is answered once, when the repository is built, rather than at every call site where it could be got wrong. Service code works with an already-scoped repository rather than passing an owner into each query.
+
+Because an `OwnerContext` can only come from `resolveOwnerContext`, which verifies the owner exists (D-014), holding a repository is itself evidence that ownership was settled before any data was touched.
+
+The surface is the Phase 1 minimum: create/get Project, create/get Environment, create/get Problem, append/list Event, append/list Verification. Listing, updating, deleting, searching, Relation, UsageLog, ChangeLog and transaction helpers are Phase 2, and adding them now would commit to shapes the service layer has not asked for.
+
+## D-038 — The repository is a facade, not a second implementation (P1-12)
+
+Every repository method delegates to the existing database function unchanged. No SQL is written in the repository layer, and PostgreSQL error codes are not reinterpreted there.
+
+Error mapping stays where the error arises. Two layers both deciding what a constraint violation means is how they end up disagreeing, and the database layer already has the constraint names.
+
+Record and input types are re-exported rather than redefined. Duplicating them into repository-specific shapes would leave two definitions of the same thing to keep in step, and they would not stay in step.
+
+## D-039 — DatabaseExecutor is the minimal database boundary (P1-12)
+
+Entity access takes a `DatabaseExecutor` — an interface with `query` and nothing else — rather than a pool.
+
+Running a statement is all those functions ever needed. Requiring a pool additionally demanded the ability to open connections, count them and shut them down, none of which they use, and that surplus is exactly what would have prevented them working inside a transaction.
+
+`DatabasePool` still exists for pool lifecycle and satisfies the interface, so a pool can be passed wherever no transaction is involved. `createPool` and `closePool` are unchanged, and health remains a pool-level probe.
+
+The repository does not own a transaction: no `begin`, no `commit`, no `connect`. A service that needs one checks out a client, begins, and builds a repository over that client. This is what keeps P2-07's optimistic locking from requiring the repository to be rebuilt.
+
+## D-040 — Layering is enforced by a test, not by convention (P1-12)
+
+The dependency direction is domain ← service/API ← repository ← db ← PostgreSQL, and `tests/architecture.test.ts` checks it against the source.
+
+It verifies that `src/domain/` imports nothing from `pg`, Supabase, `src/db/` or `src/repository/` and contains no SQL; that the repository writes no SQL and imports no driver; that the repository's public surface exposes no pool or client type; and that `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
+
+A layering rule that is only written down erodes quietly. This one fails the build instead.

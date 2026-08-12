@@ -16,7 +16,7 @@
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
 import { generateProjectId, toProjectName, type ProjectId } from '../domain/project.js';
 import { normaliseOptionalText } from '../domain/text.js';
-import type { DatabasePool } from './pool.js';
+import type { DatabaseExecutor } from './executor.js';
 
 export interface ProjectRecord {
   readonly projectId: ProjectId;
@@ -73,7 +73,7 @@ const PROJECT_COLUMNS =
  * to null when absent or empty.
  */
 export async function createProject(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   input: CreateProjectInput,
 ): Promise<ProjectRecord> {
@@ -82,7 +82,7 @@ export async function createProject(
   const platform = normaliseOptionalText(input.platform);
   const projectId = generateProjectId();
 
-  const result = await pool.query<ProjectRow>(
+  const result = await executor.query<ProjectRow>(
     `insert into public.projects (project_id, owner_id, project_name, repo, platform)
           values ($1, $2, $3, $4, $5)
        returning ${PROJECT_COLUMNS}`,
@@ -104,11 +104,11 @@ export async function createProject(
  * else — the two are indistinguishable to the caller by design.
  */
 export async function getProject(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   projectId: ProjectId,
 ): Promise<ProjectRecord | undefined> {
-  const result = await pool.query<ProjectRow>(
+  const result = await executor.query<ProjectRow>(
     `select ${PROJECT_COLUMNS}
        from public.projects
       where owner_id = $1 and project_id = $2`,

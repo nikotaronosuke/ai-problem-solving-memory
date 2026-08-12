@@ -171,15 +171,29 @@ Two redundant indexes were found and dropped — `projects (owner_id)` and `envi
 
 Deliberately not done here: no hard-delete service, no new entity, no API, and no retrieval indexes.
 
-### P1-12 — NEXT implementation task
-Repository layer and minimal storage interface. Not started.
+### P1-12 — DONE
+Repository layer and minimal storage interface.
 
-Depends on P1-06 through P1-11, all satisfied. The operations already exist in `src/db/`; this task gives them a coherent boundary that Phase 2 can build on, keeping PostgreSQL and Supabase specifics from spreading. Owner scope must be enforced at the boundary itself, not only by callers.
+- [x] `MemoryRepository` with the ten Phase 1 operations, reachable from `src/repository/`
+- [x] owner-scoped instance; `OwnerContext` fixed at creation, no owner argument on any method
+- [x] thin facade over the existing database functions; no SQL and no error reinterpretation
+- [x] `DatabaseExecutor` narrows the database boundary to query capability alone
+- [x] transaction lifecycle stays outside the repository
+- [x] domain depends on no storage, driver or vendor module
 
-Resist widening the surface while reorganising it.
+Definition of Done verified: all ten operations are callable through the repository against the real database, carrying a Problem from creation to verified evidence; owner A's repository cannot read or write against owner B's Project, Environment or Problem, and cannot see B's events or verifications; a query-only object with no pool lifecycle methods works as an executor; and the architecture test enforces the layering rather than leaving it to convention.
 
-### P1-13 onward
-Proceed only after dependencies and each task's Definition of Done are satisfied.
+Deliberately not done here: no list/update/delete/search, no Relation, UsageLog or ChangeLog, no transaction helper, no HTTP API, no migration.
+
+### P1-13 — NEXT implementation task
+Phase 1 integration test. Not started.
+
+Depends on P1-12, which is satisfied. One scenario end to end — owner context, Project, Environment, Problem, HYPOTHESIS/ATTEMPT/DEAD_END/FIX events, Verification, then re-read in owner scope — plus the negative cases: cross-owner read, cross-owner append, duplicate `client_event_id`, invalid enum, foreign key violation.
+
+It must be reproducible from a clean database.
+
+### P1-14
+Documentation and Phase 1 completion review. Not started.
 
 Phase 1 order:
 `P1-01 → P1-02 → P1-03 → P1-04/P1-05 → P1-06 → P1-07 → P1-08 → P1-09/P1-10 → P1-11 → P1-12 → P1-13 → P1-14`

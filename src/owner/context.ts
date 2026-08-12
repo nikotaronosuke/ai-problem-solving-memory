@@ -15,7 +15,7 @@
 import { toOwnerId, type OwnerContext, type OwnerId } from '../domain/owner.js';
 import { findOwnerRecord } from '../db/owners.js';
 import type { EnvSource } from '../config/env.js';
-import type { DatabasePool } from '../db/pool.js';
+import type { DatabaseExecutor } from '../db/executor.js';
 
 /** Name of the variable holding the local development owner id. */
 export const MEMORY_OWNER_ID_VAR = 'MEMORY_OWNER_ID';
@@ -68,7 +68,7 @@ export function readOwnerIdFromEnv(source: EnvSource = process.env): string | un
  * touches owned data must keep running without an owner configured.
  */
 export async function resolveOwnerContext(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   source: EnvSource = process.env,
 ): Promise<OwnerContext> {
   const configured = readOwnerIdFromEnv(source);
@@ -89,7 +89,7 @@ export async function resolveOwnerContext(
     throw new OwnerContextError('INVALID', `${MEMORY_OWNER_ID_VAR} is unusable. ${detail}`);
   }
 
-  const owner = await findOwnerRecord(pool, ownerId);
+  const owner = await findOwnerRecord(executor, ownerId);
   if (owner === undefined) {
     // Safe to name: this is already a well-formed UUID, not a stray secret.
     throw new OwnerContextError(
