@@ -11,20 +11,26 @@ Follow the private task breakdown:
 
 Implementation Phase 1 is complete. All fourteen tasks are done and its Definition of Done was verified item by item.
 
-### P2-01 — NEXT
+### P2-01 — DONE
 API application foundation.
 
-- HTTP/JSON API foundation for the Memory Server
-- request validation, error mapping, auth context and logging as a shared layer
-- domain service separated from the transport layer
-- initial API versioning policy
+Fastify 5 transport in `src/http/`, application services in `src/app/`, `/v1` versioning with `/health` outside it, one error envelope, owner-scoped authenticated request context, redacted logging, and a composition root that owns the pool, the listener and shutdown.
+
+Definition of Done verified: `/health` and `/v1/me` work, invalid input returns a consistent `INVALID_REQUEST` envelope, and the transport layer imports neither `pg` nor `src/db/` — enforced by `tests/architecture.test.ts`, not convention.
+
+### P2-02 — NEXT
+Project / Environment API.
+
+- Project create / get / list / update
+- Environment create / get / list
+- owner scope enforced on every endpoint
 
 Definition of Done:
-- a health endpoint and an authenticated endpoint work
-- invalid input returns a consistent error shape
-- the transport layer does not access the database directly
+- CRUD works within an owner
+- another owner's data is unreachable
+- destructive operations may stay unimplemented if outside MVP requirements
 
-Depends on Phase 1, which is satisfied.
+Depends on P2-01, which is satisfied. Routes go inside the existing `/v1` scope, which already applies the authentication hook. List and update need adding at the repository boundary as well.
 
 ## BLOCKED
 

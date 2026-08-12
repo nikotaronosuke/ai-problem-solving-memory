@@ -1,12 +1,12 @@
 # CURRENT
 
-Updated: 2026-08-12
+Updated: 2026-08-13
 
 ## Current phase
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **READY, NOT STARTED**
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 done, P2-02 next)
 
 ## Source of truth
 
@@ -15,6 +15,26 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 - `docs/spec/mvp-os-boundary-addendum.md`
 - `docs/implementation/mvp-roadmap.md`
 - `docs/implementation/phase2-task-breakdown.md`
+
+## What exists now — HTTP (P2-01)
+
+**Transport.** Fastify 5 in `src/http/`. `buildMemoryHttpApp(dependencies)` returns an instance and starts nothing — no listener, no pool, no signal handler — which is what lets tests drive the real application through `inject()` rather than a port. Composition and lifecycle live in `src/index.ts`.
+
+**Application layer.** `src/app/` sits between transport and storage: a health service and a request-context service. Transport imports neither `pg` nor `src/db/`, so what a client is allowed to learn stays a product decision rather than a consequence of how the driver answers.
+
+**Versioning.** The Memory JSON API is under `/v1`. `/health` sits outside it, since whether the process is serving is not part of the API contract. No header or query negotiation.
+
+**JSON contract.** snake_case, shaped deliberately per response. Internal records are camelCase and are never serialised straight out, so an implementation detail cannot become the contract by accident.
+
+**Errors.** One envelope everywhere: `{ error: { code, message }, request_id }`. Codes are `INVALID_REQUEST`, `UNAUTHENTICATED`, `NOT_FOUND`, `INTERNAL_ERROR`. Fastify and Ajv error objects never reach a client, and an internal failure returns no stack, driver message or connection string.
+
+**Auth.** `/v1/me` requires an owner. A `preHandler` on the `/v1` scope calls the request-context service, which resolves the owner and hands back an owner-scoped `MemoryRepository` — a handler never sees an owner id it could pass anywhere. Missing, malformed and unknown owners are three entries in the log and one indistinguishable 401 to the client, so the endpoint is not an existence oracle.
+
+**Not a credential.** An owner id supplied in a header or body authenticates nothing. Real client credentials are P3-04; this phase uses the same local `MEMORY_OWNER_ID` identity Phase 1 established, behind one swappable function.
+
+**Config.** `HOST` and `PORT`, defaulting to `127.0.0.1:3000`. Loopback by default because this holds one person's memory. Blank `HOST` is refused rather than defaulted; `PORT` must be digits in 1–65535.
+
+**Logging.** Fastify's logger at `LOG_LEVEL`, with authorization, cookie, api-key and set-cookie headers redacted. Bodies are not logged. Tests pass `logger: false`.
 
 ## What exists now
 
@@ -51,20 +71,22 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - Recording a successful Verification does **not** move a Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That judgement is P2-06
 - A duplicate `client_event_id` is refused, not replayed. Returning the original is P2-04 for Events and P2-05 for Verifications
 - `version` exists on Problem and nothing increments it. Optimistic locking is P2-07
-- No HTTP or MCP API, no update or delete path, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
+- No Memory API routes yet: `/health` and `/v1/me` are the whole HTTP surface. Project, Environment, Problem, Event and Verification endpoints are P2-02 onward
+- No MCP, no update or delete path, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
+- No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-01 — API application foundation.
+P2-02 — Project / Environment API.
 
-Not started. HTTP/JSON API foundation with request validation, error mapping, auth context and logging as a shared layer; domain service separated from transport; an initial API versioning policy.
-
-Its Definition of Done: a health endpoint and an authenticated endpoint work, invalid input returns a consistent error shape, and the transport layer does not touch the database directly.
+Not started. Project create/get/list/update and Environment create/get/list, with owner scope enforced on every endpoint.
 
 Notes for whoever picks this up:
-- The auth context is where P1-05's owner resolution meets a request. `MemoryRepository` is already owner-scoped, so a handler should obtain a repository, not an owner id
-- Client credentials and their revocation are P3-04, not P2-01
-- No HTTP framework is chosen yet; `pg` is currently the only runtime dependency
+- Register routes inside the existing `/v1` plugin scope in `src/http/app.ts`; the authentication `preHandler` already applies there and hands the handler an owner-scoped repository
+- The repository currently exposes create/get only. List and update are new operations and need adding at the repository boundary too — that is real work, not a pass-through
+- Request bodies use Fastify JSON Schema. Keep `additionalProperties: false` refusing rather than silently dropping, as the shared Ajv config already does
+- Response fields are snake_case and shaped explicitly. Do not serialise a record directly
+- P1-07's environment snapshot converter accepts any non-array object, including class instances. HTTP input is parsed JSON, so this is the natural place to constrain it
 
 ## Core MVP milestone
 
