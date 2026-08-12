@@ -91,6 +91,31 @@ otherwise leaves it untouched. It creates no credential. Run it again after
 Owner-scoped work resolves a context first, and refuses to start when the owner
 is unset, malformed, or absent from the database.
 
+## Running the server
+
+```bash
+npm run dev     # from TypeScript, with watch
+npm start       # from dist/, after npm run build
+```
+
+It binds to `HOST` and `PORT` from `.env`, defaulting to `127.0.0.1:3000` —
+loopback, so reaching the network is a deliberate choice.
+
+```bash
+curl http://127.0.0.1:3000/health   # {"status":"ok"}
+curl http://127.0.0.1:3000/v1/me    # {"owner_id":"..."}
+```
+
+The Memory JSON API lives under `/v1`; `/health` sits outside it, because
+whether the process is serving is not part of the API contract. `/v1/me`
+needs an owner, so `npm run owner:bootstrap` must have run.
+
+Failures share one shape, and a client branches on `error.code`:
+
+```json
+{ "error": { "code": "UNAUTHENTICATED", "message": "..." }, "request_id": "..." }
+```
+
 ## Checking the database connection
 
 ```bash
@@ -104,9 +129,9 @@ the pool. It reports the host but never the connection string.
 
 | Command                    | Purpose                                           |
 | -------------------------- | ------------------------------------------------- |
-| `npm run dev`              | Run the entrypoint from TypeScript, with watch    |
+| `npm run dev`              | Run the server from TypeScript, with watch        |
 | `npm run build`            | Compile `src/` to `dist/`                         |
-| `npm start`                | Run the compiled entrypoint                       |
+| `npm start`                | Run the compiled server                           |
 | `npm run typecheck`        | Type-check `src/` and `tests/` without emitting   |
 | `npm run lint`             | ESLint (type-aware rules enabled)                 |
 | `npm run lint:fix`         | ESLint with autofix                               |
@@ -133,6 +158,8 @@ Run `npm run check` before reporting a task complete.
 | `src/`                 | Service implementation                                 |
 | `src/domain/`          | Domain types, shared value sets and owner identity     |
 | `src/owner/`           | Owner context resolution and local bootstrap           |
+| `src/http/`            | HTTP transport — building an app starts nothing        |
+| `src/app/`             | Application services transport depends on              |
 | `src/db/`              | Database access boundary — importing it opens nothing  |
 | `src/repository/`      | Owner-scoped storage seam the service layer works with |
 | `tests/`               | Automated tests, mirroring `src/`                      |

@@ -350,3 +350,59 @@ The Phase 1 scenario exercises the normal path entirely through `MemoryRepositor
 That split is the point. Reaching into the database for a step the application would perform through the repository would test the schema while claiming to test the flow, and the two can drift apart without anyone noticing.
 
 Fixtures generate their own owner on every run, depend on no bootstrap owner or previous run, and remove only what they created, leaf to root. A test that assumed an empty database or a particular developer's owner id would pass on one machine and fail on another, which is worse than not having it.
+
+## D-042 — Fastify 5 is the HTTP transport (P2-01)
+
+Fastify 5 is the only runtime dependency added; `pg` and Fastify are now the entire runtime surface.
+
+Request and response validation use Fastify's built-in JSON Schema with Ajv rather than a separate validation library. Schemas are fixed application code — none is ever accepted from outside and compiled — so the input surface cannot be extended by a caller.
+
+Ajv is configured to neither coerce types nor remove unknown properties. Silent removal is the worse failure: a client that sends a field it believes was honoured, and was actually discarded, has no way to find out.
+
+Building an app and running one are separate. `buildMemoryHttpApp` returns an instance and starts nothing — no listener, no pool, no signal handler — which is what lets tests exercise the real application through `inject()` instead of a port, and keeps pools and signals in the composition root where they belong.
+
+## D-043 — API versioning and JSON contract (P2-01)
+
+The Memory JSON API is served under `/v1`. `/health` sits outside any version prefix, because whether the process is serving is an operational fact, not part of the API contract, and should not move when that contract does.
+
+No header negotiation and no query-parameter versioning. A path prefix is legible in a log, a curl command and a bug report, and the alternatives are worth adding only when a real second version exists.
+
+The JSON contract is snake_case, matching the canonical wording used throughout the specification (`owner_id`, `client_event_id`). Internal records are camelCase and are never serialised straight out: letting them through would turn an implementation detail into a public contract by accident, and would then be expensive to change. Every response is shaped explicitly and has a response schema.
+
+## D-044 — One error envelope (P2-01)
+
+Every failure returns `{ error: { code, message }, request_id }`. Clients branch on `code`, never on prose or on a status code alone.
+
+The initial codes are `INVALID_REQUEST`, `UNAUTHENTICATED`, `NOT_FOUND` and `INTERNAL_ERROR`. More are added when a caller genuinely needs to act differently; a taxonomy invented in advance ends up describing the framework rather than the product.
+
+Fastify and Ajv error objects do not cross the boundary. Returning them would make an internal library part of the public contract, and their text names Ajv keywords and JSON pointers that mean nothing to a client of this API.
+
+An internal error returns no stack trace, driver message, connection string or file path. The full error goes to the log; the response says only that something failed.
+
+## D-045 — Authenticated request context is owner-scoped (P2-01)
+
+Transport does not resolve owners. A `preHandler` on the `/v1` scope calls the application request-context service, which resolves the owner and returns an `AuthenticatedRequestContext` carrying an owner-scoped `MemoryRepository`.
+
+A handler therefore never sees an owner id it could pass somewhere, and never calls `resolveOwnerContext` itself. Owner scope is a thing it holds, not a value it must remember to forward — which is the difference between a boundary and a convention.
+
+**An owner id is not a credential.** Nothing accepts one from a header or a body and treats the request as authenticated. Knowing an identifier is not the same as being that person, and wiring it up as a temporary measure is precisely how that distinction gets lost. Real client credentials, their issuance and their revocation are P3-04; this phase reuses the local `MEMORY_OWNER_ID` identity from P1-05, behind a single function to swap.
+
+Missing, malformed and unknown owners are distinguishable in the log and identical in the response — one 401 with the same body. Otherwise the endpoint answers "does this owner exist?" for anyone who asks, which is the same existence oracle the storage layer was careful to avoid.
+
+## D-046 — Transport depends on application services, not storage (P2-01)
+
+`src/http/` imports no `pg`, no Supabase and nothing from `src/db/`, and contains no SQL. It depends on `src/app/`, which owns decisions about what a client may learn — a health probe reports unavailable without saying why, because the reason can name a host or a driver.
+
+The direction is domain ← application ← transport, with repository and db beneath, and `tests/architecture.test.ts` enforces it rather than documenting it.
+
+That test's import detector now recognises single-quoted, double-quoted, side-effect and dynamic imports. It previously matched only single-quoted static imports, so a violation written any other way would have been reported as clean — worse than not checking, because it looks checked.
+
+## D-047 — Server binds to loopback by default (P2-01)
+
+`HOST` defaults to `127.0.0.1` and `PORT` to `3000`.
+
+This is a personal server holding one person's memory. Reaching the network should be something someone decided, not something a default did quietly — the same reasoning as D-011, where the local stack's exposure was accepted only because it was understood.
+
+A blank `HOST` is refused rather than treated as loopback: an empty value is far more likely to be a broken deployment script than a request for the safe option, and defaulting it would hide the mistake. `PORT` must be digits within 1–65535, checked by pattern rather than numeric coercion, because `Number()` accepts `'3000.5'`, `'0x0bb8'` and `'3e3'`.
+
+Credential headers — authorization, cookie, api-key, proxy-authorization, set-cookie — are redacted by the logger, and request bodies are not logged. The failure mode is silent: a credential written to a log once is a credential in a file nobody thinks to check.

@@ -39,9 +39,13 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - owner scope を固定した Repository 境界
 - 上記を1本の流れとして通す統合テスト
 
-現時点では、まだ HTTP API も AI 連携もありません。保存基盤だけの状態です。
+実装 Phase 2 に入り、HTTP/JSON API の土台ができました。
 
-次は Phase 2 で、Memory の中核操作を HTTP/JSON API として成立させます。
+- Fastify によるローカル HTTP サーバー（既定で `127.0.0.1` のみ）
+- `/health` と、owner が確立していることを要求する `/v1/me`
+- リクエスト検証と、全エラー共通の JSON 形式
+
+Memory 本体の API（Project / Problem / Event 等）と AI 連携はまだこれからです。
 
 詳細な内部仕様は現時点では非公開です。
 
@@ -76,7 +80,14 @@ npm run db:status
 npm run db:reset          # migration をクリーンな DB へ適用
 npm run owner:bootstrap   # MEMORY_OWNER_ID の owner を作成
 npm run check             # typecheck + lint + format + test
-npm run build
+npm run dev               # サーバーを起動（既定 127.0.0.1:3000）
+```
+
+動作確認:
+
+```bash
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/v1/me
 ```
 
 使わないときは `npm run supabase:stop` で停止してください。
