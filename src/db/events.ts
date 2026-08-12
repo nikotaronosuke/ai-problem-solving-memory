@@ -18,6 +18,13 @@ import { generateEventId, toEventSummary, type EventId } from '../domain/event.j
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 import { normaliseOptionalText } from '../domain/text.js';
+import {
+  DuplicateClientEventIdError,
+  FOREIGN_KEY_VIOLATION,
+  ProblemNotAvailableError,
+  UNIQUE_VIOLATION,
+  violatesConstraint,
+} from './errors.js';
 import type { DatabasePool } from './pool.js';
 
 const OWNER_PROBLEM_FK = 'events_owner_id_problem_id_fkey';
@@ -54,33 +61,6 @@ export interface AppendEventInput {
   readonly evidenceRef?: string | null;
 }
 
-/**
- * Raised when the target problem is not one of the context owner's.
- *
- * Deliberately the same error whether the problem does not exist at all or
- * belongs to someone else.
- */
-export class ProblemNotAvailableError extends Error {
-  constructor() {
-    super('No such problem for this owner.');
-    this.name = 'ProblemNotAvailableError';
-  }
-}
-
-/**
- * Raised when this owner has already recorded a write with the same
- * `client_event_id`.
- *
- * P1-09 refuses the duplicate. P2-04 replaces this with returning the original
- * event, so a retry becomes a no-op rather than an error.
- */
-export class DuplicateClientEventIdError extends Error {
-  constructor() {
-    super('This client event id has already been recorded for this owner.');
-    this.name = 'DuplicateClientEventIdError';
-  }
-}
-
 interface EventRow {
   event_id: string;
   owner_id: string;
@@ -110,16 +90,6 @@ function toRecord(row: EventRow): EventRecord {
     clientEventId: row.client_event_id as ClientEventId,
     createdAt: row.created_at,
   };
-}
-
-/** Whether an error is PostgreSQL rejecting a specific constraint. */
-function violates(error: unknown, code: string, constraint: string): boolean {
-  if (typeof error !== 'object' || error === null) {
-    return false;
-  }
-
-  const candidate = error as { code?: unknown; constraint?: unknown };
-  return candidate.code === code && candidate.constraint === constraint;
 }
 
 const EVENT_COLUMNS = `event_id, owner_id, problem_id, event_type, summary, result, reason,
@@ -165,12 +135,12 @@ export async function appendEvent(
       ],
     );
   } catch (error) {
-    if (violates(error, '23503', OWNER_PROBLEM_FK)) {
+    if (violatesConstraint(error, FOREIGN_KEY_VIOLATION, OWNER_PROBLEM_FK)) {
       // The (owner, problem) pair does not exist. Whether the problem is
       // unknown or someone else's is not distinguished, by design.
       throw new ProblemNotAvailableError();
     }
-    if (violates(error, '23505', CLIENT_EVENT_ID_KEY)) {
+    if (violatesConstraint(error, UNIQUE_VIOLATION, CLIENT_EVENT_ID_KEY)) {
       throw new DuplicateClientEventIdError();
     }
     throw error;

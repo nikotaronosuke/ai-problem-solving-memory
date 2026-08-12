@@ -74,9 +74,8 @@ describe.skipIf(databaseUrl === undefined)('domain enums in the database', () =>
 
     const tables = result.rows.map((row) => row.table_name);
 
-    // Tables the value sets will eventually be used by, none of which exist
-    // yet. `problems` and `events` do use these domains, as of P1-08 and P1-09.
-    expect(tables).not.toContain('verifications');
+    // Tables the value sets will eventually be used by. `problems`, `events`
+    // and `verifications` already do, as of P1-08 through P1-10.
     expect(tables).not.toContain('relations');
   });
 
