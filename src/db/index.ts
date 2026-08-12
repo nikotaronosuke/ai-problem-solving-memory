@@ -22,3 +22,12 @@ export {
   ENUM_DOMAIN_SCHEMA,
   type EnumDomainBinding,
 } from './enum-domains.js';
+
+// `findOwnerRecord` is intentionally not re-exported. Application code reads
+// its own owner through the context; only owner resolution looks up a bare id.
+export {
+  getOwnerForContext,
+  insertOwnerIfAbsent,
+  type OwnerInsertResult,
+  type OwnerRecord,
+} from './owners.js';
