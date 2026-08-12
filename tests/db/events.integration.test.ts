@@ -13,12 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { createEnvironment } from '../../src/db/environments.js';
-import {
-  DuplicateClientEventIdError,
-  ProblemNotAvailableError,
-  appendEvent,
-  listEvents,
-} from '../../src/db/events.js';
+import { DuplicateClientEventIdError, ProblemNotAvailableError } from '../../src/db/errors.js';
+import { appendEvent, listEvents } from '../../src/db/events.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
 import { createProblem } from '../../src/db/problems.js';

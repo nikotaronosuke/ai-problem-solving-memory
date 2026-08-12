@@ -139,14 +139,29 @@ Definition of Done verified against the real database: multiple events append to
 
 Deliberately not done here: duplicate replay is P2-04, not a rejection turned into a returned original.
 
-### P1-10 — NEXT implementation task
-Verification table. Not started.
+### P1-10 — DONE
+Verification table.
 
-Depends on P1-08, which is satisfied. A fix and the confirmation that it worked are separate records, so Verification must stand on its own rather than hanging off an Event. It reuses `ClientEventId` and the same `(owner_id, client_event_id)` uniqueness.
+- [x] `public.verifications` created by a new migration; earlier migrations unchanged
+- [x] independent entity, attached to the Problem rather than to an Event
+- [x] `verification_id` is an application-issued UUID with no database default
+- [x] `result` is a required boolean, so a successful Verification can be found mechanically
+- [x] `summary` required and non-blank; `verified_by` and `evidence_ref` nullable free-form text
+- [x] `client_event_id` required, unique per `(owner_id, client_event_id)` within this table
+- [x] owner/problem consistency via composite foreign key, reusing the P1-09 key
 
-The rule that `VERIFIED` requires a successful Verification belongs to P2-06.
+Definition of Done verified against the real database: multiple Verifications append to one Problem and list oldest first with deterministic tie-breaking; all six verification types are accepted and an invalid one is refused by the DOMAIN; both true and false results store; a duplicate `client_event_id` is refused, including against a different Problem, while another owner may reuse it and the same value may appear once as an Event and once as a Verification; a Verification stands alone with no Event recorded and keeps its full meaning; recording a successful Verification leaves the Problem `INVESTIGATING`; appending to an unknown Problem and to another owner's fail identically; owner A and B cannot see each other's Verifications; deleting a Problem with Verifications is refused and permitted once they are gone; and after `db:reset` all eight migrations reapplied in order.
 
-### P1-11 onward
+Deliberately not done here: no automatic transition to `VERIFIED`, and no database-level ban on `VERIFIED` without a Verification. Both belong to P2-06. Duplicate replay is P2-05.
+
+### P1-11 — NEXT implementation task
+Database integrity and initial indexes. Not started.
+
+Depends on P1-06 through P1-10, all satisfied. This is the review pass: foreign key integrity, owner-scope and `created_at` ordering indexes, NOT NULL policy, unique `client_event_id`, and stating the cascade/restrict policy across the whole schema rather than per table.
+
+Vector and full-text indexes belong to the retrieval phase, not this task.
+
+### P1-12 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:

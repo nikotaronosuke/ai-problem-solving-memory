@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-09 are complete. P1-10 has not been started.
+P1-01 through P1-10 are complete. P1-11 has not been started.
 
 ## P1-01 — DONE
 
@@ -178,17 +178,35 @@ P1-09 only refuses a duplicate `client_event_id`. Turning a duplicate into a rep
 
 `ClientEventId` is a shared domain type, ready for Verification to reuse.
 
+## P1-10 — DONE
+
+The Verification table. All six Phase 1 tables now exist: `owners`, `projects`, `environments`, `problems`, `events` and `verifications`.
+
+Established:
+- A Verification is not the fix. It is the record of something actually checking whether the state holds, kept as a separate entity from the FIX Event
+- It attaches to the Problem directly, never to an Event. `src/db/verifications.ts` imports nothing from the event module, and there is no `event_id` column. A Problem may have a Verification and no Events at all
+- `result` is `boolean not null`: true means carried out and confirmed, false means carried out and not confirmed. A boolean rather than prose because P2-06 has to answer "is there a successful Verification?" mechanically
+- `summary` is required and non-blank in the application and by a database CHECK
+- `verified_by` is nullable free-form text — who or what performed the check. Null when unknown, never a plausible-looking placeholder that would misrepresent the evidence
+- `evidence_ref` follows the Event shape: a nullable free-form reference to material, not the material
+- `client_event_id` reuses the shared `ClientEventId`, with `(owner_id, client_event_id)` unique **within this table**. The same value may appear once as an Event and once as a Verification, since those are separate writes
+- Owner and problem are checked by a composite foreign key reusing the key P1-09 added to `problems`; no second key was created
+- Append-only: no `updated_at`, no trigger, no update path
+
+`ProblemNotAvailableError` and `DuplicateClientEventIdError` moved to `src/db/errors.ts` so Event and Verification share them without either depending on the other. Event behaviour is unchanged.
+
+Recording a successful Verification does **not** move the Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That transition is P2-06's decision, made after checking the evidence exists.
+
 ## Immediate objective
 
-P1-10 — the Verification table.
+P1-11 — database integrity and the initial indexes.
 
-Not started. Verification records how a fix was confirmed: `id`, `owner_id`, `problem_id`, `verification_type`, `result`, `summary`, `evidence_ref`, `verified_by`, `client_event_id`, `created_at`.
+Not started. This is the review pass over what the entity tasks built: foreign key integrity, the indexes owner scope and `created_at` ordering need, NOT NULL policy, unique `client_event_id`, and an explicit statement of the cascade/restrict policy across the whole schema.
 
 Notes for whoever picks this up:
-- A fix and the confirmation that it worked are separate records. Verification must stand on its own, not hang off an Event
-- `client_event_id` reuses `src/domain/client-event-id.ts` and the same `(owner_id, client_event_id)` uniqueness
-- A model asserting "it works" is not a Verification
-- The rule that `VERIFIED` requires a successful Verification is P2-06, not here
+- Every foreign key so far is `on delete restrict`, decided per table. P1-11 is where that becomes a stated schema-wide policy
+- Each table has an index on its owner-scoped foreign key; ordering and retrieval indexes have deliberately been left to this task
+- Vector and full-text indexes belong to the retrieval phase, not here
 
 ## Module boundary reminder
 
