@@ -58,15 +58,35 @@ local database and replays every migration in order, which is how you verify a
 migration works on a clean database. Run `db:reset` before relying on any
 schema change.
 
-There are no tables yet. So far the migrations establish the pipeline and the
-shared value sets — PostgreSQL DOMAINs over `text` with CHECK constraints,
-mirroring `src/domain/enums.ts`. Owner, Project, Environment, Problem, Event
-and Verification are designed from P1-05 onward, and will reuse those DOMAINs
-as column types.
+So far the migrations establish the pipeline, the shared value sets
+(PostgreSQL DOMAINs over `text` with CHECK constraints, mirroring
+`src/domain/enums.ts`) and the `owners` table. Project, Environment, Problem,
+Event and Verification are designed from P1-06 onward, and will reuse those
+DOMAINs as column types and reference `owners.owner_id`.
 
 Changing an allowed value means changing both sides: the tuple in
 `src/domain/enums.ts` and a new migration. `tests/db/enums.integration.test.ts`
 fails if only one of them changes.
+
+## Local owner
+
+All Memory data is owned. `MEMORY_OWNER_ID` names the owner local development
+acts as — a UUID the Memory Server issues, never an AI vendor, GitHub or other
+provider account id.
+
+Generate one, put it in `.env`, and create the matching row:
+
+```bash
+node -e "console.log(crypto.randomUUID())"   # paste into MEMORY_OWNER_ID in .env
+npm run owner:bootstrap
+```
+
+`owner:bootstrap` is safe to run repeatedly: it creates the owner if absent and
+otherwise leaves it untouched. It creates no credential. Run it again after
+`npm run db:reset`, which drops the owner along with everything else.
+
+Owner-scoped work resolves a context first, and refuses to start when the owner
+is unset, malformed, or absent from the database.
 
 ## Checking the database connection
 
@@ -79,26 +99,27 @@ the pool. It reports the host but never the connection string.
 
 ## Commands
 
-| Command                    | Purpose                                         |
-| -------------------------- | ----------------------------------------------- |
-| `npm run dev`              | Run the entrypoint from TypeScript, with watch  |
-| `npm run build`            | Compile `src/` to `dist/`                       |
-| `npm start`                | Run the compiled entrypoint                     |
-| `npm run typecheck`        | Type-check `src/` and `tests/` without emitting |
-| `npm run lint`             | ESLint (type-aware rules enabled)               |
-| `npm run lint:fix`         | ESLint with autofix                             |
-| `npm run format`           | Prettier, writing changes                       |
-| `npm run format:check`     | Prettier, verifying only                        |
-| `npm test`                 | Vitest, single run                              |
-| `npm run test:watch`       | Vitest, watch mode                              |
-| `npm run check`            | typecheck + lint + format:check + test          |
-| `npm run supabase:start`   | Start the local Supabase stack                  |
-| `npm run supabase:stop`    | Stop the local Supabase stack                   |
-| `npm run db:status`        | Show local stack URLs                           |
-| `npm run db:reset`         | Rebuild the local DB from migrations            |
-| `npm run db:migrate`       | Apply pending migrations                        |
-| `npm run db:migration:new` | Create a new migration file                     |
-| `npm run db:check`         | Verify the service can reach PostgreSQL         |
+| Command                    | Purpose                                           |
+| -------------------------- | ------------------------------------------------- |
+| `npm run dev`              | Run the entrypoint from TypeScript, with watch    |
+| `npm run build`            | Compile `src/` to `dist/`                         |
+| `npm start`                | Run the compiled entrypoint                       |
+| `npm run typecheck`        | Type-check `src/` and `tests/` without emitting   |
+| `npm run lint`             | ESLint (type-aware rules enabled)                 |
+| `npm run lint:fix`         | ESLint with autofix                               |
+| `npm run format`           | Prettier, writing changes                         |
+| `npm run format:check`     | Prettier, verifying only                          |
+| `npm test`                 | Vitest, single run                                |
+| `npm run test:watch`       | Vitest, watch mode                                |
+| `npm run check`            | typecheck + lint + format:check + test            |
+| `npm run supabase:start`   | Start the local Supabase stack                    |
+| `npm run supabase:stop`    | Stop the local Supabase stack                     |
+| `npm run db:status`        | Show local stack URLs                             |
+| `npm run db:reset`         | Rebuild the local DB from migrations              |
+| `npm run db:migrate`       | Apply pending migrations                          |
+| `npm run db:migration:new` | Create a new migration file                       |
+| `npm run db:check`         | Verify the service can reach PostgreSQL           |
+| `npm run owner:bootstrap`  | Create the local owner named by `MEMORY_OWNER_ID` |
 
 Run `npm run check` before reporting a task complete.
 
@@ -107,7 +128,8 @@ Run `npm run check` before reporting a task complete.
 | Path                   | Contents                                               |
 | ---------------------- | ------------------------------------------------------ |
 | `src/`                 | Service implementation                                 |
-| `src/domain/`          | Domain types and shared value sets                     |
+| `src/domain/`          | Domain types, shared value sets and owner identity     |
+| `src/owner/`           | Owner context resolution and local bootstrap           |
 | `src/db/`              | Database access boundary — importing it opens nothing  |
 | `tests/`               | Automated tests, mirroring `src/`                      |
 | `supabase/migrations/` | Schema migrations, in filename order                   |

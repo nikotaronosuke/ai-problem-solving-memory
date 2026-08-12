@@ -64,12 +64,27 @@ Definition of Done verified: every application value is accepted by its DOMAIN a
 
 Deliberately not done here: no table. The DOMAINs exist to be reused as column types from P1-06 onward.
 
-### P1-05 — NEXT implementation task
-Owner boundary and the minimal authentication model. Not started.
+### P1-05 — DONE
+Owner boundary and the minimal owner model.
 
-`owner_id` on the Memory Server is the source of truth for ownership; an AI vendor's account id must not stand in for it. Teams, sharing and organisation RBAC are out of scope for this phase.
+- [x] `owner_id` is a Memory Server managed UUID, independent of any AI vendor or provider account
+- [x] `public.owners` created by a new migration; P1-03 and P1-04 migrations unchanged
+- [x] `OwnerId` validated and branded, so an arbitrary string is not an owner
+- [x] `OwnerContext` resolved from `MEMORY_OWNER_ID`, only for owner-aware operations
+- [x] fail closed on missing, malformed and unknown owner, as distinguishable reasons
+- [x] `npm run owner:bootstrap`, idempotent and non-destructive
+- [x] owner-scoped reads go through the context and cannot name another owner
 
-### P1-06 onward
+Definition of Done verified: all three failure modes and the success path were exercised against the real database; owner A and owner B each read only their own record while both rows exist; bootstrap run twice left `created_at` unchanged; and after `db:reset` the three migrations reapplied in order, resolution failed closed until bootstrap ran again, then succeeded.
+
+Deliberately not done here: no credential, token, session or provider mapping. HTTP request auth context is P2-01; credential lifecycle and revocation are P3-04.
+
+### P1-06 — NEXT implementation task
+Project table. Not started.
+
+Depends on P1-04 and P1-05, both satisfied. Every Project belongs to an owner, and access outside that owner must not be possible. Automatic detection of a project from repo or working directory is not part of this task.
+
+### P1-07 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:
