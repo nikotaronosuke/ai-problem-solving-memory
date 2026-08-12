@@ -273,3 +273,36 @@ If a single identifier spanning every kind of write is ever needed — an operat
 Appending a Verification with `result = true` does not move the Problem to `VERIFIED`, and there is no trigger preventing `VERIFIED` without one.
 
 Deciding a Problem is solved is a domain judgement, made in P2-06 after checking that a successful Verification exists. Making it a side effect of a write would put the rule in the storage layer, where it could not account for the rest of the transition rules, and splitting it across both layers would leave neither owning it.
+
+## D-034 — RESTRICT is the schema-wide delete policy (P1-11)
+
+Every foreign key in the schema deletes with `restrict`. This is now a stated policy rather than five separate per-table decisions, and it is confirmed by a catalog test rather than by convention.
+
+Memory is the user's history and evidence. Deleting a Project must not take its Environments, Problems, Events and Verifications with it as a side effect — the value of the record is precisely that it survives. Cascade would make an entire subtree removable by one statement that does not mention it.
+
+No cascade, and no trigger that simulates one.
+
+RESTRICT does not make removal impossible, only implicit removal. A deliberate hard delete performs the deletions in order, from the leaves up: Events and Verifications, then Problem, Environment, Project, Owner. The integrity test exercises that order to keep it demonstrably possible.
+
+The hard-delete service itself is not implemented here; it belongs to a later phase. Export is not a precondition for deletion — that would be a separate policy decision, and inventing it now would constrain a workflow that has not been designed.
+
+## D-035 — Initial index set (P1-11)
+
+Indexes exist for the access paths the code actually has, not for paths it might acquire.
+
+- `events (owner_id, problem_id, created_at, event_id)` — one index covering the list query's filter and its sort together, per D-029's ordering
+- `verifications (owner_id, problem_id, created_at, verification_id)` — the same shape
+- `problems (owner_id, project_id, created_at, problem_id)` — listing a project's problems in order
+- `problems (owner_id, project_id, environment_id)` — kept: it serves the environment foreign key and its RESTRICT check, a different path from the one above
+
+Where an ordered index replaced a shorter one on the same leading columns, the shorter one was dropped rather than kept alongside. Its left prefix is still served, and two indexes leading with the same columns cost a write on every insert for nothing.
+
+The same reasoning removed two indexes the audit found redundant against a unique index's left prefix: `projects (owner_id)` and `environments (owner_id, project_id)`. A test now fails if any index on a table is a left prefix of another on that table.
+
+Vector, embedding and full-text indexes belong to the retrieval phase. Planner behaviour is deliberately not asserted: on a small test database a sequential scan is often the correct choice, so a test demanding an index scan would be testing the planner rather than the schema.
+
+## D-036 — P1-11 is a review, not a feature (P1-11)
+
+P1-11 added no entity, value set, column, API or repository abstraction. The audit found the foreign keys, delete actions, `client_event_id` uniqueness and NOT NULL policy already correct, so the migration changes only indexes.
+
+Nullable columns were left nullable. Tightening one because it looks safe would encode an assumption the entity task deliberately avoided: those values can genuinely be unknown.

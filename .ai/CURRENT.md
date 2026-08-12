@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-10 are complete. P1-11 has not been started.
+P1-01 through P1-11 are complete. P1-12 has not been started.
 
 ## P1-01 — DONE
 
@@ -197,16 +197,37 @@ Established:
 
 Recording a successful Verification does **not** move the Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That transition is P2-06's decision, made after checking the evidence exists.
 
+## P1-11 — DONE
+
+Schema-wide integrity and index review. No new entity, value set or column — the audit found the foreign keys, delete actions and NOT NULL policy already correct, so the migration changes only indexes.
+
+Audited and confirmed unchanged:
+- All five foreign keys form a complete chain and every one deletes with `restrict`. That is now the stated schema-wide policy rather than five separate decisions
+- Owner existence is guaranteed transitively along the composite chain; no redundant owner foreign keys exist
+- `client_event_id` is `not null` and unique per `(owner_id, client_event_id)` in each of `events` and `verifications`, with the namespaces deliberately separate
+- Required and nullable columns match the intended policy on all six tables. Nothing was tightened for looking safe — a nullable column is nullable because the value can genuinely be unknown
+
+Index changes:
+- `events`: replaced `(owner_id, problem_id)` with `(owner_id, problem_id, created_at, event_id)`, so one index covers the list query's filter and its sort. The left prefix still serves the foreign key and RESTRICT check
+- `verifications`: the same, as `(owner_id, problem_id, created_at, verification_id)`
+- `problems`: added `(owner_id, project_id, created_at, problem_id)` for listing a project's problems. The existing `(owner_id, project_id, environment_id)` index stays — it serves the environment foreign key, a different path
+- Dropped two indexes the audit found redundant: `projects (owner_id)` and `environments (owner_id, project_id)` were both already covered by the left prefix of a unique index on the same table
+
+`tests/db/integrity.integration.test.ts` checks the schema as a whole: the foreign key list, every delete action, orphan prevention at each level, deletion succeeding in leaf-to-root order, required and optional column sets, `client_event_id` uniqueness, the index catalogue, and that no index is a left prefix of another.
+
+Vector, embedding and full-text indexes remain with the retrieval phase.
+
 ## Immediate objective
 
-P1-11 — database integrity and the initial indexes.
+P1-12 — the repository layer and minimal storage interface.
 
-Not started. This is the review pass over what the entity tasks built: foreign key integrity, the indexes owner scope and `created_at` ordering need, NOT NULL policy, unique `client_event_id`, and an explicit statement of the cascade/restrict policy across the whole schema.
+Not started. Phase 2 builds on this boundary, so it needs to be the seam where PostgreSQL and Supabase specifics stop.
 
 Notes for whoever picks this up:
-- Every foreign key so far is `on delete restrict`, decided per table. P1-11 is where that becomes a stated schema-wide policy
-- Each table has an index on its owner-scoped foreign key; ordering and retrieval indexes have deliberately been left to this task
-- Vector and full-text indexes belong to the retrieval phase, not here
+- The operations needed are create/get Project, create/get Environment, create/get Problem, append/list Event, append/list Verification — all of which exist in `src/db/` already
+- The task is to give them a coherent boundary rather than to add behaviour. Resist widening the surface while doing it
+- Owner scope must be enforced at the repository boundary too, not only in the callers
+- P1-13 is the Phase 1 integration test, and P1-14 closes the phase
 
 ## Module boundary reminder
 
