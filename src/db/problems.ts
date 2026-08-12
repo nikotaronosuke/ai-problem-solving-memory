@@ -26,7 +26,7 @@ import {
 } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
 import { normaliseOptionalText } from '../domain/text.js';
-import type { DatabasePool } from './pool.js';
+import type { DatabaseExecutor } from './executor.js';
 
 const OWNER_PROJECT_ENVIRONMENT_FK = 'problems_owner_project_environment_fkey';
 
@@ -155,7 +155,7 @@ const PROBLEM_COLUMNS = `problem_id, owner_id, project_id, environment_id, title
  * enabled, not suppressed, not important, version 1.
  */
 export async function createProblem(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   input: CreateProblemInput,
 ): Promise<ProblemRecord> {
@@ -168,7 +168,7 @@ export async function createProblem(
 
   let result;
   try {
-    result = await pool.query<ProblemRow>(
+    result = await executor.query<ProblemRow>(
       `insert into public.problems
               (problem_id, owner_id, project_id, environment_id, title, symptoms,
                problem_domain, suspected_boundary, source_ai)
@@ -211,11 +211,11 @@ export async function createProblem(
  * two are indistinguishable to the caller by design.
  */
 export async function getProblem(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   problemId: ProblemId,
 ): Promise<ProblemRecord | undefined> {
-  const result = await pool.query<ProblemRow>(
+  const result = await executor.query<ProblemRow>(
     `select ${PROBLEM_COLUMNS}
        from public.problems
       where owner_id = $1 and problem_id = $2`,
