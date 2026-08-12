@@ -79,12 +79,27 @@ Definition of Done verified: all three failure modes and the success path were e
 
 Deliberately not done here: no credential, token, session or provider mapping. HTTP request auth context is P2-01; credential lifecycle and revocation are P3-04.
 
-### P1-06 — NEXT implementation task
-Project table. Not started.
+### P1-06 — DONE
+Project table.
 
-Depends on P1-04 and P1-05, both satisfied. Every Project belongs to an owner, and access outside that owner must not be possible. Automatic detection of a project from repo or working directory is not part of this task.
+- [x] `public.projects` created by a new migration; earlier migrations unchanged
+- [x] `project_id` is an application-issued UUID with no database default
+- [x] `owner_id` is `not null` and references `owners.owner_id` with `on delete restrict`
+- [x] `project_name` required, blank rejected in the application and by a CHECK
+- [x] `repo` and `platform` nullable free-form text, provider-independent
+- [x] create and get both require an `OwnerContext`; the owner never comes from input
+- [x] owner-scoped reads, with another owner's project indistinguishable from absent
 
-### P1-07 onward
+Definition of Done verified against the real database: a project created under owner A is readable by A and invisible to B in both directions; an unknown id and another owner's id give the identical absent answer while the row demonstrably exists; a project for a nonexistent owner is refused by the foreign key; deleting an owner with a project is refused by RESTRICT and permitted once the projects are gone; and after `db:reset` all four migrations reapplied in order.
+
+Deliberately not done here: no project detection from repo or working directory, and no general repository layer (P1-12).
+
+### P1-07 — NEXT implementation task
+Environment table. Not started.
+
+Depends on P1-06, which is satisfied. Environment records the conditions at the time a problem occurred and belongs to a Project. The spec is explicit that a full package listing must not be required — keep it to a relevant-conditions snapshot.
+
+### P1-08 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:
