@@ -56,9 +56,10 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
     );
 
     // P1-05 adds `owners`, P1-06 `projects`, P1-07 `environments`, P1-08
-    // `problems`. Event, Verification and Relation are from P1-09 onward.
+    // `problems`, P1-09 `events`. Verification and Relation are from P1-10 on.
     expect(result.rows.map((row) => row.table_name).sort()).toEqual([
       'environments',
+      'events',
       'owners',
       'problems',
       'projects',

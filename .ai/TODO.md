@@ -124,12 +124,27 @@ Definition of Done verified against the real database: a new Problem starts `INV
 
 Deliberately not done here: no update path, no state transition rules, no VERIFIED enforcement and no `version` increment. Those are P2-06 and P2-07.
 
-### P1-09 — NEXT implementation task
-Event table. Not started.
+### P1-09 — DONE
+Event table.
 
-Depends on P1-08, which is satisfied. Events are append-only, and `client_event_id` needs a unique constraint so a retry cannot double-register. The table must not become a home for raw conversations, raw logs or large code dumps.
+- [x] `public.events` created by a new migration; earlier migrations unchanged
+- [x] append-only, with no update path and no application delete path
+- [x] `event_id` is an application-issued UUID with no database default
+- [x] `client_event_id` required, caller-issued, unique per `(owner_id, client_event_id)`
+- [x] owner/problem consistency guaranteed by a composite foreign key
+- [x] `summary` required and non-blank; the other text fields nullable and free-form
+- [x] stable ordering by `created_at` then `event_id`
 
-P1-10 (Verification) can proceed in parallel once P1-08 is satisfied, which it is.
+Definition of Done verified against the real database: multiple events append to one Problem and list in order, with ties broken deterministically; all six event types are accepted and an invalid one is refused by the DOMAIN; a duplicate `client_event_id` is refused, including when retried against a different Problem, while a different owner may reuse the same value; appending to an unknown Problem and to another owner's fail with the identical error; a mismatched owner/problem pair is refused even in raw SQL; owner A and B cannot see each other's events; deleting a Problem with events is refused and permitted once they are gone; and after `db:reset` all seven migrations reapplied in order.
+
+Deliberately not done here: duplicate replay is P2-04, not a rejection turned into a returned original.
+
+### P1-10 — NEXT implementation task
+Verification table. Not started.
+
+Depends on P1-08, which is satisfied. A fix and the confirmation that it worked are separate records, so Verification must stand on its own rather than hanging off an Event. It reuses `ClientEventId` and the same `(owner_id, client_event_id)` uniqueness.
+
+The rule that `VERIFIED` requires a successful Verification belongs to P2-06.
 
 ### P1-11 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.

@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-08 are complete. P1-09 has not been started.
+P1-01 through P1-09 are complete. P1-10 has not been started.
 
 ## P1-01 — DONE
 
@@ -159,17 +159,36 @@ Established:
 
 Storage only. Status transitions, the rule that `VERIFIED` requires a successful Verification, and optimistic locking are Phase 2 (P2-06, P2-07), and are deliberately not anticipated here.
 
+## P1-09 — DONE
+
+The Event table. Tables are now `owners`, `projects`, `environments`, `problems` and `events`.
+
+Established:
+- `public.events` holds every field the specification lists, with `event_id` an application-issued UUID and no database default
+- Append-only. There is no update path, no `updated_at`, no trigger and no application delete path. A later correction is another Event, which is what `USER_CORRECTION` is for
+- `client_event_id` is a required UUID the caller mints before its first attempt and reuses on retry. `appendEvent` never generates one: an id minted per attempt would differ on every retry and protect nothing
+- Uniqueness is `(owner_id, client_event_id)` — scoped to the owner, not the Problem, so the same write cannot land twice even if retried against a different Problem, and not global, which would couple separate owners' namespaces
+- Owner and problem are checked as one pair by a composite foreign key to `problems (owner_id, problem_id)`, with `on delete restrict`
+- `summary` is required and non-blank in the application and by a database CHECK
+- `result`, `reason`, `source_ai` and `evidence_ref` are nullable free-form text; blank normalises to null
+- `evidence_ref` points at the material rather than containing it, and is deliberately unstructured in the MVP
+- Listing orders by `created_at` then `event_id`, so events sharing a timestamp still come back in a stable order
+
+P1-09 only refuses a duplicate `client_event_id`. Turning a duplicate into a replay of the original result is P2-04.
+
+`ClientEventId` is a shared domain type, ready for Verification to reuse.
+
 ## Immediate objective
 
-P1-09 — the Event table.
+P1-10 — the Verification table.
 
-Not started. Events are the append-only record of what happened while solving a Problem: `id`, `owner_id`, `problem_id`, `event_type`, `summary`, `result`, `reason`, `source_ai`, `evidence_ref`, `client_event_id`, `created_at`.
+Not started. Verification records how a fix was confirmed: `id`, `owner_id`, `problem_id`, `verification_type`, `result`, `summary`, `evidence_ref`, `verified_by`, `client_event_id`, `created_at`.
 
 Notes for whoever picks this up:
-- Events are append-only. Do not build an update path
-- `client_event_id` needs a unique constraint so retries cannot double-register; this is what later idempotency depends on
-- The table must not become a home for raw conversations, raw logs or large code dumps
-- P1-09 and P1-10 (Verification) can proceed in parallel
+- A fix and the confirmation that it worked are separate records. Verification must stand on its own, not hang off an Event
+- `client_event_id` reuses `src/domain/client-event-id.ts` and the same `(owner_id, client_event_id)` uniqueness
+- A model asserting "it works" is not a Verification
+- The rule that `VERIFIED` requires a successful Verification is P2-06, not here
 
 ## Module boundary reminder
 
