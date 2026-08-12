@@ -12,18 +12,12 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { isNormalisedUuid, normaliseUuid } from './uuid.js';
+
 declare const ownerIdBrand: unique symbol;
 
 /** A validated owner identifier. Always lowercase. */
 export type OwnerId = string & { readonly [ownerIdBrand]: true };
-
-/**
- * RFC 4122 layout, versions 1–8 with a valid variant nibble.
- *
- * The all-zero nil UUID fails this, which is intended: it is a placeholder,
- * not an owner.
- */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /** Raised when a value cannot be an owner id. Never echoes the value. */
 export class InvalidOwnerIdError extends Error {
@@ -37,24 +31,17 @@ export class InvalidOwnerIdError extends Error {
 
 /** Whether a value is already a well-formed, normalised owner id. */
 export function isOwnerId(value: unknown): value is OwnerId {
-  return typeof value === 'string' && UUID_PATTERN.test(value);
+  return isNormalisedUuid(value);
 }
 
-/**
- * Validates a string as an owner id.
- *
- * UUIDs are case-insensitive and PostgreSQL returns them lowercase, so the
- * value is normalised here. Otherwise the same owner could compare unequal
- * depending on which side it came from.
- */
+/** Validates a string as an owner id, normalising case and whitespace. */
 export function toOwnerId(value: string): OwnerId {
-  const normalised = value.trim().toLowerCase();
-
-  if (normalised === '') {
+  if (value.trim() === '') {
     throw new InvalidOwnerIdError('it is empty');
   }
 
-  if (!UUID_PATTERN.test(normalised)) {
+  const normalised = normaliseUuid(value);
+  if (normalised === undefined) {
     throw new InvalidOwnerIdError('it is not a UUID');
   }
 

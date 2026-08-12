@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-05 are complete. P1-06 has not been started.
+P1-01 through P1-06 are complete. P1-07 has not been started.
 
 ## P1-01 — DONE
 
@@ -108,13 +108,29 @@ Supabase Auth remains disabled and no RLS policy is defined. Owner scoping is en
 
 Scope held: this is the local development path only. HTTP request auth context is P2-01, and client credentials and revocation are P3-04.
 
+## P1-06 — DONE
+
+The Project table and the first owner-scoped data. Tables are now `owners` and `projects`.
+
+Established:
+- `public.projects` holds `project_id`, `owner_id`, `project_name`, `repo`, `platform`, `created_at`, `updated_at`
+- `project_id` is an application-issued UUID with no database default, matching `owner_id`. It is not derived from a repository or hosting provider
+- `owner_id` is `not null` and references `owners.owner_id` with `on delete restrict`, so deleting an owner that still has projects fails rather than quietly taking Memory with it
+- `project_name` is required, and blank is rejected in the application and by a database CHECK
+- `repo` and `platform` are nullable free-form text. A project may have no repository and an undetermined platform; neither is an enum, a URL, unique, or tied to a provider
+- `createProject` and `getProject` both take an `OwnerContext`. The owner comes from the context, never from caller input, and reads are scoped by `owner_id` alongside `project_id`
+- Another owner's project reads as absent, identically to one that does not exist, so the answer cannot confirm the id exists
+- `ProjectId` is branded and validated like `OwnerId`; the shared UUID rule now lives in `src/domain/uuid.ts` rather than being restated per entity
+
+Detecting a project from repo or working directory is deliberately not implemented. The general repository layer remains P1-12.
+
 ## Immediate objective
 
-P1-06 — the Project table.
+P1-07 — the Environment table.
 
-Not started. Project carries `project_id`, `owner_id`, `project_name`, `repo`, `platform`, `created_at`, `updated_at`, and must be reachable only within an owner scope.
+Not started. Environment is the snapshot of conditions at the time a problem occurred — OS, device, framework, runtime, browser, SDK, library, relevant versions, deployment, branch, commit — and belongs to a Project.
 
-Note for whoever picks this up: `owners.owner_id` is the foreign key target for every owner-scoped table from here on, and the P1-04 DOMAINs are meant to be reused as column types. Automatic project detection from repo or working directory is explicitly not part of P1-06.
+Note for whoever picks this up: the spec is explicit that a full package listing must not be required. Keep the responsibility to a relevant-conditions snapshot rather than a complete dependency dump.
 
 ## Module boundary reminder
 
