@@ -24,7 +24,7 @@ import {
 } from '../domain/environment.js';
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
 import type { ProjectId } from '../domain/project.js';
-import type { DatabasePool } from './pool.js';
+import type { DatabaseExecutor } from './executor.js';
 
 const OWNER_PROJECT_FK = 'environments_owner_id_project_id_fkey';
 
@@ -98,7 +98,7 @@ const ENVIRONMENT_COLUMNS = 'environment_id, owner_id, project_id, snapshot, cre
  * relevant conditions have not been captured yet.
  */
 export async function createEnvironment(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   input: CreateEnvironmentInput,
 ): Promise<EnvironmentRecord> {
@@ -107,7 +107,7 @@ export async function createEnvironment(
 
   let result;
   try {
-    result = await pool.query<EnvironmentRow>(
+    result = await executor.query<EnvironmentRow>(
       `insert into public.environments (environment_id, owner_id, project_id, snapshot)
             values ($1, $2, $3, $4)
          returning ${ENVIRONMENT_COLUMNS}`,
@@ -137,11 +137,11 @@ export async function createEnvironment(
  * two are indistinguishable to the caller by design.
  */
 export async function getEnvironment(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
   environmentId: EnvironmentId,
 ): Promise<EnvironmentRecord | undefined> {
-  const result = await pool.query<EnvironmentRow>(
+  const result = await executor.query<EnvironmentRow>(
     `select ${ENVIRONMENT_COLUMNS}
        from public.environments
       where owner_id = $1 and environment_id = $2`,

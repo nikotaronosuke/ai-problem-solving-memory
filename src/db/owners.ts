@@ -16,7 +16,7 @@
  */
 
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
-import type { DatabasePool } from './pool.js';
+import type { DatabaseExecutor } from './executor.js';
 
 export interface OwnerRecord {
   readonly ownerId: OwnerId;
@@ -40,10 +40,10 @@ function toRecord(row: OwnerRow): OwnerRecord {
  * Application code should use `getOwnerForContext` instead.
  */
 export async function findOwnerRecord(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   ownerId: OwnerId,
 ): Promise<OwnerRecord | undefined> {
-  const result = await pool.query<OwnerRow>(
+  const result = await executor.query<OwnerRow>(
     'select owner_id, created_at from public.owners where owner_id = $1',
     [ownerId],
   );
@@ -58,10 +58,10 @@ export async function findOwnerRecord(
  * The context supplies the id, so this cannot be pointed at another owner.
  */
 export async function getOwnerForContext(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   context: OwnerContext,
 ): Promise<OwnerRecord | undefined> {
-  return findOwnerRecord(pool, context.ownerId);
+  return findOwnerRecord(executor, context.ownerId);
 }
 
 export interface OwnerInsertResult {
@@ -77,10 +77,10 @@ export interface OwnerInsertResult {
  * exactly as it was, including `created_at`. It never touches other rows.
  */
 export async function insertOwnerIfAbsent(
-  pool: DatabasePool,
+  executor: DatabaseExecutor,
   ownerId: OwnerId,
 ): Promise<OwnerInsertResult> {
-  const inserted = await pool.query<OwnerRow>(
+  const inserted = await executor.query<OwnerRow>(
     `insert into public.owners (owner_id)
           values ($1)
      on conflict (owner_id) do nothing
@@ -93,7 +93,7 @@ export async function insertOwnerIfAbsent(
     return { owner: toRecord(insertedRow), created: true };
   }
 
-  const existing = await findOwnerRecord(pool, ownerId);
+  const existing = await findOwnerRecord(executor, ownerId);
   if (existing === undefined) {
     // Only reachable if the row disappeared between the two statements.
     throw new Error('Owner could not be created or found.');

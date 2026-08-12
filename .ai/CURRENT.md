@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-11 are complete. P1-12 has not been started.
+P1-01 through P1-12 are complete. P1-13 has not been started.
 
 ## P1-01 — DONE
 
@@ -217,17 +217,31 @@ Index changes:
 
 Vector, embedding and full-text indexes remain with the retrieval phase.
 
+## P1-12 — DONE
+
+The repository layer. No new storage behaviour, no migration, no schema change — the existing database functions were not rewritten, only given a boundary.
+
+Established:
+- `MemoryRepository` in `src/repository/`, created by `createMemoryRepository(executor, ownerContext)`
+- A repository is owner-scoped. `OwnerContext` is fixed at creation, and **no method takes an owner argument**, so a caller cannot name a different owner. The service layer uses an already-scoped repository rather than passing an owner to every query
+- Ten operations, the Phase 1 minimum: create/get Project, create/get Environment, create/get Problem, append/list Event, append/list Verification
+- A thin facade. No SQL is written in the repository, and PostgreSQL error codes are not reinterpreted — error mapping stays in the database layer so two layers cannot disagree about what a failure means
+- `DatabaseExecutor` in `src/db/executor.ts` is the minimal boundary: `query` and nothing else. Entity functions now take an executor rather than a pool, so the same code runs against a pool or against a client checked out for a transaction
+- The repository does not own a transaction. It uses the executor it is given; a service that needs `begin`/`commit` builds a repository over its client, and nothing below changes
+- `createPool` / `closePool` and health keep taking `DatabasePool` — pool lifecycle is a different concern and was left alone
+
+Architecture is checked, not assumed. `tests/architecture.test.ts` verifies that `src/domain/` imports no driver, storage or vendor module and contains no SQL; that the repository writes no SQL and imports no driver; that its public surface exposes no pool or client type; and that only `db/config.ts`, `db/executor.ts` and `db/pool.ts` name `pg` at all.
+
 ## Immediate objective
 
-P1-12 — the repository layer and minimal storage interface.
+P1-13 — the Phase 1 integration test.
 
-Not started. Phase 2 builds on this boundary, so it needs to be the seam where PostgreSQL and Supabase specifics stop.
+Not started. One scenario end to end: establish an owner context, create Project, Environment and Problem, append HYPOTHESIS, ATTEMPT, DEAD_END and FIX events, append a Verification, then re-read everything within owner scope.
 
 Notes for whoever picks this up:
-- The operations needed are create/get Project, create/get Environment, create/get Problem, append/list Event, append/list Verification — all of which exist in `src/db/` already
-- The task is to give them a coherent boundary rather than to add behaviour. Resist widening the surface while doing it
-- Owner scope must be enforced at the repository boundary too, not only in the callers
-- P1-13 is the Phase 1 integration test, and P1-14 closes the phase
+- The required negative cases are: another owner cannot read it, another owner cannot append to it, a duplicate `client_event_id` is refused, an invalid enum value is refused, and a foreign key violation is refused
+- It must be reproducible from a clean database, so it needs to create its own owner rather than relying on the developer's
+- `tests/repository/memory-repository.integration.test.ts` already covers the repository surface; P1-13 is the whole-phase scenario, not a repeat of it
 
 ## Module boundary reminder
 
