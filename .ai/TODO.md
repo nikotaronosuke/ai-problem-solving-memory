@@ -50,14 +50,26 @@ Definition of Done verified: the service reaches the database (`select 1`), `db 
 
 Deliberately not done here: no domain schema. The baseline migration adds none.
 
-### P1-04 — NEXT implementation task
-Shared enum / domain type definitions, kept consistent between application types and database constraints. Not started.
+### P1-04 — DONE
+Shared enum / domain type definitions, kept consistent between application types and database constraints.
 
-Depends on P1-03, which is satisfied. P1-05 (owner boundary and minimal auth model) can proceed in parallel.
+- [x] six value sets defined in TypeScript as readonly tuples with derived types
+- [x] values available at runtime, not only as types
+- [x] the same sets enforced in PostgreSQL as text-backed DOMAINs with CHECK constraints
+- [x] no PostgreSQL native ENUM type used
+- [x] added by a new migration; the P1-03 baseline is unchanged
+- [x] invalid values rejected by the database, including case and whitespace variants
 
-This is where the first real DDL lands.
+Definition of Done verified: every application value is accepted by its DOMAIN against the real database, representative invalid values are rejected, and a divergence between TypeScript and the database fails the test suite. Confirmed by injecting a TypeScript-only value and observing the failure.
 
-### P1-05 onward
+Deliberately not done here: no table. The DOMAINs exist to be reused as column types from P1-06 onward.
+
+### P1-05 — NEXT implementation task
+Owner boundary and the minimal authentication model. Not started.
+
+`owner_id` on the Memory Server is the source of truth for ownership; an AI vendor's account id must not stand in for it. Teams, sharing and organisation RBAC are out of scope for this phase.
+
+### P1-06 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:
