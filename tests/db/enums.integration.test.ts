@@ -66,13 +66,21 @@ describe.skipIf(databaseUrl === undefined)('domain enums in the database', () =>
     expect(domains.sort()).toEqual(ENUM_DOMAIN_BINDINGS.map((b) => b.domainName).sort());
   });
 
-  it('creates no table, since P1-04 defines value sets only', async () => {
+  it('introduces no table of its own, since it defines value sets only', async () => {
     const result = await pool.query<{ table_name: string }>(
       'select table_name from information_schema.tables where table_schema = $1',
       [ENUM_DOMAIN_SCHEMA],
     );
 
-    expect(result.rows).toEqual([]);
+    const tables = result.rows.map((row) => row.table_name);
+
+    // Tables the value sets will eventually be used by, none of which exist yet.
+    expect(tables).not.toContain('projects');
+    expect(tables).not.toContain('environments');
+    expect(tables).not.toContain('problems');
+    expect(tables).not.toContain('events');
+    expect(tables).not.toContain('verifications');
+    expect(tables).not.toContain('relations');
   });
 
   describe.each(ENUM_DOMAIN_BINDINGS)('$domainName', (binding) => {

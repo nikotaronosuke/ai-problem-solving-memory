@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-04 are complete. P1-05 has not been started.
+P1-01 through P1-05 are complete. P1-06 has not been started.
 
 ## P1-01 — DONE
 
@@ -91,13 +91,30 @@ Drift between the two sides is a test failure, not a silent divergence. The inte
 
 Rejection is exact: lowercase, mixed case, padded, empty and unknown values are all refused. NULL is allowed, because nullability belongs to a column rather than to a value set.
 
+## P1-05 — DONE
+
+Ownership boundary and the minimal owner model. The first table exists: `public.owners`.
+
+Established:
+- `owner_id` is a UUID the Memory Server issues. It is not an AI vendor account id, a GitHub user id, or derived from any external provider
+- `public.owners` holds `owner_id uuid primary key` and `created_at` only. No email, username, provider, role or team. The column has no database-side default, so ownership is always supplied explicitly
+- `OwnerId` in `src/domain/owner.ts` is a branded string, so an arbitrary string cannot stand in for an owner. Values are validated as UUIDs and normalised to lowercase, which is how PostgreSQL returns them
+- `OwnerContext` is also branded and only produced by `resolveOwnerContext`, so owner-scoped work cannot begin before ownership is settled
+- Resolution reads `MEMORY_OWNER_ID` and fails closed with three distinguishable reasons: `MISSING`, `INVALID`, `UNKNOWN`. A valid UUID with no row is still a refusal
+- The read path takes an `OwnerContext` and can only return that owner. There is no application API accepting an arbitrary owner id, so reading across the boundary is not expressible
+- `npm run owner:bootstrap` creates the local owner and is idempotent; it never updates or removes a row, and creates no credential
+
+Supabase Auth remains disabled and no RLS policy is defined. Owner scoping is enforced at the application boundary in this phase.
+
+Scope held: this is the local development path only. HTTP request auth context is P2-01, and client credentials and revocation are P3-04.
+
 ## Immediate objective
 
-P1-05 — owner boundary and the minimal authentication model.
+P1-06 — the Project table.
 
-Not started. `owner_id` on the Memory Server is the source of truth for ownership, and an AI vendor's account id must not be used as it. Supabase Auth is disabled in this repository for that reason.
+Not started. Project carries `project_id`, `owner_id`, `project_name`, `repo`, `platform`, `created_at`, `updated_at`, and must be reachable only within an owner scope.
 
-Note for whoever picks this up: no table exists yet. P1-05 and P1-06 introduce the first ones, and the DOMAINs from P1-04 are meant to be reused as column types.
+Note for whoever picks this up: `owners.owner_id` is the foreign key target for every owner-scoped table from here on, and the P1-04 DOMAINs are meant to be reused as column types. Automatic project detection from repo or working directory is explicitly not part of P1-06.
 
 ## Module boundary reminder
 

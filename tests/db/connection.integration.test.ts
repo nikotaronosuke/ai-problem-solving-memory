@@ -50,11 +50,12 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
     expect(Number(result.rows[0]?.count)).toBeGreaterThanOrEqual(1);
   });
 
-  it('has no domain tables yet, since the baseline adds none', async () => {
+  it('has only the tables the phase has reached', async () => {
     const result = await pool.query<{ table_name: string }>(
       "select table_name from information_schema.tables where table_schema = 'public'",
     );
 
-    expect(result.rows.map((row) => row.table_name)).toEqual([]);
+    // P1-05 adds `owners`. Everything else is designed from P1-06 onward.
+    expect(result.rows.map((row) => row.table_name).sort()).toEqual(['owners']);
   });
 });
