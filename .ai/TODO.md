@@ -154,14 +154,31 @@ Definition of Done verified against the real database: multiple Verifications ap
 
 Deliberately not done here: no automatic transition to `VERIFIED`, and no database-level ban on `VERIFIED` without a Verification. Both belong to P2-06. Duplicate replay is P2-05.
 
-### P1-11 — NEXT implementation task
-Database integrity and initial indexes. Not started.
+### P1-11 — DONE
+Database integrity and initial indexes.
 
-Depends on P1-06 through P1-10, all satisfied. This is the review pass: foreign key integrity, owner-scope and `created_at` ordering indexes, NOT NULL policy, unique `client_event_id`, and stating the cascade/restrict policy across the whole schema rather than per table.
+- [x] foreign key chain complete, every delete `restrict`, stated as schema-wide policy
+- [x] owner scope carried on every table; no redundant owner foreign keys
+- [x] ordered indexes for listing a problem's events and verifications
+- [x] index for listing a project's problems
+- [x] `client_event_id` unique per owner within each write table
+- [x] NOT NULL policy audited across all six tables; no change needed
+- [x] orphan prevention verified at every level
 
-Vector and full-text indexes belong to the retrieval phase, not this task.
+Definition of Done verified against the real database: an Event or Verification cannot be stored against a nonexistent Problem; no orphan can be created through any entry point, including raw SQL with mismatched owner/project/environment; deleting a parent with children is refused at every level while leaf-to-root deletion succeeds; the index catalogue matches intent with no index that is a left prefix of another; and after `db:reset` all nine migrations reapplied in order.
 
-### P1-12 onward
+Two redundant indexes were found and dropped — `projects (owner_id)` and `environments (owner_id, project_id)` were each already covered by a unique index's left prefix on the same table.
+
+Deliberately not done here: no hard-delete service, no new entity, no API, and no retrieval indexes.
+
+### P1-12 — NEXT implementation task
+Repository layer and minimal storage interface. Not started.
+
+Depends on P1-06 through P1-11, all satisfied. The operations already exist in `src/db/`; this task gives them a coherent boundary that Phase 2 can build on, keeping PostgreSQL and Supabase specifics from spreading. Owner scope must be enforced at the boundary itself, not only by callers.
+
+Resist widening the surface while reorganising it.
+
+### P1-13 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:
