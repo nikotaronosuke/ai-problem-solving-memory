@@ -79,21 +79,7 @@ export function toProjectName(value: string): string {
   return normalised;
 }
 
-/**
- * Normalises an optional free-form field such as `repo` or `platform`.
- *
- * Absent, blank and whitespace-only all collapse to null, so "unknown" has a
- * single representation rather than several that compare unequal.
- *
- * These fields are deliberately unconstrained beyond this: a project may have
- * no repository, a platform may be undetermined, and pinning either to a
- * provider-specific shape would bake an assumption in too early.
- */
-export function normaliseOptionalText(value: string | null | undefined): string | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  const normalised = value.trim();
-  return normalised === '' ? null : normalised;
-}
+// `repo` and `platform` are normalised by `normaliseOptionalText` in
+// `./text.js` and are otherwise unconstrained: a project may have no
+// repository, a platform may be undetermined, and pinning either to a
+// provider-specific shape would bake an assumption in too early.

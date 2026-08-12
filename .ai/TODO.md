@@ -110,12 +110,28 @@ Definition of Done verified against the real database: snapshots round-trip nest
 
 Deliberately not done here: no update path, and no search indexes beyond the foreign key's.
 
-### P1-08 — NEXT implementation task
-Problem table. Not started.
+### P1-08 — DONE
+Problem table.
 
-Depends on P1-04 through P1-07, all satisfied. This is the first table to use the P1-04 DOMAINs as column types. `version` must exist from the start for later optimistic locking; read/write flags default true and `suppressed` defaults false, and the two are separate concepts.
+- [x] `public.problems` created by a new migration; earlier migrations unchanged
+- [x] `problem_id` is an application-issued UUID with no database default
+- [x] correctly related to Project and Environment, with owner scope enforced
+- [x] P1-04 DOMAINs used for `status`, `fix_kind`, `confidence`, `freshness`
+- [x] default flags as specified, and invalid enum values rejected
+- [x] `version` present with a `>= 1` check, for later optimistic locking
 
-### P1-09 onward
+Definition of Done verified against the real database: a new Problem starts `INVESTIGATING` / `LOW` / `CURRENT`, reads and writes enabled, not suppressed, not important, version 1, `fix_kind` null; blank title and symptoms are refused by both the application and CHECKs; a null environment, a version below one, and invalid `status`, `fix_kind`, `confidence` and `freshness` values are all refused; an unknown environment, another owner's environment and an environment under a different project fail with the identical error; a mismatched owner/project/environment triple is refused even in raw SQL; owner A and B cannot see each other's problems in either direction, with another owner's problem indistinguishable from absent; deleting an environment a Problem depends on is refused and permitted once the Problem is gone; there is no trigger on the table; and after `db:reset` all six migrations reapplied in order.
+
+Deliberately not done here: no update path, no state transition rules, no VERIFIED enforcement and no `version` increment. Those are P2-06 and P2-07.
+
+### P1-09 — NEXT implementation task
+Event table. Not started.
+
+Depends on P1-08, which is satisfied. Events are append-only, and `client_event_id` needs a unique constraint so a retry cannot double-register. The table must not become a home for raw conversations, raw logs or large code dumps.
+
+P1-10 (Verification) can proceed in parallel once P1-08 is satisfied, which it is.
+
+### P1-11 onward
 Proceed only after dependencies and each task's Definition of Done are satisfied.
 
 Phase 1 order:

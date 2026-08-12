@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01 through P1-07 are complete. P1-08 has not been started.
+P1-01 through P1-08 are complete. P1-09 has not been started.
 
 ## P1-01 — DONE
 
@@ -141,17 +141,35 @@ Established:
 
 The snapshot is explicitly not a dependency dump, a log store or a place for secrets.
 
+## P1-08 — DONE
+
+The Problem table, the centre of the model. Tables are now `owners`, `projects`, `environments` and `problems`.
+
+Established:
+- `public.problems` holds every field the specification lists, with `problem_id` an application-issued UUID and no database default
+- First table to use the P1-04 DOMAINs as column types: `status`, `fix_kind`, `confidence`, `freshness`
+- `environment_id` is `not null`. When conditions are not known the Environment carries an empty snapshot, so "not known yet" has one representation rather than two
+- Owner, project and environment are checked as one triple by a composite foreign key to `environments (owner_id, project_id, environment_id)`. A Problem cannot reference another owner's environment, nor one under a different project
+- `title` and `symptoms` are required and non-blank in the application and by database CHECKs. `symptoms` is free-form text, not an array or structured shape
+- `problem_domain`, `suspected_boundary` and `source_ai` are nullable free-form text; blank normalises to null
+- Initial values come from database defaults, not from caller input: `INVESTIGATING`, confidence `LOW`, freshness `CURRENT`, reads and writes enabled, not suppressed, not important, `version` 1
+- `importance` is a boolean, independent of `confidence`
+- `version` exists with a `>= 1` check, and nothing increments it yet
+- `updated_at` exists with no trigger
+
+Storage only. Status transitions, the rule that `VERIFIED` requires a successful Verification, and optimistic locking are Phase 2 (P2-06, P2-07), and are deliberately not anticipated here.
+
 ## Immediate objective
 
-P1-08 — the Problem table.
+P1-09 — the Event table.
 
-Not started. Problem is the centre of the model and the largest table in Phase 1: `id`, `owner_id`, `project_id`, `environment_id`, `title`, `status`, `fix_kind`, `problem_domain`, `symptoms`, `suspected_boundary`, `source_ai`, `importance`, `confidence`, `freshness`, the three flags, `version`, and timestamps.
+Not started. Events are the append-only record of what happened while solving a Problem: `id`, `owner_id`, `problem_id`, `event_type`, `summary`, `result`, `reason`, `source_ai`, `evidence_ref`, `client_event_id`, `created_at`.
 
 Notes for whoever picks this up:
-- This is the first table to use the P1-04 DOMAINs as column types
-- `version` exists from the start for later optimistic locking, even though nothing uses it in Phase 1
-- `memory_read_enabled` and `memory_write_enabled` default true, `suppressed` defaults false; read/write control and suppression are separate concepts
-- Full `VERIFIED` consistency is Phase 2, but the schema must not make it impossible
+- Events are append-only. Do not build an update path
+- `client_event_id` needs a unique constraint so retries cannot double-register; this is what later idempotency depends on
+- The table must not become a home for raw conversations, raw logs or large code dumps
+- P1-09 and P1-10 (Verification) can proceed in parallel
 
 ## Module boundary reminder
 

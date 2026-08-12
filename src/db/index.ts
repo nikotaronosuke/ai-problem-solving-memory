@@ -48,3 +48,11 @@ export {
   type CreateEnvironmentInput,
   type EnvironmentRecord,
 } from './environments.js';
+
+export {
+  createProblem,
+  getProblem,
+  EnvironmentNotAvailableError,
+  type CreateProblemInput,
+  type ProblemRecord,
+} from './problems.js';
