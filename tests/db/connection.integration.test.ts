@@ -55,7 +55,8 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
       "select table_name from information_schema.tables where table_schema = 'public'",
     );
 
-    // P1-05 adds `owners`. Everything else is designed from P1-06 onward.
-    expect(result.rows.map((row) => row.table_name).sort()).toEqual(['owners']);
+    // P1-05 adds `owners`, P1-06 adds `projects`. Environment, Problem, Event,
+    // Verification and Relation are designed from P1-07 onward.
+    expect(result.rows.map((row) => row.table_name).sort()).toEqual(['owners', 'projects']);
   });
 });

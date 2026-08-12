@@ -31,3 +31,12 @@ export {
   type OwnerInsertResult,
   type OwnerRecord,
 } from './owners.js';
+
+// Both take an OwnerContext, so there is no project API that names an
+// arbitrary owner.
+export {
+  createProject,
+  getProject,
+  type CreateProjectInput,
+  type ProjectRecord,
+} from './projects.js';

@@ -107,3 +107,29 @@ P1-05 covers owner identity, local owner context and the owner boundary, and not
 Deliberately deferred: HTTP request auth context is P2-01. Client credentials, their lifecycle and revocation, and the separation of owner identity from client identity are P3-04.
 
 No token table, bearer token, OAuth flow, JWT, password, session, credential hash or provider account mapping exists in this phase, and none should be added ahead of the phase that owns it.
+
+## D-016 — Project ids are application-generated UUIDs (P1-06)
+
+`project_id` is a UUID issued by the application, stored as PostgreSQL `uuid` with no database-side default, and validated through a branded `ProjectId` type. It is not derived from a repository URL, a hosting provider id or anything outside this service.
+
+This follows the same reasoning as owner identity: an id that comes from a provider stops being stable when the provider does. Keeping generation in the application also means an id exists before the insert, which later phases need for idempotent writes.
+
+The shared UUID rule now lives in `src/domain/uuid.ts` so the layout check is written once rather than restated per entity.
+
+This decision is recorded for Project. It is a strong precedent for the entities that follow, not a blanket ruling for all of them — P1-07 onward confirm the fit at each entity rather than inheriting it silently.
+
+## D-017 — Owner foreign keys use ON DELETE RESTRICT (P1-06)
+
+`projects.owner_id` references `owners.owner_id` with `on delete restrict`. Deleting an owner that still has data fails.
+
+Cascade would let a single delete silently remove Memory, which contradicts the product invariant that Memory is the user's and that removal is deliberate. Refusing the delete makes the consequence visible and forces an explicit path.
+
+This sets the default for owner-scoped tables. The full delete lifecycle, including how an owner is ever removed and how cascade and restrict apply across the whole schema, is settled in P1-11.
+
+## D-018 — repo and platform are nullable free-form text (P1-06)
+
+`projects.repo` and `projects.platform` are nullable text with no enum, no unique constraint and no format requirement.
+
+A project may legitimately have no repository, and its platform may be undetermined. Constraining either now would encode a provider's shape — a GitHub URL, a fixed platform list — into the schema before the retrieval work has shown what the fields need to carry. Free-form text with null for "unknown" keeps that open.
+
+The only normalisation applied is trimming, with blank collapsing to null, so "unknown" has one representation rather than several that compare unequal.
