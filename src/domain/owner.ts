@@ -72,21 +72,15 @@ declare const ownerContextBrand: unique symbol;
  * Proof that an owner is established for the current operation.
  *
  * Owner-scoped work takes one of these rather than a bare id, so an operation
- * cannot begin before ownership is settled. A context is only produced by
- * `resolveOwnerContext`, which fails closed when the owner is missing,
- * malformed or absent from the database.
+ * cannot begin before ownership is settled.
+ *
+ * The brand is declared but never exported, and no constructor is offered
+ * here on purpose: holding a valid `OwnerId` is not the same as having
+ * confirmed that the owner exists. The only way to obtain a context is
+ * `resolveOwnerContext`, which checks the database and fails closed when the
+ * owner is missing, malformed or absent.
  */
 export interface OwnerContext {
   readonly ownerId: OwnerId;
   readonly [ownerContextBrand]: true;
-}
-
-/**
- * Builds a context.
- *
- * Internal to owner resolution. Calling this elsewhere would assert an
- * ownership that has not been verified against the database.
- */
-export function createOwnerContext(ownerId: OwnerId): OwnerContext {
-  return { ownerId } as OwnerContext;
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import * as ownerModule from '../../src/domain/owner.js';
 import {
   InvalidOwnerIdError,
-  createOwnerContext,
   generateOwnerId,
   isOwnerId,
   toOwnerId,
@@ -87,10 +87,13 @@ describe('generateOwnerId', () => {
   });
 });
 
-describe('createOwnerContext', () => {
-  it('carries the owner it was built for', () => {
-    const ownerId = toOwnerId(VALID_UUID);
+describe('OwnerContext construction', () => {
+  it('is not offered by this module, so a context cannot be asserted without a database check', () => {
+    // A valid OwnerId is not proof the owner exists. Contexts come only from
+    // `resolveOwnerContext`, which verifies existence and fails closed.
+    const exported = Object.keys(ownerModule);
 
-    expect(createOwnerContext(ownerId).ownerId).toBe(ownerId);
+    expect(exported).not.toContain('createOwnerContext');
+    expect(exported.filter((name) => /context/i.test(name))).toEqual([]);
   });
 });
