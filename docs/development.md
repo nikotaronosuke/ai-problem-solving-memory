@@ -49,16 +49,24 @@ schema. They are plain SQL, applied in filename order.
 
 ```bash
 npm run db:migration:new <name>   # create a timestamped migration file
+npm run db:migrate                # apply pending migrations
 npm run db:reset                  # rebuild the local DB from scratch
 ```
 
-`db:reset` drops the local database and replays every migration in order, which
-is how you verify a migration works on a clean database. Run it before relying
-on any schema change.
+`db:migrate` applies migrations that have not run yet. `db:reset` drops the
+local database and replays every migration in order, which is how you verify a
+migration works on a clean database. Run `db:reset` before relying on any
+schema change.
 
-There is no domain schema yet. The baseline migration establishes the pipeline
-only; Owner, Project, Environment, Problem, Event and Verification are designed
-from P1-04 onward.
+There are no tables yet. So far the migrations establish the pipeline and the
+shared value sets — PostgreSQL DOMAINs over `text` with CHECK constraints,
+mirroring `src/domain/enums.ts`. Owner, Project, Environment, Problem, Event
+and Verification are designed from P1-05 onward, and will reuse those DOMAINs
+as column types.
+
+Changing an allowed value means changing both sides: the tuple in
+`src/domain/enums.ts` and a new migration. `tests/db/enums.integration.test.ts`
+fails if only one of them changes.
 
 ## Checking the database connection
 
@@ -88,6 +96,7 @@ the pool. It reports the host but never the connection string.
 | `npm run supabase:stop`    | Stop the local Supabase stack                   |
 | `npm run db:status`        | Show local stack URLs                           |
 | `npm run db:reset`         | Rebuild the local DB from migrations            |
+| `npm run db:migrate`       | Apply pending migrations                        |
 | `npm run db:migration:new` | Create a new migration file                     |
 | `npm run db:check`         | Verify the service can reach PostgreSQL         |
 
@@ -98,6 +107,7 @@ Run `npm run check` before reporting a task complete.
 | Path                   | Contents                                               |
 | ---------------------- | ------------------------------------------------------ |
 | `src/`                 | Service implementation                                 |
+| `src/domain/`          | Domain types and shared value sets                     |
 | `src/db/`              | Database access boundary — importing it opens nothing  |
 | `tests/`               | Automated tests, mirroring `src/`                      |
 | `supabase/migrations/` | Schema migrations, in filename order                   |

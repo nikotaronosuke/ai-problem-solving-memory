@@ -17,3 +17,8 @@ export {
 } from './config.js';
 export { closePool, createPool, type DatabasePool } from './pool.js';
 export { checkDatabaseConnection, type DatabaseHealth } from './health.js';
+export {
+  ENUM_DOMAIN_BINDINGS,
+  ENUM_DOMAIN_SCHEMA,
+  type EnumDomainBinding,
+} from './enum-domains.js';

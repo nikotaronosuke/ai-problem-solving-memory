@@ -18,7 +18,7 @@ Implementation Phase 1 — Foundation / Repository / Database
 
 Status: IN PROGRESS
 
-P1-01, P1-02 and P1-03 are complete. P1-04 has not been started.
+P1-01 through P1-04 are complete. P1-05 has not been started.
 
 ## P1-01 — DONE
 
@@ -77,13 +77,27 @@ Verified end to end: start → migration applied → `select 1` from the service
 
 Integration tests run against the local database when `DATABASE_URL` is set and skip cleanly when it is not.
 
+## P1-04 — DONE
+
+Shared value sets, defined once in TypeScript and enforced identically by PostgreSQL. Still no table.
+
+Established:
+- `src/domain/enums.ts` declares six sets as readonly tuples with types derived from them, so each value is written once: `ProblemStatus`, `FixKind`, `EventType`, `VerificationType`, `Confidence`, `Freshness`
+- The database enforces the same sets through text-backed DOMAINs with named CHECK constraints. PostgreSQL native ENUM types are not used
+- `src/db/enum-domains.ts` is the single place pairing each TypeScript set with its DOMAIN and constraint name
+- The P1-03 baseline migration is unchanged; the DOMAINs are added by a new migration
+
+Drift between the two sides is a test failure, not a silent divergence. The integration test casts every TypeScript value through its DOMAIN against the real database, and compares the constraint read back from PostgreSQL's own catalog with the TypeScript set. Adding a value on either side without the other fails. This was verified by injecting a TypeScript-only value and observing the failure.
+
+Rejection is exact: lowercase, mixed case, padded, empty and unknown values are all refused. NULL is allowed, because nullability belongs to a column rather than to a value set.
+
 ## Immediate objective
 
-P1-04 — shared enum / domain type definitions, consistent between application types and database constraints.
+P1-05 — owner boundary and the minimal authentication model.
 
-Not started. P1-04 and P1-05 can run in parallel once started.
+Not started. `owner_id` on the Memory Server is the source of truth for ownership, and an AI vendor's account id must not be used as it. Supabase Auth is disabled in this repository for that reason.
 
-Note for whoever picks this up: the baseline migration deliberately defines no schema. P1-04 is where the first real DDL lands.
+Note for whoever picks this up: no table exists yet. P1-05 and P1-06 introduce the first ones, and the DOMAINs from P1-04 are meant to be reused as column types.
 
 ## Module boundary reminder
 
