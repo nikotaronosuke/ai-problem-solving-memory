@@ -183,6 +183,22 @@ describe('transport layer', () => {
     expect([...internalTargets].some((target) => target.startsWith('app/'))).toBe(true);
     expect([...internalTargets].some((target) => target.startsWith('repository/'))).toBe(false);
   });
+
+  it('does not name a database-layer error type', async () => {
+    const modules = await readModules(join(SRC, 'http'));
+
+    // Transport maps application errors by type. Recognising a storage error
+    // here would make PostgreSQL part of the HTTP contract.
+    const offenders = modules
+      .filter((module) =>
+        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|DuplicateClientEventIdError|EmptyProjectUpdateError)\b/.test(
+          module.source,
+        ),
+      )
+      .map((module) => module.path);
+
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe('application layer', () => {
@@ -210,6 +226,28 @@ describe('application layer', () => {
         /\b(select\s|insert\s+into|update\s+public\.|delete\s+from)\b/i.test(module.source),
       )
       .map((module) => module.path);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('reaches the database only through the repository', async () => {
+    const modules = await readModules(join(SRC, 'app'));
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // `db/health` and `db/pool` are the exception the health probe needs:
+        // it reports on the pool itself, which no repository operation covers.
+        const reachesStorage =
+          specifier.includes('/db/') &&
+          !specifier.includes('/db/health') &&
+          !specifier.includes('/db/pool') &&
+          !specifier.includes('/db/executor');
+        if (reachesStorage) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
 
     expect(offenders).toEqual([]);
   });

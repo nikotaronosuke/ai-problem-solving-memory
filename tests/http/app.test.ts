@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createProjectEnvironmentService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type HealthReport,
@@ -51,6 +52,9 @@ function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> =
   return buildMemoryHttpApp({
     healthService: healthServiceReturning({ status: 'ok' }),
     requestContextService: contextServiceFor(OWNER_ID),
+    // Real service, stubbed repository: these tests are about the transport
+    // contract, and the routes it serves are covered in their own suite.
+    projectEnvironmentService: createProjectEnvironmentService(),
     logger: false,
     ...overrides,
   });

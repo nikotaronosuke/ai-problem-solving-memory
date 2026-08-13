@@ -151,3 +151,30 @@ export async function getEnvironment(
   const row = result.rows[0];
   return row === undefined ? undefined : toRecord(row);
 }
+
+/**
+ * Lists a project's environments, oldest first.
+ *
+ * `environment_id` breaks ties so repeated reads agree even when two snapshots
+ * share a timestamp.
+ *
+ * An empty list means "this owner has no environments under that project id".
+ * It does not distinguish a project with none from a project that is not the
+ * owner's — deciding what that means is the caller's job, and the application
+ * layer checks the project first so the two do not get conflated.
+ */
+export async function listEnvironments(
+  executor: DatabaseExecutor,
+  context: OwnerContext,
+  projectId: ProjectId,
+): Promise<EnvironmentRecord[]> {
+  const result = await executor.query<EnvironmentRow>(
+    `select ${ENVIRONMENT_COLUMNS}
+       from public.environments
+      where owner_id = $1 and project_id = $2
+      order by created_at asc, environment_id asc`,
+    [context.ownerId, projectId],
+  );
+
+  return result.rows.map(toRecord);
+}
