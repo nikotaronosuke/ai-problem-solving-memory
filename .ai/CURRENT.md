@@ -26,7 +26,7 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **JSON contract.** snake_case, shaped deliberately per response. Internal records are camelCase and are never serialised straight out, so an implementation detail cannot become the contract by accident.
 
-**Errors.** One envelope everywhere: `{ error: { code, message }, request_id }`. Codes are `INVALID_REQUEST`, `UNAUTHENTICATED`, `NOT_FOUND`, `INTERNAL_ERROR`. Fastify and Ajv error objects never reach a client, and an internal failure returns no stack, driver message or connection string.
+**Errors.** One envelope everywhere: `{ error: { code, message }, request_id }`. Codes are `INVALID_REQUEST`, `UNAUTHENTICATED`, `NOT_FOUND`, `VERSION_CONFLICT`, `INTERNAL_ERROR`. Fastify and Ajv error objects never reach a client, and an internal failure returns no stack, driver message or connection string.
 
 **Auth.** `/v1/me` requires an owner. A `preHandler` on the `/v1` scope calls the request-context service, which resolves the owner and hands back an owner-scoped `MemoryRepository` — a handler never sees an owner id it could pass anywhere. Missing, malformed and unknown owners are three entries in the log and one indistinguishable 401 to the client, so the endpoint is not an existence oracle.
 
@@ -304,7 +304,7 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
-- No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
+- No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
 - No client SDK or codegen, and no authentication scheme. The document declares no security scheme because no client credential contract exists yet
