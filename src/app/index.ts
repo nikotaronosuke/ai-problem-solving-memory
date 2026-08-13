@@ -15,7 +15,13 @@ export {
   type ProjectEnvironmentService,
   type UpdateProjectCommand,
 } from './project-environment-service.js';
-export type { EnvironmentRecord, ProjectRecord } from '../repository/index.js';
+export {
+  createProblemService,
+  type CreateProblemCommand,
+  type ProblemService,
+  type UpdateProblemCommand,
+} from './problem-service.js';
+export type { EnvironmentRecord, ProblemRecord, ProjectRecord } from '../repository/index.js';
 export {
   createRequestContextService,
   RequestContextUnavailableError,

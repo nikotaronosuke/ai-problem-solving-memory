@@ -20,7 +20,8 @@ export type { DatabaseExecutor } from '../db/executor.js';
 export type { CreateProjectInput, ProjectRecord, UpdateProjectInput } from '../db/projects.js';
 export { EmptyProjectUpdateError } from '../db/projects.js';
 export type { CreateEnvironmentInput, EnvironmentRecord } from '../db/environments.js';
-export type { CreateProblemInput, ProblemRecord } from '../db/problems.js';
+export type { CreateProblemInput, ProblemRecord, UpdateProblemInput } from '../db/problems.js';
+export { EmptyProblemUpdateError } from '../db/problems.js';
 export type { AppendEventInput, EventRecord } from '../db/events.js';
 export type { AppendVerificationInput, VerificationRecord } from '../db/verifications.js';
 

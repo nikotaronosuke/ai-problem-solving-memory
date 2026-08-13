@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01, P2-02 done; P2-03 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01, P2-02, P2-03 done; P2-04 next)
 
 ## Source of truth
 
@@ -59,6 +59,25 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **Layers.** `src/http/project-routes.ts` reads requests and shapes responses; `src/app/project-environment-service.ts` converts ids, decides not-found, and orchestrates. Transport never names a database error type — the architecture test enforces that.
 
+## What exists now — Problem API (P2-03)
+
+| Method | Path |
+| --- | --- |
+| POST / GET | `/v1/projects/:project_id/problems` |
+| GET / PATCH | `/v1/problems/:problem_id` |
+
+**Nesting.** Problems are created and listed under their project, for D-048's reason. A single Problem is read and patched by its own id. There is no unscoped `/v1/problems` collection and no delete.
+
+**The relation check.** Creation names an environment in the body. It must exist, be the caller's, and belong to the project in the path. Unknown project, another owner's project, unknown environment, another owner's environment, and the caller's own environment under a different project are five different failures with one 404 body — a test compares them byte for byte.
+
+**Starting state.** The caller declares none of it. `status`, `fix_kind`, `importance`, `confidence`, `freshness`, the memory flags and `version` come from the P1-08 column defaults, so a Problem cannot be filed already claiming to be verified. Sending any of them is a 400.
+
+**What a patch may change.** Eleven fields: the five text fields, `importance`, `confidence`, `freshness`, `memory_read_enabled`, `memory_write_enabled`, `suppressed`. Partial semantics are P2-02's — absent leaves alone, `null` clears, blank normalises to null, an empty patch is refused, and it never upserts.
+
+**What it may not.** `status` is not PATCHable: transitions are P2-06's and `VERIFIED` has to be earned. `fix_kind` belongs to P2-12, and `version` is response-only until P2-07 makes it an optimistic lock — there is no `expected_version` and nothing increments it. All three are 400, not silently dropped.
+
+**Independent flags.** Setting `suppressed` does not disable reads; setting `importance` does not raise confidence; `freshness` moves nothing else. Every combination is representable, and an integration test asserts the couplings do not exist.
+
 ## What exists now
 
 Read this to know what you are building on.
@@ -79,13 +98,13 @@ Read this to know what you are building on.
 
 **Indexes.** One ordered index per list path — events and verifications by `(owner_id, problem_id, created_at, id)`, problems by `(owner_id, project_id, created_at, problem_id)` — plus the environment foreign key index. No index is a left prefix of another. Vector and full-text indexes belong to the retrieval phase.
 
-**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Ten operations — create/get Project, create/get Environment, create/get Problem, append/list Event, append/list Verification. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
+**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Fifteen operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, append/list Event, append/list Verification. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
 
 **Executor.** `DatabaseExecutor` is `query` and nothing else. A pool satisfies it, and so will a client checked out for a transaction, so Phase 2 can add transactions without changing anything below. The repository does not own a transaction.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 479 tests across 27 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 730 tests across 33 files.
 
 ## What is deliberately absent
 
@@ -93,23 +112,25 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Recording a successful Verification does **not** move a Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That judgement is P2-06
 - A duplicate `client_event_id` is refused, not replayed. Returning the original is P2-04 for Events and P2-05 for Verifications
-- `version` exists on Problem and nothing increments it. Optimistic locking is P2-07
-- No Problem, Event or Verification endpoints. Those are P2-03 onward
+- `version` exists on Problem and nothing increments it. It is response-only, no endpoint accepts it, and there is no `expected_version`. Optimistic locking is P2-07
+- Nothing changes a Problem's `status` or `fix_kind`. The Problem PATCH refuses both. Transitions are P2-06, close and review P2-12
+- No Event or Verification endpoints. Those are P2-04 onward
 - No delete anywhere, no Environment update, no MCP, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
 - No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-03 — Problem create/get/list/update API.
+P2-04 — Event API.
 
 Not started.
 
 Notes for whoever picks this up:
-- The pattern is established: add repository operations, extend the application service, register routes in the `/v1` scope, map records explicitly in `src/http/resources.ts`
-- Problem lists will need a project filter; `problems (owner_id, project_id, created_at, problem_id)` already exists for exactly that
-- Problem update is where the caller could try to set `status`, `confidence` or `version`. Deciding which of those a caller may set at all is part of this task — status transitions are P2-06, and `version` is P2-07
-- The repository now exposes 13 operations
+- The pattern is established: add repository operations if needed, extend or add an application service, register routes in the `/v1` scope, map records explicitly in `src/http/resources.ts`
+- `appendEvent` and `listEvents` already exist on the repository, and `events (owner_id, problem_id, created_at, event_id)` indexes the list path
+- The open decision is `client_event_id`. Today a duplicate is refused with a database error the application layer has no HTTP meaning for. Whether a retry returns the original event is this task's call, and it decides whether the endpoint is idempotent
+- Events are append-only (D-026): no update, no delete, and no `updated_at` to move
+- The repository now exposes 15 operations
 
 ## Core MVP milestone
 

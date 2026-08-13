@@ -120,11 +120,27 @@ under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 | POST   | `/v1/projects/:project_id/environments` |
 | GET    | `/v1/projects/:project_id/environments` |
 | GET    | `/v1/environments/:environment_id`      |
+| POST   | `/v1/projects/:project_id/problems`     |
+| GET    | `/v1/projects/:project_id/problems`     |
+| GET    | `/v1/problems/:problem_id`              |
+| PATCH  | `/v1/problems/:problem_id`              |
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in
 time: there is no update or delete for one, and nothing is deleted in this
 phase.
+
+Problems are created under their project too, and name an environment that
+must belong to that same project. A new Problem starts `INVESTIGATING` with
+no fix kind, low confidence and version 1 — the caller does not get to
+declare any of that.
+
+A patch changes only the fields it names. `status`, `fix_kind` and `version`
+are not among them: state transitions arrive with verification, and `version`
+becomes an optimistic lock later. Sending one is a validation failure rather
+than a silent no-op. `importance`, `confidence`, `freshness`, `suppressed`
+and the two memory flags are independent — setting any one of them never
+moves another.
 
 JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
 another owner answers exactly as one that does not exist.

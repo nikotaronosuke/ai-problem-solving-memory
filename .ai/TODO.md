@@ -1,6 +1,6 @@
 # TODO
 
-Updated: 2026-08-12
+Updated: 2026-08-13
 
 This is the working list, not a history. What was done in Phase 1 lives in git history, `.ai/DECISIONS.md` and the summary in `.ai/CURRENT.md`.
 
@@ -27,15 +27,21 @@ Definition of Done verified against a real database: an owner creates, reads, li
 
 Repository grew from ten operations to thirteen: `listProjects`, `updateProject`, `listEnvironments`.
 
-### P2-03 — NEXT
-Problem create / get / list / update API.
+### P2-03 — DONE
+Problem create / get / list / partial update API.
 
-Definition of Done:
-- Problem CRUD within an owner
-- another owner's data unreachable
-- consistent error shape
+Four routes: `POST|GET /v1/projects/:project_id/problems` and `GET|PATCH /v1/problems/:problem_id`. No delete, and no unscoped `/v1/problems` collection.
 
-Depends on P2-02, which is satisfied. Deciding which Problem fields a caller may set is part of this task: status transitions belong to P2-06 and `version` to P2-07.
+Definition of Done verified against a real database: an owner creates, reads, lists and patches its own problems; another owner gets 404 for read, patch and list, with a body identical to a resource that does not exist; patching an unknown id creates nothing; and every error uses the shared envelope.
+
+Which fields a caller may set was decided here (D-054, D-055). A new Problem's starting state comes from the column defaults, and a patch may change eleven fields — `status`, `fix_kind` and `version` are not among them, because they belong to P2-06, P2-12 and P2-07 respectively. Sending one is a 400 rather than an ignored field.
+
+Repository grew from thirteen operations to fifteen: `listProblems`, `updateProblem`.
+
+### P2-04 — NEXT
+Event API.
+
+Depends on P2-03, which is satisfied. See the private task breakdown for its Definition of Done. Note what is still deliberately absent: a duplicate `client_event_id` is currently refused, not replayed, and returning the original is this task's decision to make.
 
 ## BLOCKED
 

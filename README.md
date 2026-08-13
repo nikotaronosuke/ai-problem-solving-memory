@@ -44,9 +44,10 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - Fastify によるローカル HTTP サーバー（既定で `127.0.0.1` のみ）
 - `/health` と、owner が確立していることを要求する `/v1/*`
 - Project の作成・取得・一覧・更新、Environment の作成・取得・一覧
+- Problem の作成・取得・一覧・部分更新
 - リクエスト検証と、全エラー共通の JSON 形式
 
-Problem / Event / Verification の API と AI 連携はまだこれからです。
+Problem の状態遷移、Event / Verification の API と AI 連携はまだこれからです。
 
 詳細な内部仕様は現時点では非公開です。
 

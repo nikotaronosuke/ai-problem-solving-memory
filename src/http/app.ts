@@ -29,6 +29,7 @@ import Fastify, {
 import type {
   AuthenticatedRequestContext,
   HealthService,
+  ProblemService,
   ProjectEnvironmentService,
   RequestContextService,
 } from '../app/index.js';
@@ -38,6 +39,7 @@ import {
   ResourceNotFoundError,
 } from '../app/index.js';
 import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './errors.js';
+import { registerProblemRoutes } from './problem-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 
 /** Version prefix for the Memory JSON API. Operational routes sit outside it. */
@@ -47,6 +49,7 @@ export interface MemoryHttpAppDependencies {
   readonly healthService: HealthService;
   readonly requestContextService: RequestContextService;
   readonly projectEnvironmentService: ProjectEnvironmentService;
+  readonly problemService: ProblemService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -241,6 +244,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       );
 
       registerProjectRoutes(scope, dependencies.projectEnvironmentService);
+      registerProblemRoutes(scope, dependencies.problemService);
 
       done();
     },
