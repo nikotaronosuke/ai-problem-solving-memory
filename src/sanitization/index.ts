@@ -8,7 +8,8 @@
 
 export {
   createPermissivePolicy,
-  formatFieldPath,
+  describeInspectionPath,
+  formatSafeLocator,
   SanitizationRejectedError,
   UnsupportedSanitizationOutcomeError,
   type FieldPath,

@@ -195,12 +195,13 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       // P3-03's to settle, and inventing a contract for it now would fix that
       // answer before the question has been decided.
       //
-      // Everything logged here is the boundary's own: where it happened,
-      // whether it was a key or a value, and which policy refused. A policy
-      // cannot contribute prose to a refusal, so there is nothing available
-      // to log that could be the value it refused.
+      // Everything logged here is the boundary's own: where it happened, and
+      // whether it was a key or a value. The locator has had every
+      // caller-written key stripped out of it, and a policy has no field it
+      // could have attached text to — so nothing available to log here is
+      // something a caller sent or a policy wrote.
       request.log.warn(
-        { locator: error.locator, kind: error.kind, policy: error.policy },
+        { locator: error.locator, kind: error.kind },
         'request rejected by the sanitization boundary',
       );
       void reply
