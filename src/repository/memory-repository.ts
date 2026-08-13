@@ -51,6 +51,12 @@ import {
   type UpdateProjectInput,
 } from '../db/projects.js';
 import {
+  createUsageLog,
+  listUsageLogs,
+  type CreateUsageLogInput,
+  type UsageLogRecord,
+} from '../db/usage-logs.js';
+import {
   createRelation,
   listRelations,
   type CreateRelationInput,
@@ -128,6 +134,15 @@ export interface MemoryRepository {
   appendVerification(input: AppendVerificationInput): Promise<VerificationRecord>;
   listVerifications(problemId: ProblemId): Promise<VerificationRecord[]>;
 
+  createUsageLog(input: CreateUsageLogInput): Promise<UsageLogRecord>;
+  /**
+   * What memory was used while working on this problem.
+   *
+   * Scoped to the problem being worked on, not to the memory: "what did this
+   * investigation draw on?" rather than "where has this been used?".
+   */
+  listUsageLogs(problemId: ProblemId): Promise<UsageLogRecord[]>;
+
   createRelation(input: CreateRelationInput): Promise<RelationRecord>;
   /**
    * Relations touching this problem, from either end.
@@ -179,6 +194,9 @@ export function createMemoryRepository(
 
     appendVerification: (input) => appendVerification(executor, context, input),
     listVerifications: (problemId) => listVerifications(executor, context, problemId),
+
+    createUsageLog: (input) => createUsageLog(executor, context, input),
+    listUsageLogs: (problemId) => listUsageLogs(executor, context, problemId),
 
     createRelation: (input) => createRelation(executor, context, input),
     listRelations: (problemId) => listRelations(executor, context, problemId),

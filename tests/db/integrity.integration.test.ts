@@ -40,6 +40,7 @@ const OWNED_TABLES = [
   'events',
   'verifications',
   'relations',
+  'usage_logs',
 ] as const;
 
 interface Chain {
@@ -108,7 +109,9 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
           order by conrelid::regclass::text`,
       );
 
-      const links = result.rows.map((row) => `${row.child}: ${row.definition}`);
+      // Sorted here rather than relying on the query's order: it orders by
+      // table only, so two keys on one table could come back either way.
+      const links = result.rows.map((row) => `${row.child}: ${row.definition}`).sort();
 
       expect(links).toEqual([
         'environments: FOREIGN KEY (owner_id, project_id) REFERENCES projects(owner_id, project_id) ON DELETE RESTRICT',
@@ -120,6 +123,11 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         // the link exists.
         'relations: FOREIGN KEY (owner_id, from_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'relations: FOREIGN KEY (owner_id, to_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
+        // A usage log names two problems too: the one being worked on and the
+        // one used as memory. Neither may be another owner's, and neither can
+        // be removed while the record of the use exists.
+        'usage_logs: FOREIGN KEY (owner_id, memory_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
+        'usage_logs: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'verifications: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
       ]);
     });
@@ -134,8 +142,8 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       // 'r' is RESTRICT. Anything else here would mean Memory could be
       // discarded as a side effect of deleting something above it.
       expect(result.rows.every((row) => row.confdeltype === 'r')).toBe(true);
-      // Seven since P2-08: the relations table brings one per end.
-      expect(result.rows).toHaveLength(7);
+      // Nine: the relations and usage_logs tables each bring one per end.
+      expect(result.rows).toHaveLength(9);
     });
 
     it('carries owner_id on every table, so owner scope never needs a join', async () => {
@@ -380,6 +388,9 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         'problems.suspected_boundary',
         'projects.platform',
         'projects.repo',
+        // A memory that was merely found or read has no outcome yet, and
+        // inventing one would be worse than leaving it open.
+        'usage_logs.result',
         'verifications.evidence_ref',
         'verifications.verified_by',
       ]);
@@ -529,8 +540,8 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
 
       const byKind = Object.fromEntries(result.rows.map((row) => [row.typtype, row.count]));
 
-      // Six from P1-04, plus `relation_type` from P2-08.
-      expect(byKind['d']).toBe('7');
+      // Six from P1-04, plus `relation_type` and `usage_action`.
+      expect(byKind['d']).toBe('8');
       expect(byKind['e']).toBeUndefined();
     });
   });

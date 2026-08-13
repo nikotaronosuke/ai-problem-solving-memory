@@ -18,6 +18,7 @@ import {
   createEventService,
   createProjectEnvironmentService,
   createRelationService,
+  createUsageLogService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type CreateProblemCommand,
@@ -113,6 +114,7 @@ function buildApp(service: ProblemService, authenticated = true) {
     eventService: createEventService(),
     verificationService: createVerificationService(),
     relationService: createRelationService(),
+    usageLogService: createUsageLogService(),
     logger: false,
   });
 }

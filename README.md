@@ -50,6 +50,7 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - Problem の状態遷移（専用 endpoint。`VERIFIED` には成功 Verification が必須）
 - Problem 更新の楽観ロック（`expected_version` 必須。競合は 409 `VERSION_CONFLICT`）
 - Relation による Problem 同士のリンク（project を跨げます。owner は跨げません）
+- UsageLog による Memory 利用履歴（どの AI が何をどう使ったか。read の副作用では記録しません）
 - リクエスト検証と、全エラー共通の JSON 形式
 
 AI 連携はまだこれからです。

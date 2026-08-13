@@ -17,6 +17,11 @@ export {
   type CreateRelationCommand,
   type RelationService,
 } from './relation-service.js';
+export {
+  createUsageLogService,
+  type CreateUsageLogCommand,
+  type UsageLogService,
+} from './usage-log-service.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
 export {
   createProjectEnvironmentService,
@@ -42,6 +47,7 @@ export type {
   ProblemRecord,
   ProjectRecord,
   RelationRecord,
+  UsageLogRecord,
   VerificationRecord,
 } from '../repository/index.js';
 export {
