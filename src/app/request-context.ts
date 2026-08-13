@@ -30,7 +30,7 @@ import type { DatabaseTransactionRunner } from '../db/transaction.js';
 import { resolveOwnerContext } from '../owner/context.js';
 import { createMemoryRepository, type MemoryRepository } from '../repository/index.js';
 import {
-  createPermissivePolicy,
+  createSecretDetectionPolicy,
   withSanitization,
   type SanitizationPolicy,
 } from '../sanitization/index.js';
@@ -89,16 +89,19 @@ export interface RequestContextService {
  * caller remembering to pass the same context twice.
  *
  * `policy` is the sanitization policy every write is checked against. It
- * defaults to the permissive one, which decides nothing: P3-01 installs the
- * boundary, P3-02 supplies detection and P3-03 the refusal and redaction rules,
- * and each arrives by passing a different policy here rather than by moving
- * where the check happens.
+ * defaults to secret detection, so a server built without saying anything about
+ * sanitization is checked rather than open — the direction a default should
+ * fail in when the alternative is storing a credential.
+ *
+ * P3-01 installed the boundary, P3-02 supplies this detector, and P3-03 will
+ * decide refusal and redaction in full. Each arrives by passing a different
+ * policy here rather than by moving where the check happens.
  */
 export function createRequestContextService(
   executor: DatabaseExecutor,
   transactionRunner: DatabaseTransactionRunner,
   source: EnvSource = process.env,
-  policy: SanitizationPolicy = createPermissivePolicy(),
+  policy: SanitizationPolicy = createSecretDetectionPolicy(),
 ): RequestContextService {
   return {
     async authenticate(): Promise<AuthenticatedRequestContext> {

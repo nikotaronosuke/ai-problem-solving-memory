@@ -381,6 +381,57 @@ describe('sanitization boundary', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('detects secrets without reaching anything', async () => {
+    const modules = (await readModules(join(SRC, 'sanitization'))).filter((module) =>
+      module.path.startsWith('sanitization/secrets/'),
+    );
+    expect(modules.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // Detection is a question about a string. Anything it could reach —
+        // a repository, the driver, a route, a model — would make the answer
+        // depend on something other than the string, and a refusal nobody can
+        // reproduce is a refusal nobody can trust.
+        const local = specifier.startsWith('.');
+        const withinSanitization =
+          local && !specifier.includes('/db/') && !specifier.includes('/repository/');
+        if (!withinSanitization) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps knowledge of what a credential looks like inside one directory', async () => {
+    const modules = await readModules(SRC);
+
+    const users = modules
+      .filter((module) =>
+        /SecretDetector|SecretFinding|SecretCategory|createSecretDetector|SECRET_CATEGORIES/.test(
+          module.source,
+        ),
+      )
+      .map((module) => module.path)
+      .sort();
+
+    // What a credential looks like is a privacy rule, not a rule about problem
+    // solving, and not something a route or a service should be able to ask.
+    // It stays inside `sanitization/`: the application layer re-exports the
+    // policy so the composition root can choose one, and never the detector,
+    // so nothing outside here can name a category or read a finding.
+    expect(users).toEqual([
+      'sanitization/index.ts',
+      'sanitization/secrets/detector.ts',
+      'sanitization/secrets/finding.ts',
+      'sanitization/secrets/index.ts',
+      'sanitization/secrets/policy.ts',
+    ]);
+  });
+
   it('is the only thing a repository is handed out through', async () => {
     const modules = await readModules(SRC);
 

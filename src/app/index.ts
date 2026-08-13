@@ -78,6 +78,7 @@ export {
 // this layer, not of the layer that detected it.
 export {
   createPermissivePolicy,
+  createSecretDetectionPolicy,
   SanitizationRejectedError,
   type SanitizationOutcome,
   type SanitizationPolicy,

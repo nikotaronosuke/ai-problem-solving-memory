@@ -19,5 +19,15 @@ export {
   type SanitizationPolicy,
   type SanitizationSite,
 } from './policy.js';
+export {
+  createSecretDetectionPolicy,
+  createSecretDetector,
+  SECRET_CATEGORIES,
+  SECRET_CERTAINTIES,
+  type SecretCategory,
+  type SecretCertainty,
+  type SecretDetector,
+  type SecretFinding,
+} from './secrets/index.js';
 export { sanitizeValue } from './sanitize.js';
 export { isSanitizedOperation, withSanitization } from './sanitizing-repository.js';
