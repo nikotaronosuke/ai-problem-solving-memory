@@ -424,3 +424,44 @@ export async function updateProblemStatus(
   const row = result.rows[0];
   return row === undefined ? undefined : toRecord(row);
 }
+
+/**
+ * Records how one of the context owner's problems concluded, if it is still
+ * the version the caller last read.
+ *
+ * Status and fix kind in one statement, because concluding a Problem is one
+ * act. Doing it as a transition followed by an update would move the version
+ * twice and leave a moment where the Problem was verified but the fix kind
+ * still said nothing — a state no caller asked for and every reader would
+ * have to allow for.
+ *
+ * They remain separate axes. This writes whatever it is given: a verified
+ * Problem may have no fix kind, and a workaround may be recorded on one that
+ * was set aside. Nothing here derives one from the other.
+ *
+ * Whether the move is allowed is decided above this, by the domain rule and
+ * the evidence check. The same compare-and-swap as every other Problem write,
+ * on the same version column, so a conclusion and an ordinary edit conflict
+ * with each other rather than passing unseen.
+ *
+ * Returns undefined when nothing matched: unknown, another owner's, or no
+ * longer at `expectedVersion`. Never inserts.
+ */
+export async function updateProblemConclusion(
+  executor: DatabaseExecutor,
+  context: OwnerContext,
+  problemId: ProblemId,
+  expectedVersion: number,
+  conclusion: { readonly status: ProblemStatus; readonly fixKind: FixKind | null },
+): Promise<ProblemRecord | undefined> {
+  const result = await executor.query<ProblemRow>(
+    `update public.problems
+        set status = $4, fix_kind = $5, version = version + 1, updated_at = now()
+      where owner_id = $1 and problem_id = $2 and version = $3
+     returning ${PROBLEM_COLUMNS}`,
+    [context.ownerId, problemId, expectedVersion, conclusion.status, conclusion.fixKind],
+  );
+
+  const row = result.rows[0];
+  return row === undefined ? undefined : toRecord(row);
+}

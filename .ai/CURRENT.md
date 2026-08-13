@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-11 done; P2-12 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-12 done; P2-13 next)
 
 ## Source of truth
 
@@ -74,7 +74,7 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **What a patch may change.** Eleven fields: the five text fields, `importance`, `confidence`, `freshness`, `memory_read_enabled`, `memory_write_enabled`, `suppressed`. Partial semantics are P2-02's — absent leaves alone, `null` clears, blank normalises to null, an empty patch is refused, and it never upserts.
 
-**What it may not.** `status` is not PATCHable: transitions have their own route and `VERIFIED` has to be earned. `fix_kind` belongs to P2-12. `version` cannot be assigned either — it is the server's to move — though since P2-07 a patch must carry `expected_version` saying which version it acts on. All three of `status`, `fix_kind` and `version` are 400, not silently dropped.
+**What it may not.** `status` is not PATCHable: transitions have their own route and `VERIFIED` has to be earned. `fix_kind` is written only by closing (P2-12). `version` cannot be assigned either — it is the server's to move — though since P2-07 a patch must carry `expected_version` saying which version it acts on. All three of `status`, `fix_kind` and `version` are 400, not silently dropped.
 
 **Independent flags.** Setting `suppressed` does not disable reads; setting `importance` does not raise confidence; `freshness` moves nothing else. Every combination is representable, and an integration test asserts the couplings do not exist.
 
@@ -97,6 +97,26 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 **Ownership first.** Both routes confirm the problem is the caller's before anything else. The unique index is evaluated before the foreign key, so an unchecked append could otherwise replay an event to someone with no right to it — idempotency is never a way past owner scope. Listing another owner's problem is a 404, not an empty list.
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
+
+## What exists now — Closing a Problem (P2-12)
+
+| Method | Path |
+| --- | --- |
+| POST | `/v1/problems/:problem_id/close` |
+
+**What it is for.** Recording how work on a Problem ended, all at once: where it settles, whether the fix addressed the cause, and what the next reader should know. Ending a Problem is usually more than moving its status, which is why it is a surface of its own rather than fields hung on a transition (D-097).
+
+**Three targets only.** `VERIFIED`, `PAUSED`, `CLOSED_UNRESOLVED`. `INVESTIGATING` and `FIX_CANDIDATE` are working states and are a 400 here — the transition route still performs every move, closing ones included, for a caller with nothing to record.
+
+**No relaxation for being higher-level.** The same `decideTransition` and the same evidence check. `VERIFIED` still comes only from `FIX_CANDIDATE` and still needs a successful Verification of the Problem's own; a terminal Problem cannot be closed again, so this is not a way to revise a conclusion (D-098). The version is checked before the rule, as in the transition service.
+
+**`fix_kind`.** Written here and nowhere else in this phase. Absent leaves it, `null` clears it, and it stays a separate axis from status in both directions — verified with no fix kind stated is legitimate, and so is a `WORKAROUND` on a paused Problem (D-099).
+
+**The review.** Four optional summaries become ordinary Events — `DISCOVERY`, `FIX`, `DEAD_END`, `HYPOTHESIS` — with `changed_by` as each `source_ai`. No Review resource and no new event type (D-100). Closing with nothing to add is fine. No `client_event_id` is asked for: `expected_version` already makes a resend conflict rather than duplicate.
+
+**One act.** Status, fix kind, the Events and one change log entry commit together, in one transaction and one version step (D-101). Two rollback tests and four concurrency races cover it, each confirmed to fail against a deliberately broken implementation. The summaries stay out of the history; the Events are where that text lives.
+
+**Two Event findings.** `appendEvent` no longer catches a unique violation — it uses `on conflict … do nothing returning`, because the old recovery aborted an enclosing transaction. And Events written in one transaction share a `created_at`, so the review Events have no order among themselves; left as is, deliberately (D-102).
 
 ## What exists now — Memory controls (P2-11)
 
@@ -248,36 +268,36 @@ Read this to know what you are building on.
 
 **Indexes.** One ordered index per list path — events and verifications by `(owner_id, problem_id, created_at, id)`, problems by `(owner_id, project_id, created_at, problem_id)` — plus the environment foreign key index. No index is a left prefix of another. Vector and full-text indexes belong to the retrieval phase.
 
-**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Twenty-two operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, transition Problem status, append/list Event, append/list Verification, create/list Relation, create/list UsageLog, create/list ChangeLog. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
+**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Twenty-three operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, transition Problem status, conclude Problem, append/list Event, append/list Verification, create/list Relation, create/list UsageLog, create/list ChangeLog. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
 
 **Executor.** `DatabaseExecutor` is `query` and nothing else. A pool satisfies it, and so does a client checked out for a transaction — which is what P2-10 needed, and it changed nothing below. `DatabaseTransactionRunner` in `src/db/transaction.ts` runs work as one transaction; the repository still does not own one.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1588 tests across 56 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1702 tests across 58 files.
 
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
-- Nothing changes a Problem's `fix_kind`. The Problem PATCH refuses it and a transition never sets it. Close and review are P2-12
+- No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
 - No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
 - No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-12 — Problem close/review API.
+P2-13 — API contract / schema documentation.
 
 Not started.
 
 Notes for whoever picks this up:
-- This is the task that finally writes `fix_kind`. Nothing sets it today, it is refused by every current surface, and P2-10 already decided how it appears in history if it moves (D-090)
-- `CLOSED_UNRESOLVED` and `VERIFIED` are already reachable through the transition route (D-067). So the first decision is whether closing is a separate surface or metadata recorded alongside that move — and the matrix and the VERIFIED gate should not be re-litigated either way
-- ROOT_FIX and WORKAROUND are a separate axis from status (D-024). Closing a Problem as verified says nothing about which of those the fix was, and the two should not start implying each other
-- Whatever is added is a Problem write, so it goes through `applyProblemMutation` (D-093) unless it needs a rule applied first, in which case the status transition service is the closer model
-- Review, if it means anything distinct from close, needs its own justification. Do not build both because the task title names both
+- Every route already declares request and response schemas, and they are what the server actually enforces. Whatever document is produced must not become a second source of truth that can drift from them
+- Nothing generates a document today, and nothing depends on one existing. Whether it is generated from the schemas or written alongside them is the first decision
+- The surface is now complete for Phase 2: health, `/v1/me`, Projects, Environments, Problems, Events, Verifications, transitions, Relations, UsageLogs, ChangeLogs, memory controls and close
+- The error envelope and its five codes are part of the contract, as is the rule that another owner's resource answers exactly as one that does not exist. A document that describes 404 without saying why would lose the point of it
+- `docs/development.md` already narrates the API in prose. Decide whether the new document replaces that section, references it, or sits beside it — three descriptions of one API is the failure mode
 
 ## Core MVP milestone
 

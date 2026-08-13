@@ -30,6 +30,7 @@ import type {
   AuthenticatedRequestContext,
   ChangeLogService,
   MemoryControlService,
+  ProblemCloseService,
   EventService,
   HealthService,
   ProblemService,
@@ -50,6 +51,7 @@ import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './error
 import { registerChangeLogRoutes } from './change-log-routes.js';
 import { registerEventRoutes } from './event-routes.js';
 import { registerMemoryControlRoutes } from './memory-control-routes.js';
+import { registerProblemCloseRoutes } from './problem-close-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
@@ -72,6 +74,7 @@ export interface MemoryHttpAppDependencies {
   readonly usageLogService: UsageLogService;
   readonly changeLogService: ChangeLogService;
   readonly memoryControlService: MemoryControlService;
+  readonly problemCloseService: ProblemCloseService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -284,6 +287,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       registerUsageLogRoutes(scope, dependencies.usageLogService);
       registerChangeLogRoutes(scope, dependencies.changeLogService);
       registerMemoryControlRoutes(scope, dependencies.memoryControlService);
+      registerProblemCloseRoutes(scope, dependencies.problemCloseService);
 
       done();
     },

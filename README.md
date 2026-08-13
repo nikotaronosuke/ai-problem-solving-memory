@@ -53,6 +53,7 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - UsageLog による Memory 利用履歴（どの AI が何をどう使ったか。read の副作用では記録しません）
 - ChangeLog による Problem 変更履歴（変更と同一 transaction で自動記録。自由記述の値は複製しません）
 - Memory control（read / write / suppression / invalidate。4軸は互いに独立し、権限制御ではありません）
+- Problem の close / review（結論・`fix_kind`・振り返りを1リクエスト1 transaction で記録。遷移規則と検証の要件は変わりません）
 - リクエスト検証と、全エラー共通の JSON 形式
 
 AI 連携はまだこれからです。

@@ -27,6 +27,7 @@ import {
   createUsageLogService,
   createChangeLogService,
   createMemoryControlService,
+  createProblemCloseService,
   RequestContextUnavailableError,
   type AppendVerificationCommand,
   type AuthenticatedRequestContext,
@@ -110,6 +111,7 @@ function buildApp(service: VerificationService, authenticated = true) {
     usageLogService: createUsageLogService(),
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
+    problemCloseService: createProblemCloseService(),
     logger: false,
   });
 }
