@@ -81,4 +81,5 @@ export {
   SanitizationRejectedError,
   type SanitizationOutcome,
   type SanitizationPolicy,
+  type SanitizationSite,
 } from '../sanitization/index.js';

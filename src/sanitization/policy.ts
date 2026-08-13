@@ -7,33 +7,78 @@
  * one interface here, and neither will need the boundary to change shape to
  * accommodate it.
  *
- * The interface is deliberately narrow. A policy is shown one string and where
- * it came from, and answers with one of three outcomes. It is not given the
- * whole record, cannot reach the database, and cannot decide whether a write
- * happens — only whether this value may be stored, and in what form. Keeping it
- * that small is what lets the boundary guarantee the policy was consulted for
- * every value: there is nothing else the policy could have needed.
+ * The interface is deliberately narrow, and narrower than it first looks. A
+ * policy is shown one string and where it came from, and answers with one of
+ * three outcomes. It cannot reach the database, cannot decide whether a write
+ * happens, and — the part that matters most — cannot attach prose of its own to
+ * a refusal. See `SanitizationOutcome`.
+ *
+ * Keys are inspected as well as values. A caller can put arbitrary text in an
+ * object key — an Environment snapshot accepts whatever JSON was sent — so a
+ * boundary that only looked at values would let a secret through by the simple
+ * trick of naming a field after it.
  */
 
 /**
- * Where a value was found, outermost first.
+ * One step in the path to a string, and who chose it.
  *
- * The first element is the repository operation, the second the argument
- * position, and the rest are object keys and array indices as they were
- * traversed — so `appendEvent.1.summary` and
- * `createEnvironment.0.snapshot.deployment` both say exactly where the string
- * was, including inside caller-supplied JSON.
+ * Structured rather than a plain string array because the difference matters
+ * for what may safely leave the process. `operation`, `argument` and `element`
+ * are the boundary's own; a `key` is text the caller chose and could be
+ * anything at all, including the secret being refused.
+ *
+ * A `key` segment only ever appears once the policy has approved that key —
+ * keys are inspected before they are appended — which is what makes a rendered
+ * path safe by construction rather than by anyone remembering to check.
+ * `redactedKey` is what a refused key becomes, and it never carries the text.
+ */
+export type PathSegment =
+  | { readonly kind: 'operation'; readonly name: string }
+  | { readonly kind: 'argument'; readonly index: number }
+  | { readonly kind: 'element'; readonly index: number }
+  | { readonly kind: 'key'; readonly name: string }
+  | { readonly kind: 'redactedKey' };
+
+/**
+ * Where a string was found, outermost first.
  *
  * A policy needs this because the same string means different things in
- * different places: a long opaque token in `evidence_ref` is a reference, and
- * in `symptoms` it is probably a leaked credential. P3-02 is where that
- * judgement belongs, and this is what it will judge on.
+ * different places: a long opaque token in `evidenceRef` is a reference, and in
+ * `symptoms` it is probably a leaked credential.
  */
-export type FieldPath = readonly string[];
+export type FieldPath = readonly PathSegment[];
 
-/** Renders a path for a message or a log line. Never includes the value. */
+/** Whether the inspected string is a value, or the key naming one. */
+export type SanitizationLocationKind = 'value' | 'key';
+
+/** What is being inspected, and where it sits. */
+export interface SanitizationSite {
+  readonly path: FieldPath;
+  readonly kind: SanitizationLocationKind;
+}
+
+/**
+ * Renders a path for a message or a log line.
+ *
+ * Safe to log. Every `key` segment was approved by the policy before it was
+ * appended, and a refused key is a `redactedKey`, which has no text to render.
+ */
 export function formatFieldPath(path: FieldPath): string {
-  return path.join('.');
+  return path
+    .map((segment) => {
+      switch (segment.kind) {
+        case 'operation':
+          return segment.name;
+        case 'argument':
+        case 'element':
+          return `[${String(segment.index)}]`;
+        case 'key':
+          return `.${segment.name}`;
+        case 'redactedKey':
+          return '.<redacted>';
+      }
+    })
+    .join('');
 }
 
 /**
@@ -43,50 +88,102 @@ export function formatFieldPath(path: FieldPath): string {
  * value — a summary that says what happened, with the token gone. It returns
  * the replacement rather than mutating anything, so the boundary stays the only
  * thing that decides what is actually written.
+ *
+ * `reject` carries nothing. That is the whole point of it: a policy cannot
+ * explain itself, because an explanation is free text written by a policy
+ * author who has the offending value in hand, and the obvious thing to write is
+ * the value. A refusal then travels into an error, into a log line, and
+ * possibly into a report — so the one mechanism built to keep a secret out of
+ * storage would be the mechanism that copied it somewhere nobody checks.
+ *
+ * There is no field here to put it in. TypeScript refuses the version written
+ * with an explicit return type, and — the guarantee that does not depend on how
+ * someone happened to write their function — the boundary reads `kind` and
+ * `value` from an outcome and nothing else, so anything a policy attaches
+ * regardless goes nowhere at all.
+ *
+ * What an operator gets instead is the policy's name, the locator and whether
+ * it was a key or a value, all of which the boundary controls.
+ *
+ * When P3-02 has defined its detection categories, a closed union of codes can
+ * be added here deliberately — a fixed set of identifiers, never prose.
  */
 export type SanitizationOutcome =
   | { readonly kind: 'keep' }
   | { readonly kind: 'replace'; readonly value: string }
-  | { readonly kind: 'reject'; readonly reason: string };
+  | { readonly kind: 'reject' };
 
 export interface SanitizationPolicy {
-  /** Identifies the policy in operational logs. Not part of any API. */
+  /**
+   * Identifies the policy in operational logs.
+   *
+   * Fixed when the policy is built, not chosen per value, so it can be logged
+   * on a refusal without any risk of carrying one.
+   */
   readonly name: string;
 
   /**
    * Decides whether one string may be persisted, and in what form.
    *
-   * Called for every string reachable in a write, including inside nested
-   * objects and arrays. Must be pure: the boundary may call it in any order,
-   * and calls it before anything reaches the database.
+   * Called for every string reachable in a write — every value, and every key
+   * naming one — including inside nested objects and arrays. Must be pure: the
+   * boundary may call it in any order, and calls it before anything reaches the
+   * database.
    */
-  inspect(value: string, field: FieldPath): SanitizationOutcome;
+  inspect(text: string, at: SanitizationSite): SanitizationOutcome;
 }
 
 /**
- * Raised when a policy refuses a value.
+ * Raised when a policy refuses a value or a key.
  *
- * The offending string is deliberately absent from the error, and must stay
- * absent. An error object travels: into a log line, possibly into a report, and
- * through several layers on its way out. Putting the rejected value in it would
- * mean the one mechanism built to keep secrets out of storage is also the
- * mechanism that copies them somewhere nobody thought to check.
- *
- * What it carries instead is where the value was and why it was refused — the
- * two things an operator needs, and neither of which is the secret.
+ * Everything on it is the boundary's own. The refused string is absent, and so
+ * is anything the policy wrote, because a policy cannot write anything. What
+ * remains is where it happened, which of a key or a value it was, and which
+ * policy refused — the three things an operator needs, and none of them the
+ * secret.
  */
 export class SanitizationRejectedError extends Error {
-  /** Where the refused value was found. Contains no part of the value. */
-  readonly field: string;
+  /** Where it happened. Contains no caller text that was not approved. */
+  readonly locator: string;
 
-  /** Why the policy refused it. Written by the policy; never the value. */
-  readonly reason: string;
+  /** Whether the refused string was a value or the key naming one. */
+  readonly kind: SanitizationLocationKind;
 
-  constructor(field: FieldPath, reason: string) {
-    super(`A value at ${formatFieldPath(field)} cannot be stored: ${reason}`);
+  /** Which policy refused it. Fixed at construction, never per value. */
+  readonly policy: string;
+
+  constructor(site: SanitizationSite, policy: string) {
+    super(`A ${site.kind} at ${formatFieldPath(site.path)} cannot be stored (policy: ${policy}).`);
     this.name = 'SanitizationRejectedError';
-    this.field = formatFieldPath(field);
-    this.reason = reason;
+    this.locator = formatFieldPath(site.path);
+    this.kind = site.kind;
+    this.policy = policy;
+  }
+}
+
+/**
+ * Raised when a policy asks for something the boundary cannot do safely.
+ *
+ * Only one case today: renaming an object key. Replacing a key is not the same
+ * act as replacing a value — it can collide with a key already present and
+ * silently merge two fields into one, and deciding what should happen then is a
+ * design question that belongs with P3-03's redaction rules rather than being
+ * invented here.
+ *
+ * Refusing loudly is the honest answer. Quietly treating it as a rejection, or
+ * quietly applying it and hoping, would both hide a decision nobody has made.
+ * This is a programming error rather than a bad request, so it is not caught
+ * anywhere and surfaces as an internal failure.
+ */
+export class UnsupportedSanitizationOutcomeError extends Error {
+  readonly locator: string;
+  readonly policy: string;
+
+  constructor(site: SanitizationSite, policy: string, detail: string) {
+    super(`${detail} at ${formatFieldPath(site.path)} (policy: ${policy}).`);
+    this.name = 'UnsupportedSanitizationOutcomeError';
+    this.locator = formatFieldPath(site.path);
+    this.policy = policy;
   }
 }
 

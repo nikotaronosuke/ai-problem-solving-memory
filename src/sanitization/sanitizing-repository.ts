@@ -31,6 +31,11 @@
  * What this deliberately does not do is decide anything. It finds the strings
  * and asks; the answering is the policy's, and in this phase the policy keeps
  * everything. See `policy.ts`.
+ *
+ * "The strings" means keys as well as values. A caller can put arbitrary text
+ * in an object key — an Environment snapshot stores whatever JSON was sent —
+ * so a boundary that inspected only values could be walked around by naming a
+ * field after the secret.
  */
 
 import { sanitizeValue } from './sanitize.js';
@@ -101,7 +106,10 @@ export function withSanitization(
         // before the first one is delegated: a refusal partway through leaves
         // the caller's input untouched and no statement issued.
         const inspected = args.map((argument, index) =>
-          sanitizeValue(argument, policy, [property, String(index)]),
+          sanitizeValue(argument, policy, [
+            { kind: 'operation', name: property },
+            { kind: 'argument', index },
+          ]),
         );
 
         return await Reflect.apply(operation, target, inspected);

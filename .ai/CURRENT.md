@@ -324,13 +324,17 @@ Read this to know what you are building on.
 
 **Why a Proxy.** A hand-written wrapper listing twelve write methods goes stale the moment a thirteenth is added — it still compiles, still delegates, and silently stops covering it. Intercepting every call means a new operation is covered because nothing had to be updated for it to be. Reads are named; anything unnamed is treated as a write, so forgetting costs a redundant inspection rather than an unchecked write (D-112).
 
-**Nested input.** Nothing is checked by field name. The traversal descends through objects and arrays to every string, with the path it was found at — which is the only way an Environment snapshot, whose shape is whatever the caller composed, gets looked at at all (D-113).
+**Nested input, keys included.** Nothing is checked by field name. The traversal descends through objects and arrays to every string — every value, and every key naming one — with the path it was found at. Keys matter as much as values: an Environment snapshot stores whatever JSON was sent, so a caller can put text in a key as easily as in a value, and inspecting only values left a way around the boundary. Found in review after the first commit and fixed (D-113, D-116).
 
 **It changes nothing.** The traversal rebuilds rather than mutates and preserves shape exactly: key order, array length, `null` as `null`, and keys whose value is `undefined` still present — absent and null are different instructions on a partial update. With the policy this phase ships, what goes in is what comes out, and all 1793 Phase 1/2 tests pass untouched.
 
 **The policy decides nothing.** `createPermissivePolicy()` keeps every string. There is no pattern list, no threshold and no guess: detection is P3-02 and refusal or redaction is P3-03, and a provisional secret check shipped as production logic would be worse than an honest absence (D-114).
 
-**A refusal carries no value.** `SanitizationRejectedError` names the field and the reason only. An error travels into logs and reports, and the one mechanism built to keep a secret out of storage must not be what copies it somewhere nobody checks. Transport maps it to the existing `INVALID_REQUEST`; no new error code, and unreachable with the current policy (D-115).
+**A refusal carries nothing a policy wrote.** `SanitizationRejectedError` holds the locator, whether it was a key or a value, and the policy's name — all of them the boundary's own. A `reject` outcome has no field for prose, and the boundary reads only `kind` and `value` from an outcome, so a policy cannot hand back the string it just refused even if it tries. The first version let a policy attach a free-text reason, which flowed straight into the operational log; found in review and closed structurally rather than by asking policy authors to be careful (D-115, D-117).
+
+**A locator is safe by construction.** Keys are inspected *before* they are appended to the path, so every key in any locator has already been approved by the policy. A refused key is reported as `<redacted>` against its parent and is never named — which matters because a refused key is exactly the string that must not escape (D-116).
+
+Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, and unreachable with the current policy.
 
 **Tested by breaking it.** Unwrapping the transactional repository, making the traversal shallow, and misclassifying one write as a read each fail multiple guards, including the architecture test that asserts every handout is wrapped and the one that asserts a refused close leaves nothing behind.
 

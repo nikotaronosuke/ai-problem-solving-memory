@@ -1,17 +1,25 @@
 /**
  * Walking a value so a policy sees every string in it.
  *
- * The problem this solves is that caller data is not flat. An Environment
- * snapshot is arbitrary JSON the caller composed; a change log's `changes` is a
- * map whose shape depends on which fields moved. A boundary that checked named
- * fields would be correct for exactly as long as nobody added a field, and
- * would never reach inside a snapshot at all.
+ * The problem this solves is that caller data is not flat, and not only its
+ * values are caller-written. An Environment snapshot is arbitrary JSON the
+ * caller composed — both the keys and the values are theirs — and a change
+ * log's `changes` is a map whose shape depends on which fields moved. A
+ * boundary that checked named fields would be correct for exactly as long as
+ * nobody added a field, would never reach inside a snapshot at all, and would
+ * miss anything written into a key.
  *
  * So nothing here is named. The traversal descends through objects and arrays
- * until it reaches primitives, and hands every string to the policy with the
- * path it was found at.
+ * until it reaches primitives, and hands every string to the policy: keys as
+ * well as values.
  *
- * Two properties matter more than anything else here.
+ * Order is deliberate. A key is inspected before it is appended to the path,
+ * and before its value is looked at. That is what makes a rendered path safe to
+ * log: every key in one has already been approved, so a locator cannot carry
+ * caller text the policy would have refused. A refused key never enters a path
+ * at all.
+ *
+ * Two other properties matter.
  *
  * It rebuilds rather than mutates. The caller's object is never written to, so
  * a service cannot be surprised by its own input changing underneath it, and a
@@ -26,7 +34,13 @@
  * a test asserts exactly that against the real request shapes.
  */
 
-import { SanitizationRejectedError, type FieldPath, type SanitizationPolicy } from './policy.js';
+import {
+  SanitizationRejectedError,
+  UnsupportedSanitizationOutcomeError,
+  type FieldPath,
+  type SanitizationPolicy,
+  type SanitizationSite,
+} from './policy.js';
 
 /**
  * Values passed through without being descended into.
@@ -56,7 +70,7 @@ function walk(
   seen: WeakSet<object>,
 ): unknown {
   if (typeof value === 'string') {
-    return decide(value, policy, path);
+    return decide(value, policy, { path, kind: 'value' });
   }
 
   if (value === null || typeof value !== 'object' || isOpaque(value)) {
@@ -68,14 +82,19 @@ function walk(
   if (seen.has(value)) {
     // A cycle cannot be stored — it has no JSON representation — so refusing
     // is both the honest answer and the one that avoids recursing forever.
-    // The reason names the shape, never the contents.
-    throw new SanitizationRejectedError(path, 'the value contains a cycle');
+    throw new UnsupportedSanitizationOutcomeError(
+      { path, kind: 'value' },
+      policy.name,
+      'A value refers to itself and cannot be stored',
+    );
   }
   seen.add(value);
 
   try {
     if (Array.isArray(value)) {
-      return value.map((entry, index) => walk(entry, policy, [...path, String(index)], seen));
+      return value.map((entry, index) =>
+        walk(entry, policy, [...path, { kind: 'element', index }], seen),
+      );
     }
 
     // Own enumerable keys, in their original order, including any whose value
@@ -83,7 +102,11 @@ function walk(
     // "clear this" on a partial update.
     const rebuilt: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
-      rebuilt[key] = walk(entry, policy, [...path, key], seen);
+      // The key first, and while the path still ends at this object. A refusal
+      // here therefore reports the parent plus a redacted step, and the
+      // refused text never reaches a locator.
+      const kept = decideKey(key, policy, { path, kind: 'key' });
+      rebuilt[kept] = walk(entry, policy, [...path, { kind: 'key', name: kept }], seen);
     }
     return rebuilt;
   } finally {
@@ -93,15 +116,51 @@ function walk(
   }
 }
 
-function decide(value: string, policy: SanitizationPolicy, path: FieldPath): string {
-  const outcome = policy.inspect(value, path);
+function decide(text: string, policy: SanitizationPolicy, at: SanitizationSite): string {
+  const outcome = policy.inspect(text, at);
 
   switch (outcome.kind) {
     case 'keep':
-      return value;
+      return text;
     case 'replace':
       return outcome.value;
     case 'reject':
-      throw new SanitizationRejectedError(path, outcome.reason);
+      // Built from the site and the policy name only. The policy had no way to
+      // contribute prose, so there is nothing here that could be the value.
+      throw new SanitizationRejectedError(at, policy.name);
   }
+}
+
+/**
+ * Decides a key, and refuses to rename one.
+ *
+ * Replacing a key is not the same act as replacing a value: the replacement can
+ * collide with a key already present and silently merge two fields into one.
+ * What should happen then is a real design question, and it belongs with
+ * P3-03's redaction rules rather than being settled here by whichever behaviour
+ * was easiest to implement.
+ *
+ * A refusal is reported against the parent path with a redacted step, so the
+ * key — which is exactly the string being refused — is not named anywhere.
+ */
+function decideKey(key: string, policy: SanitizationPolicy, at: SanitizationSite): string {
+  const outcome = policy.inspect(key, at);
+
+  switch (outcome.kind) {
+    case 'keep':
+      return key;
+    case 'replace':
+      throw new UnsupportedSanitizationOutcomeError(
+        redacted(at),
+        policy.name,
+        'A policy asked to rename an object key, which is not supported',
+      );
+    case 'reject':
+      throw new SanitizationRejectedError(redacted(at), policy.name);
+  }
+}
+
+/** The site of a refused key: the parent path, plus a step that has no text. */
+function redacted(at: SanitizationSite): SanitizationSite {
+  return { path: [...at.path, { kind: 'redactedKey' }], kind: at.kind };
 }

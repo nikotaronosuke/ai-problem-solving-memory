@@ -1,70 +1,110 @@
 /**
  * The traversal, on its own.
  *
- * Two things are being checked, and the second matters more.
+ * Three things are being checked.
  *
- * That a policy is shown every string, however deeply it is buried — because
- * caller data is not flat, and a boundary that only reached the top level
- * would miss an Environment snapshot entirely.
+ * That a policy is shown every string, however deeply it is buried, and
+ * whether it is a value or the key naming one — because caller data is not
+ * flat and its keys are caller-written too. An Environment snapshot stores
+ * whatever JSON was sent, so a boundary that inspected only values could be
+ * walked around by naming a field after the secret.
  *
- * And that walking a value changes nothing else about it. `undefined` and
- * `null` mean different things on the way into a Problem update, key order is
+ * That walking a value changes nothing else about it. `undefined` and `null`
+ * mean different things on the way into a Problem update, key order is
  * observable, and an array is not a map. If the traversal normalised any of
  * that, it would be altering requests rather than inspecting them, and the
  * damage would show up as behaviour changes far from here.
+ *
+ * And that the boundary does not leak what it refused. A refused key is
+ * exactly the string that must not escape, and it is also what a naive locator
+ * would be built from.
  */
 
 import { describe, expect, it } from 'vitest';
 
 import {
   createPermissivePolicy,
+  formatFieldPath,
   sanitizeValue,
   SanitizationRejectedError,
+  UnsupportedSanitizationOutcomeError,
   type FieldPath,
+  type SanitizationOutcome,
   type SanitizationPolicy,
+  type SanitizationSite,
 } from '../../src/sanitization/index.js';
 
 const permissive = createPermissivePolicy();
 
+interface Sighting {
+  readonly text: string;
+  readonly at: string;
+  readonly kind: 'key' | 'value';
+}
+
 /** Records everything it is shown, and keeps all of it. */
-function recordingPolicy(): SanitizationPolicy & { seen: { value: string; field: string }[] } {
-  const seen: { value: string; field: string }[] = [];
+function recordingPolicy(): SanitizationPolicy & { seen: Sighting[] } {
+  const seen: Sighting[] = [];
   return {
     name: 'recording',
     seen,
-    inspect(value: string, field: FieldPath) {
-      seen.push({ value, field: field.join('.') });
+    inspect(text: string, at: SanitizationSite) {
+      seen.push({ text, at: formatFieldPath(at.path), kind: at.kind });
       return { kind: 'keep' };
     },
   };
 }
 
-/** Rewrites every string it sees. */
+/** Rewrites every value it sees, and leaves keys alone. */
 function replacingPolicy(replacement: string): SanitizationPolicy {
-  return { name: 'replacing', inspect: () => ({ kind: 'replace', value: replacement }) };
-}
-
-/** Refuses any string equal to `secret`. */
-function refusingPolicy(secret: string): SanitizationPolicy {
   return {
-    name: 'refusing',
-    inspect: (value) =>
-      value === secret ? { kind: 'reject', reason: 'looks like a credential' } : { kind: 'keep' },
+    name: 'replacing',
+    inspect: (_text, at) =>
+      at.kind === 'value' ? { kind: 'replace', value: replacement } : { kind: 'keep' },
   };
 }
 
-const AT_ROOT: FieldPath = ['operation', '0'];
+/** Refuses any string equal to `secret`, key or value. */
+function refusingPolicy(secret: string): SanitizationPolicy {
+  return {
+    name: 'refusing',
+    inspect: (text) => (text === secret ? { kind: 'reject' } : { kind: 'keep' }),
+  };
+}
+
+const AT_ROOT: FieldPath = [
+  { kind: 'operation', name: 'operation' },
+  { kind: 'argument', index: 0 },
+];
+
+const values = (policy: { seen: Sighting[] }): Sighting[] =>
+  policy.seen.filter((sighting) => sighting.kind === 'value');
+const keys = (policy: { seen: Sighting[] }): Sighting[] =>
+  policy.seen.filter((sighting) => sighting.kind === 'key');
 
 describe('every string is shown to the policy', () => {
-  it('finds one at the top level', () => {
+  it('finds a value at the top level', () => {
     const policy = recordingPolicy();
 
     sanitizeValue({ title: 'Sign-in fails' }, policy, AT_ROOT);
 
-    expect(policy.seen).toEqual([{ value: 'Sign-in fails', field: 'operation.0.title' }]);
+    expect(values(policy)).toEqual([
+      { text: 'Sign-in fails', at: 'operation[0].title', kind: 'value' },
+    ]);
   });
 
-  it('finds one inside a caller-composed snapshot', () => {
+  it('finds the key naming it', () => {
+    const policy = recordingPolicy();
+
+    sanitizeValue({ title: 'Sign-in fails' }, policy, AT_ROOT);
+
+    // A key is caller-written text on its way into storage, exactly like a
+    // value. It is reported against its parent, because it is not part of the
+    // path until the policy has approved it.
+    expect(keys(policy)).toEqual([{ text: 'title', at: 'operation[0]', kind: 'key' }]);
+  });
+
+  it('finds keys and values inside a caller-composed snapshot', () => {
     const policy = recordingPolicy();
 
     // The shape here is whatever the caller sent. Nothing named it, and
@@ -75,31 +115,52 @@ describe('every string is shown to the policy', () => {
       AT_ROOT,
     );
 
-    expect(policy.seen).toEqual([
-      { value: 'node 22.12.0', field: 'operation.0.snapshot.runtime' },
-      { value: 'oauth2', field: 'operation.0.snapshot.auth.provider' },
+    expect(keys(policy).map((sighting) => `${sighting.at} :: ${sighting.text}`)).toEqual([
+      'operation[0] :: snapshot',
+      'operation[0].snapshot :: runtime',
+      'operation[0].snapshot :: auth',
+      'operation[0].snapshot.auth :: provider',
+    ]);
+    expect(values(policy).map((sighting) => sighting.at)).toEqual([
+      'operation[0].snapshot.runtime',
+      'operation[0].snapshot.auth.provider',
     ]);
   });
 
-  it('finds one inside an array, and says which position', () => {
+  it('inspects a key before descending into what it names', () => {
+    const policy = recordingPolicy();
+
+    sanitizeValue({ outer: { inner: 'value' } }, policy, AT_ROOT);
+
+    // The ordering is what makes a locator safe: by the time any path
+    // contains a key, the policy has already approved that key.
+    expect(policy.seen.map((sighting) => `${sighting.kind}:${sighting.text}`)).toEqual([
+      'key:outer',
+      'key:inner',
+      'value:value',
+    ]);
+  });
+
+  it('finds a value inside an array, and says which position', () => {
     const policy = recordingPolicy();
 
     sanitizeValue({ tags: ['auth', ['nested', 'deeper']] }, policy, AT_ROOT);
 
-    expect(policy.seen.map((entry) => entry.field)).toEqual([
-      'operation.0.tags.0',
-      'operation.0.tags.1.0',
-      'operation.0.tags.1.1',
+    expect(values(policy).map((sighting) => sighting.at)).toEqual([
+      'operation[0].tags[0]',
+      'operation[0].tags[1][0]',
+      'operation[0].tags[1][1]',
     ]);
   });
 
-  it('finds one at any depth', () => {
+  it('finds a value at any depth', () => {
     const policy = recordingPolicy();
-    const deep = { a: { b: { c: { d: { e: { f: 'buried' } } } } } };
 
-    sanitizeValue(deep, policy, AT_ROOT);
+    sanitizeValue({ a: { b: { c: { d: { e: { f: 'buried' } } } } } }, policy, AT_ROOT);
 
-    expect(policy.seen).toEqual([{ value: 'buried', field: 'operation.0.a.b.c.d.e.f' }]);
+    expect(values(policy)).toEqual([
+      { text: 'buried', at: 'operation[0].a.b.c.d.e.f', kind: 'value' },
+    ]);
   });
 
   it('finds a bare string passed as a whole argument', () => {
@@ -107,17 +168,7 @@ describe('every string is shown to the policy', () => {
 
     sanitizeValue('an-identifier', policy, AT_ROOT);
 
-    expect(policy.seen).toEqual([{ value: 'an-identifier', field: 'operation.0' }]);
-  });
-
-  it('shows the same string twice when it appears twice', () => {
-    const policy = recordingPolicy();
-
-    // Not deduplicated: each occurrence is a separate thing that would be
-    // stored, and a policy may judge them differently by where they are.
-    sanitizeValue({ summary: 'same', reason: 'same' }, policy, AT_ROOT);
-
-    expect(policy.seen).toHaveLength(2);
+    expect(policy.seen).toEqual([{ text: 'an-identifier', at: 'operation[0]', kind: 'value' }]);
   });
 
   it.each([
@@ -126,12 +177,14 @@ describe('every string is shown to the policy', () => {
     ['null', null],
     ['undefined', undefined],
     ['a date', new Date('2026-01-01T00:00:00.000Z')],
-  ])('does not ask about %s', (_label, value) => {
+  ])('does not ask about %s as a value', (_label, value) => {
     const policy = recordingPolicy();
 
     sanitizeValue({ field: value }, policy, AT_ROOT);
 
-    expect(policy.seen).toEqual([]);
+    // The key is still inspected; only the value has nothing to inspect.
+    expect(values(policy)).toEqual([]);
+    expect(keys(policy).map((sighting) => sighting.text)).toEqual(['field']);
   });
 });
 
@@ -239,26 +292,22 @@ describe('the value that comes back', () => {
   });
 });
 
-describe('a refusal', () => {
-  it('stops the whole value, not just the field', () => {
-    const refusing = refusingPolicy('sk-live-do-not-store');
+describe('a refused value', () => {
+  const secret = 'sk-live-do-not-store';
 
+  it('stops the whole write, not just the field', () => {
     expect(() =>
-      sanitizeValue({ summary: 'fine', reason: 'sk-live-do-not-store' }, refusing, AT_ROOT),
+      sanitizeValue({ summary: 'fine', reason: secret }, refusingPolicy(secret), AT_ROOT),
     ).toThrow(SanitizationRejectedError);
   });
 
-  it('reaches into nested input to find it', () => {
-    const refusing = refusingPolicy('sk-live-do-not-store');
-
+  it('is found inside nested input', () => {
     expect(() =>
-      sanitizeValue({ snapshot: { env: { API_KEY: 'sk-live-do-not-store' } } }, refusing, AT_ROOT),
+      sanitizeValue({ snapshot: { env: { API_KEY: secret } } }, refusingPolicy(secret), AT_ROOT),
     ).toThrow(SanitizationRejectedError);
   });
 
-  it('names where it was and why, and never the value', () => {
-    const secret = 'sk-live-do-not-store';
-
+  it('is located by its approved path, and never quoted', () => {
     try {
       sanitizeValue({ snapshot: { api_key: secret } }, refusingPolicy(secret), AT_ROOT);
       expect.unreachable('the policy should have refused');
@@ -266,14 +315,149 @@ describe('a refusal', () => {
       expect(error).toBeInstanceOf(SanitizationRejectedError);
       const rejected = error as SanitizationRejectedError;
 
-      expect(rejected.field).toBe('operation.0.snapshot.api_key');
-      expect(rejected.reason).toBe('looks like a credential');
-      // An error travels — into a log, into a report, through several layers.
-      // The one mechanism built to keep a secret out of storage must not be
-      // the mechanism that copies it somewhere else.
-      expect(rejected.message).not.toContain(secret);
-      expect(JSON.stringify(rejected)).not.toContain(secret);
-      expect(rejected.stack ?? '').not.toContain(secret);
+      // Every key in the locator was shown to the policy and kept, so naming
+      // them reveals nothing the policy would have refused.
+      expect(rejected.locator).toBe('operation[0].snapshot.api_key');
+      expect(rejected.kind).toBe('value');
+      expect(rejected.policy).toBe('refusing');
+      expectNoTraceOf(rejected, secret);
+    }
+  });
+});
+
+describe('a refused key', () => {
+  const secret = 'sk-live-in-the-key-name';
+
+  it('is refused rather than stored', () => {
+    // The bypass this closes: a caller putting the secret in the key instead
+    // of the value, which an Environment snapshot happily accepts.
+    expect(() =>
+      sanitizeValue({ snapshot: { [secret]: 'anything' } }, refusingPolicy(secret), AT_ROOT),
+    ).toThrow(SanitizationRejectedError);
+  });
+
+  it('is refused at any depth, and in a change log map', () => {
+    for (const input of [
+      { snapshot: { [secret]: 'v' } },
+      { snapshot: { deployment: { env: { [secret]: 'v' } } } },
+      { changes: { [secret]: { kind: 'exact', before: null, after: 'x' } } },
+      { [secret]: 'top level' },
+    ]) {
+      expect(() => sanitizeValue(input, refusingPolicy(secret), AT_ROOT)).toThrow(
+        SanitizationRejectedError,
+      );
+    }
+  });
+
+  it('never appears in the error that refused it', () => {
+    try {
+      sanitizeValue({ snapshot: { [secret]: 'anything' } }, refusingPolicy(secret), AT_ROOT);
+      expect.unreachable('the policy should have refused');
+    } catch (error) {
+      const rejected = error as SanitizationRejectedError;
+
+      // The refused key is exactly the string that must not escape, and it is
+      // also what a locator built from raw keys would have been made of. It is
+      // reported as a redacted step against its parent instead.
+      expect(rejected.locator).toBe('operation[0].snapshot.<redacted>');
+      expect(rejected.kind).toBe('key');
+      expectNoTraceOf(rejected, secret);
+    }
+  });
+
+  it('stops the write before the value it names is even looked at', () => {
+    const seen: string[] = [];
+    const policy: SanitizationPolicy = {
+      name: 'refusing',
+      inspect: (text) => {
+        seen.push(text);
+        return text === secret ? { kind: 'reject' } : { kind: 'keep' };
+      },
+    };
+
+    expect(() =>
+      sanitizeValue({ snapshot: { [secret]: 'the value under it' } }, policy, AT_ROOT),
+    ).toThrow(SanitizationRejectedError);
+    expect(seen).not.toContain('the value under it');
+  });
+});
+
+describe('what a policy is not allowed to ask for', () => {
+  it('cannot rename a key', () => {
+    const renaming: SanitizationPolicy = {
+      name: 'renaming',
+      inspect: (_text, at) =>
+        at.kind === 'key' ? { kind: 'replace', value: 'renamed' } : { kind: 'keep' },
+    };
+
+    // Replacing a key can collide with one already present and silently merge
+    // two fields. What should happen then belongs with P3-03's redaction
+    // rules, so the boundary refuses loudly rather than inventing an answer.
+    expect(() => sanitizeValue({ original: 'v' }, renaming, AT_ROOT)).toThrow(
+      UnsupportedSanitizationOutcomeError,
+    );
+  });
+
+  it('does not name the key it declined to rename', () => {
+    const secret = 'sk-live-key-name';
+    const renaming: SanitizationPolicy = {
+      name: 'renaming',
+      inspect: (_text, at) =>
+        at.kind === 'key' ? { kind: 'replace', value: 'renamed' } : { kind: 'keep' },
+    };
+
+    try {
+      sanitizeValue({ [secret]: 'v' }, renaming, AT_ROOT);
+      expect.unreachable('renaming a key is not supported');
+    } catch (error) {
+      expectNoTraceOf(error as Error, secret);
+    }
+  });
+
+  it('has no field to attach prose to', () => {
+    const inspect = (text: string): SanitizationOutcome =>
+      // @ts-expect-error A reject outcome has no field for a reason. This
+      // directive fails if one is ever added, which is the point: the shape
+      // that would let a policy hand back the value it just refused should
+      // not be expressible.
+      ({ kind: 'reject', reason: text });
+
+    expect(inspect('anything')).toMatchObject({ kind: 'reject' });
+  });
+
+  it('has nothing read from it beyond the outcome, even when prose is forced in', () => {
+    const secret = 'sk-live-smuggled-in-the-reason';
+    // The structural guarantee, and the one that does not depend on how a
+    // policy author happened to write their function: TypeScript only refuses
+    // the annotated form above, but the boundary reads `kind` and `value` and
+    // nothing else, so anything else a policy returns goes nowhere at all.
+    const dangerous = {
+      name: 'dangerous',
+      inspect: (text: string) =>
+        text === secret ? { kind: 'reject', reason: text, detail: text } : { kind: 'keep' },
+    } as unknown as SanitizationPolicy;
+
+    try {
+      sanitizeValue({ summary: secret }, dangerous, AT_ROOT);
+      expect.unreachable('the policy should have refused');
+    } catch (error) {
+      expectNoTraceOf(error as Error, secret);
+    }
+  });
+
+  it('ignores prose forced into a refused key as well', () => {
+    const secret = 'sk-live-key-with-smuggled-reason';
+    const dangerous = {
+      name: 'dangerous',
+      inspect: (text: string) =>
+        text === secret ? { kind: 'reject', reason: text } : { kind: 'keep' },
+    } as unknown as SanitizationPolicy;
+
+    try {
+      sanitizeValue({ snapshot: { [secret]: 'v' } }, dangerous, AT_ROOT);
+      expect.unreachable('the policy should have refused');
+    } catch (error) {
+      expectNoTraceOf(error as Error, secret);
     }
   });
 
@@ -283,7 +467,9 @@ describe('a refusal', () => {
 
     // Nothing cyclic can be stored, so refusing is both honest and what stops
     // the traversal recursing forever.
-    expect(() => sanitizeValue(cyclic, permissive, AT_ROOT)).toThrow(SanitizationRejectedError);
+    expect(() => sanitizeValue(cyclic, permissive, AT_ROOT)).toThrow(
+      UnsupportedSanitizationOutcomeError,
+    );
   });
 
   it('does not mistake the same object appearing twice for a cycle', () => {
@@ -297,14 +483,16 @@ describe('the policy this phase ships', () => {
   it('decides nothing', () => {
     // P3-01 installs the boundary. Detection is P3-02 and refusal is P3-03,
     // and a provisional guess here would be worse than an honest absence.
-    for (const value of [
+    for (const text of [
       'sk-live-51H8fakeexamplekeyvalue',
       'password=hunter2',
       '-----BEGIN PRIVATE KEY-----',
       'ordinary prose about a redirect',
       '',
     ]) {
-      expect(permissive.inspect(value, AT_ROOT)).toEqual({ kind: 'keep' });
+      for (const kind of ['value', 'key'] as const) {
+        expect(permissive.inspect(text, { path: AT_ROOT, kind })).toEqual({ kind: 'keep' });
+      }
     }
   });
 
@@ -312,3 +500,18 @@ describe('the policy this phase ships', () => {
     expect(permissive.name).toContain('p3-01');
   });
 });
+
+/**
+ * Asserts a secret is nowhere an error could carry it.
+ *
+ * An error travels: into a log line, into a serialised report, through several
+ * layers on its way out. Checking only the message would miss the properties
+ * an object spread or a JSON dump would pick up.
+ */
+function expectNoTraceOf(error: Error, secret: string): void {
+  expect(error.message).not.toContain(secret);
+  expect(JSON.stringify(error)).not.toContain(secret);
+  expect(JSON.stringify({ ...error })).not.toContain(secret);
+  expect(Object.values(error).join(' ')).not.toContain(secret);
+  expect(error.stack ?? '').not.toContain(secret);
+}

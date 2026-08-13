@@ -195,10 +195,12 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       // P3-03's to settle, and inventing a contract for it now would fix that
       // answer before the question has been decided.
       //
-      // Logged by field and reason only. The error carries no part of the
-      // value, and the log line must not reintroduce it.
+      // Everything logged here is the boundary's own: where it happened,
+      // whether it was a key or a value, and which policy refused. A policy
+      // cannot contribute prose to a refusal, so there is nothing available
+      // to log that could be the value it refused.
       request.log.warn(
-        { field: error.field, reason: error.reason },
+        { locator: error.locator, kind: error.kind, policy: error.policy },
         'request rejected by the sanitization boundary',
       );
       void reply

@@ -981,6 +981,8 @@ Reads are named; anything unnamed is treated as a write. An operation added and 
 
 The traversal descends through objects and arrays to every string it can reach, and reports where each was found. It has no list of fields.
 
+**Corrected by D-116.** As first written this covered values only, which left object keys — equally caller-written, and equally stored — outside the boundary. Keys are now inspected too.
+
 An Environment snapshot is arbitrary JSON the caller composed, and a change log's `changes` has a shape that depends on which fields moved. A boundary checking named fields would be correct for exactly as long as nobody added a field, and would never look inside a snapshot at all — which is the most likely place for a stray `.env` value to arrive.
 
 Identifiers are inspected too. Excluding them would mean this layer deciding which fields matter, and which fields matter is precisely what P3-02 owns. The path — `createEnvironment.0.snapshot.auth.token`, `appendEvent.0.summary` — is passed to the policy so that judgement can be made where it belongs.
@@ -999,8 +1001,34 @@ The interface is deliberately narrow. A policy is shown one string and its path,
 
 ## D-115 — A refusal carries the field, never the value (P3-01)
 
-`SanitizationRejectedError` holds the path and the policy's reason. The rejected string is absent from the message, the properties and anything derived from them, and a test asserts it appears in none of them.
+`SanitizationRejectedError` reports where a refusal happened without reproducing what was refused.
+
+**Corrected by D-116 and D-117.** As first written it held the policy's free-text reason and a path built from raw caller keys, so a policy could put the secret in the reason and a secret in a key became the locator. Both now carry only text the boundary itself produced.
 
 An error travels: into a log line, possibly into a report, through several layers on its way out. Putting the refused value in it would mean the one mechanism built to keep secrets out of storage is also the mechanism that copies them somewhere nobody thinks to check. The field and the reason are what an operator needs, and neither is the secret.
 
 Transport maps it to the existing `INVALID_REQUEST`. The request carried something that may not be stored, which is a bad request rather than a server fault, and adding an error code now would fix an answer P3-03 has not yet decided. With the current policy the path is unreachable, so no client-visible contract changed.
+
+## D-116 — Object keys are content, and a locator is built only from approved ones (P3-01, after review)
+
+The first version of the boundary walked objects with `Object.entries` and showed the policy each value. It never showed it a key.
+
+That was a real way around it. An Environment snapshot is `additionalProperties: true`, so a caller chooses its keys as freely as its values, and `{ "sk-live-...": "ok" }` would have been stored with the secret in the key and the boundary reporting success. Keys are now inspected exactly as values are, and the site says which of the two it is.
+
+The second half of the problem was subtler and is the reason the path type changed. A raw caller key was being used as a path segment, and the path became `SanitizationRejectedError.field`, which transport logged. So a secret in a key would have been refused and then written to the operational log by the mechanism that refused it — the boundary leaking precisely what it existed to stop.
+
+Rendering the whole path as `<redacted>` would have fixed that and made every log line useless. What is done instead is ordering: a key is inspected *before* it is appended to the path and before its value is descended into. Every `key` segment in any path has therefore already been approved by the policy, so naming it reveals nothing the policy would have refused, and a refused key never enters a path at all — it is reported as a redacted step against its parent. The locator is safe by construction rather than by anyone remembering to check, which is the only kind of safe worth relying on here.
+
+Renaming a key is refused outright. Replacing a key is not the same act as replacing a value: the replacement can collide with a key already present and silently merge two fields into one. What should happen then is a genuine design question and belongs with P3-03's redaction rules, so the boundary raises `UnsupportedSanitizationOutcomeError` rather than picking whichever behaviour was easiest to implement.
+
+## D-117 — A policy cannot explain a refusal (P3-01, after review)
+
+`SanitizationOutcome`'s `reject` originally carried `reason: string`, which became `SanitizationRejectedError.reason` and was logged by transport.
+
+The failure mode is obvious once stated: the person writing a detector has the offending value in hand, and the most natural reason to write is the value — "found `sk-live-...` in summary". The boundary would then refuse to store a secret and log it instead. D-115 claimed a refusal never carries the value, but that was a property of the policies written so far, not of the design.
+
+`reject` now carries nothing. TypeScript refuses the version written with an explicit return type, and — the part that does not depend on how someone happened to write their function — the boundary reads `kind` and `value` from an outcome and nothing else, so anything a policy attaches regardless goes nowhere. A test drives a policy that deliberately returns the secret as a reason and asserts it appears in no message, property, serialisation, stack, response or log line.
+
+What an operator gets instead is the locator, whether it was a key or a value, and the policy's name — fixed when the policy is built rather than chosen per value, so it cannot carry one. That is enough to find the request and the rule that stopped it without reproducing what was stopped.
+
+When P3-02 has defined its detection categories, a closed union of codes can be added here deliberately. A fixed set of identifiers is safe in a way that free text is not, and the difference is exactly that nobody can write a value into an enum.

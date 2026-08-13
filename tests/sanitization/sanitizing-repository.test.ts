@@ -24,10 +24,11 @@ import { generateOwnerId } from '../../src/domain/owner.js';
 import type { OwnerContext } from '../../src/domain/owner.js';
 import { createMemoryRepository, type MemoryRepository } from '../../src/repository/index.js';
 import {
+  formatFieldPath,
   isSanitizedOperation,
   withSanitization,
-  type FieldPath,
   type SanitizationPolicy,
+  type SanitizationSite,
 } from '../../src/sanitization/index.js';
 
 const UUID = '5d41402a-bc4b-4a76-b971-9d911017c592';
@@ -121,13 +122,18 @@ function realRepository(): MemoryRepository {
   return createMemoryRepository(stubExecutor, context);
 }
 
-function recordingPolicy(): SanitizationPolicy & { seen: string[] } {
+function recordingPolicy(): SanitizationPolicy & { seen: string[]; keys: string[] } {
   const seen: string[] = [];
+  const keys: string[] = [];
   return {
     name: 'recording',
     seen,
-    inspect(_value: string, field: FieldPath) {
-      seen.push(field.join('.'));
+    keys,
+    inspect(text: string, at: SanitizationSite) {
+      seen.push(formatFieldPath(at.path));
+      if (at.kind === 'key') {
+        keys.push(text);
+      }
       return { kind: 'keep' };
     },
   };
@@ -140,7 +146,10 @@ function recordingPolicy(): SanitizationPolicy & { seen: string[] } {
  * policy is consulted before delegation, so a stubbed executor failing after
  * the fact does not affect the answer.
  */
-async function drive(name: keyof MemoryRepository, args: unknown[]): Promise<{ seen: string[] }> {
+async function drive(
+  name: keyof MemoryRepository,
+  args: unknown[],
+): Promise<{ seen: string[]; keys: string[] }> {
   const policy = recordingPolicy();
   const wrapped = withSanitization(realRepository(), policy) as unknown as Record<
     string,
@@ -153,7 +162,7 @@ async function drive(name: keyof MemoryRepository, args: unknown[]): Promise<{ s
     // Expected: the stub returns no rows, so mappers downstream may complain.
   }
 
-  return { seen: policy.seen };
+  return { seen: policy.seen, keys: policy.keys };
 }
 
 describe('the operation inventory', () => {
@@ -191,7 +200,7 @@ describe('what the boundary inspects', () => {
       // The specific fields differ per operation; that any string reached the
       // policy is what proves this write cannot go around it.
       expect(seen.length).toBeGreaterThan(0);
-      expect(seen.every((field) => field.startsWith(`${String(name)}.`))).toBe(true);
+      expect(seen.every((locator) => locator.startsWith(`${String(name)}[`))).toBe(true);
     },
   );
 
@@ -217,10 +226,23 @@ describe('what the boundary inspects', () => {
     // only checked named fields would never see any of this.
     expect(seen).toEqual(
       expect.arrayContaining([
-        'createEnvironment.0.snapshot.runtime',
-        'createEnvironment.0.snapshot.auth.provider',
-        'createEnvironment.0.snapshot.auth.scopes.0',
+        'createEnvironment[0].snapshot.runtime',
+        'createEnvironment[0].snapshot.auth.provider',
+        'createEnvironment[0].snapshot.auth.scopes[0]',
       ]),
+    );
+  });
+
+  it('reaches the keys a caller chose inside a snapshot, not only their values', async () => {
+    const { keys } = await drive('createEnvironment', [
+      { projectId: UUID, snapshot: { runtime: 'node', auth: { api_key: 'x' } } },
+    ]);
+
+    // A snapshot stores whatever JSON was sent, keys included, so a boundary
+    // that inspected only values could be walked around by naming a field
+    // after the secret.
+    expect(keys).toEqual(
+      expect.arrayContaining(['projectId', 'snapshot', 'runtime', 'auth', 'api_key']),
     );
   });
 
@@ -238,9 +260,9 @@ describe('what the boundary inspects', () => {
 
     expect(seen).toEqual(
       expect.arrayContaining([
-        'appendEvent.0.summary',
-        'appendEvent.0.reason',
-        'appendEvent.0.sourceAi',
+        'appendEvent[0].summary',
+        'appendEvent[0].reason',
+        'appendEvent[0].sourceAi',
       ]),
     );
   });
@@ -250,7 +272,7 @@ describe('what the boundary inspects', () => {
       { problemId: UUID, changedBy: 'claude-code', fromVersion: 1, toVersion: 2, changes: {} },
     ]);
 
-    expect(seen).toContain('createChangeLog.0.changedBy');
+    expect(seen).toContain('createChangeLog[0].changedBy');
   });
 
   it('treats an operation it has never heard of as storing', () => {

@@ -46,7 +46,11 @@ import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
-import type { FieldPath, SanitizationPolicy } from '../../src/sanitization/index.js';
+import {
+  formatFieldPath,
+  type SanitizationPolicy,
+  type SanitizationSite,
+} from '../../src/sanitization/index.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -66,24 +70,30 @@ const MARK = {
   closeSummary: 'mark-close-Wg7L',
 } as const;
 
+interface Sighting {
+  readonly text: string;
+  readonly at: string;
+  readonly kind: 'key' | 'value';
+}
+
 interface Recorder extends SanitizationPolicy {
-  readonly seen: { value: string; field: string }[];
-  saw(marker: string): { value: string; field: string }[];
+  readonly seen: Sighting[];
+  saw(marker: string): Sighting[];
   reset(): void;
 }
 
 /** Keeps everything, and remembers what it was shown. */
 function recorder(): Recorder {
-  const seen: { value: string; field: string }[] = [];
+  const seen: Sighting[] = [];
   return {
     name: 'recording',
     seen,
-    inspect(value: string, field: FieldPath) {
-      seen.push({ value, field: field.join('.') });
+    inspect(text: string, at: SanitizationSite) {
+      seen.push({ text, at: formatFieldPath(at.path), kind: at.kind });
       return { kind: 'keep' };
     },
     saw(marker) {
-      return seen.filter((entry) => entry.value.includes(marker));
+      return seen.filter((sighting) => sighting.text.includes(marker));
     },
     reset() {
       seen.length = 0;
@@ -277,16 +287,16 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
       const sightings = policy.saw(marker);
 
       expect(sightings.length).toBeGreaterThan(0);
-      expect(sightings.some((entry) => entry.field.startsWith(`${operation}.`))).toBe(true);
+      expect(sightings.some((sighting) => sighting.at.startsWith(`${operation}[`))).toBe(true);
     });
 
     it('reaches a value the caller buried inside an environment snapshot', () => {
       // The one a field-by-field boundary would have missed completely.
-      expect(policy.saw(MARK.snapshotLeaf).map((entry) => entry.field)).toContain(
-        'createEnvironment.0.snapshot.runtime',
+      expect(policy.saw(MARK.snapshotLeaf).map((sighting) => sighting.at)).toContain(
+        'createEnvironment[0].snapshot.runtime',
       );
-      expect(policy.saw(MARK.snapshotDeep).map((entry) => entry.field)).toContain(
-        'createEnvironment.0.snapshot.auth.provider.name',
+      expect(policy.saw(MARK.snapshotDeep).map((sighting) => sighting.at)).toContain(
+        'createEnvironment[0].snapshot.auth.provider.name',
       );
     });
 
@@ -295,7 +305,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
 
       // Written inside a transaction, through the transactional repository.
       // Wrapping only the ordinary one would have left exactly this unchecked.
-      expect(sightings.map((entry) => entry.field)).toContain('appendEvent.0.summary');
+      expect(sightings.map((sighting) => sighting.at)).toContain('appendEvent[0].summary');
     });
 
     it('reaches who a change was attributed to, on its way into the history', () => {
@@ -303,7 +313,9 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
 
       // `changed_by` is caller-written free text and it is persisted, so it
       // is content the boundary has to see like any other.
-      expect(sightings.some((entry) => entry.field === 'createChangeLog.0.changedBy')).toBe(true);
+      expect(sightings.some((sighting) => sighting.at === 'createChangeLog[0].changedBy')).toBe(
+        true,
+      );
     });
 
     it('sees writes from every storing operation and from no reading one', async () => {
@@ -354,10 +366,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
     function refusing(marker: string): SanitizationPolicy {
       return {
         name: 'refusing',
-        inspect: (value) =>
-          value.includes(marker)
-            ? { kind: 'reject', reason: 'must not be stored' }
-            : { kind: 'keep' },
+        inspect: (text) => (text.includes(marker) ? { kind: 'reject' } : { kind: 'keep' }),
       };
     }
 
@@ -423,7 +432,6 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
       expect(response.statusCode).toBe(400);
       // The envelope is fixed text, and the refusal reason stays server-side.
       expect(response.body).not.toContain(marker);
-      expect(response.body).not.toContain('must not be stored');
     });
 
     it('writes nothing at all for a refused append', async () => {
@@ -503,6 +511,143 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
       ).json<{ change_logs: unknown[] }>().change_logs;
       // One entry, from the transition. Nothing from the refused close.
       expect(history).toHaveLength(1);
+    });
+
+    it('refuses a secret written into a snapshot key, not only into a value', async () => {
+      const marker = 'refuse-me-Fz6';
+      const { app, projectId } = await fixture(refusing(marker));
+
+      // The bypass this closes. A snapshot stores whatever JSON was sent, so
+      // a caller can put text in a key just as easily as in a value.
+      const refused = await app.inject({
+        method: 'POST',
+        url: `/v1/projects/${projectId}/environments`,
+        payload: { snapshot: { deployment: { [marker]: 'ordinary looking value' } } },
+      });
+
+      expect(refused.statusCode).toBe(400);
+      expect(refused.body).not.toContain(marker);
+
+      const environments = (
+        await app.inject({ method: 'GET', url: `/v1/projects/${projectId}/environments` })
+      ).json<{ environments: unknown[] }>().environments;
+      expect(environments).toHaveLength(1);
+    });
+
+    it('keeps a refused key out of the operational log', async () => {
+      const marker = 'refuse-me-Gz7';
+      const lines: string[] = [];
+
+      const ownerId = generateOwnerId();
+      await insertOwnerIfAbsent(pool, ownerId);
+      ownersCreated.push(ownerId);
+
+      // A real logger, captured. This is where a locator built from raw
+      // caller keys would deposit the secret it had just refused to store.
+      const app = buildMemoryHttpApp({
+        healthService: createHealthService(pool),
+        requestContextService: createRequestContextService(
+          pool,
+          createTransactionRunner(pool),
+          { [MEMORY_OWNER_ID_VAR]: ownerId },
+          refusing(marker),
+        ),
+        projectEnvironmentService: createProjectEnvironmentService(),
+        problemService: createProblemService(),
+        problemStatusService: createProblemStatusService(),
+        eventService: createEventService(),
+        verificationService: createVerificationService(),
+        relationService: createRelationService(),
+        usageLogService: createUsageLogService(),
+        changeLogService: createChangeLogService(),
+        memoryControlService: createMemoryControlService(),
+        problemCloseService: createProblemCloseService(),
+        logger: {
+          level: 'trace',
+          stream: {
+            write(line: string) {
+              lines.push(line);
+            },
+          },
+        },
+      });
+      appsCreated.push(app);
+
+      const project = (
+        await app.inject({ method: 'POST', url: '/v1/projects', payload: { project_name: 'ok' } })
+      ).json<{ project_id: string }>();
+
+      const refused = await app.inject({
+        method: 'POST',
+        url: `/v1/projects/${project.project_id}/environments`,
+        payload: { snapshot: { [marker]: 'value' } },
+      });
+      expect(refused.statusCode).toBe(400);
+
+      const logged = lines.join('\n');
+      // It must have logged the refusal — a silent one would be worse.
+      expect(logged).toContain('sanitization boundary');
+      // And it must not have logged the thing it refused.
+      expect(logged).not.toContain(marker);
+      // What it may say instead: where, which kind, and which policy.
+      expect(logged).toContain('<redacted>');
+      expect(logged).toContain('refusing');
+    });
+
+    it('keeps a refused value out of the operational log', async () => {
+      const marker = 'refuse-me-Hz8';
+      const lines: string[] = [];
+
+      const ownerId = generateOwnerId();
+      await insertOwnerIfAbsent(pool, ownerId);
+      ownersCreated.push(ownerId);
+
+      const app = buildMemoryHttpApp({
+        healthService: createHealthService(pool),
+        requestContextService: createRequestContextService(
+          pool,
+          createTransactionRunner(pool),
+          { [MEMORY_OWNER_ID_VAR]: ownerId },
+          // A policy that would hand back the value if it could. It cannot:
+          // a refusal has no field to put it in, and the boundary reads
+          // nothing from an outcome but its kind.
+          {
+            name: 'refusing',
+            inspect: (text: string) =>
+              text.includes(marker) ? { kind: 'reject', reason: text } : { kind: 'keep' },
+          } as unknown as SanitizationPolicy,
+        ),
+        projectEnvironmentService: createProjectEnvironmentService(),
+        problemService: createProblemService(),
+        problemStatusService: createProblemStatusService(),
+        eventService: createEventService(),
+        verificationService: createVerificationService(),
+        relationService: createRelationService(),
+        usageLogService: createUsageLogService(),
+        changeLogService: createChangeLogService(),
+        memoryControlService: createMemoryControlService(),
+        problemCloseService: createProblemCloseService(),
+        logger: {
+          level: 'trace',
+          stream: {
+            write(line: string) {
+              lines.push(line);
+            },
+          },
+        },
+      });
+      appsCreated.push(app);
+
+      const refused = await app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: `a project named ${marker}` },
+      });
+      expect(refused.statusCode).toBe(400);
+
+      const logged = lines.join('\n');
+      expect(logged).toContain('sanitization boundary');
+      expect(logged).not.toContain(marker);
     });
 
     it('refuses a value buried in a snapshot without storing the environment', async () => {
