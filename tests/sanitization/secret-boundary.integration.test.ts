@@ -76,6 +76,19 @@ const SECRET = {
     'We fixed it by setting refresh_token=fake-Kk1Jq5T-0123456789abcdef in the deploy environment.',
 } as const;
 
+/**
+ * Real credentials that read like ordinary words.
+ *
+ * These are the ones an earlier version stored, because it asked whether the
+ * value looked random before believing an explicit credential name. Weak
+ * passwords are still passwords, and they are the ones most worth catching.
+ */
+const WEAK = {
+  password: 'letmein-Ll2Kx9',
+  apiKey: 'opensesame-Mm3Ny8',
+  passphrase: 'correct horse battery Nn4Oz7',
+} as const;
+
 /** Every marker, for the final sweep of the database. */
 const MARKERS = [
   'Aa1Qv7X',
@@ -89,6 +102,9 @@ const MARKERS = [
   'Ii9Pu2N',
   'Jj0Sx8V',
   'Kk1Jq5T',
+  'Ll2Kx9',
+  'Mm3Ny8',
+  'Nn4Oz7',
 ] as const;
 
 /** Text with no credential in it, used where a request must succeed. */
@@ -424,6 +440,35 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
         url: `/v1/projects/${projectId}/environments`,
         payload,
       });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it.each([
+      [
+        'a weak password in an event summary',
+        () => `/v1/problems/${problemId}/events`,
+        () => ({
+          event_type: 'DISCOVERY',
+          summary: `the environment had PASSWORD=${WEAK.password} set`,
+          client_event_id: generateClientEventId(),
+        }),
+      ],
+      [
+        'a word-shaped api key under a strong field name',
+        () => `/v1/projects/${projectId}/environments`,
+        () => ({ snapshot: { auth: { api_key: WEAK.apiKey } } }),
+      ],
+      [
+        'a passphrase with spaces in it',
+        () => `/v1/projects/${projectId}/environments`,
+        () => ({ snapshot: { password: WEAK.passphrase } }),
+      ],
+    ])('refuses %s, which reads like ordinary words', async (_label, url, payload) => {
+      // The second review's finding: an earlier version required a digit or
+      // punctuation before believing an explicit credential name, so the
+      // weakest real passwords were the ones it stored.
+      const response = await app.inject({ method: 'POST', url: url(), payload: payload() });
 
       expect(response.statusCode).toBe(400);
     });

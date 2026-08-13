@@ -242,11 +242,13 @@ Context comes from P3-01's structured path: `{"api_key": "..."}` is recognised b
 
 A finding carries a category and a certainty and nothing else — no matched text, no excerpt, no offset, no hash (D-121). Confirmed findings are refused; suspected ones are kept and not logged, because refusing configuration templates and documentation examples would make the record unusable (D-123). The refusal is P3-01's: safe locator, key-or-value, no category, no policy name.
 
+A second review round found two holes and both are closed (D-124). Value shape was gating explicit credential names, so `PASSWORD=letmein`, `API_KEY=abcdef` and a spaced passphrase were stored — "meaning, never shape" had been applied in one direction only. And `Authorization` was pattern-matched rather than parsed, so `Authorization: disabled`, a bare `Authorization: Bearer` and `Authorization: Bearer [REDACTED]` were all refused. Names now carry a strength, content is read through one shared function, headers are parsed, and each line is judged by one rule. Both were reproduced against the committed code first.
+
 Definition of Done verified against a real database, not just against a 400: every column of every table is scanned for each secret marker after the suite runs. Seven deliberate mutations — removing bearer, private-key, structured-context and `.env` detection, breaking the key connection, keeping confirmed findings, and loosening the guard to treat long hex as a token — each fail between 5 and 35 of the new tests.
 
 The detector is also the default policy, so all 1904 pre-existing tests ran through it unaltered as a false-positive corpus.
 
-Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2050 tests across 66 files.
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2096 tests across 66 files.
 
 ### P3-03 — NEXT
 Redaction / reject policy.

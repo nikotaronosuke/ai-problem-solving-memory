@@ -1093,13 +1093,17 @@ There is no entropy score and no length threshold in the detector, and adding on
 
 So every rule requires a signal that means *credential*: a PEM private-key header, a JWT whose header actually base64-decodes to JSON naming an algorithm, an `Authorization` or `Cookie` header line, a credential-named variable in an assignment, or a credential-named field in the caller's own structure. Names are matched whole against a normalised form, with a short suffix list so `db_password` and `github_token` work without enumerating every prefix anyone might use.
 
+**Extended by D-124.** As first implemented this file also let value shape argue the *other* way: an explicit `PASSWORD=` was believed only if the value carried a digit or punctuation, so `PASSWORD=letmein` was stored. "Meaning, never shape" has to cut both directions — shape cannot convict, and it cannot acquit either.
+
 The cost is stated rather than hidden: a bare credential with no context at all — pasted alone into a summary, with nothing naming it — is not detected. Catching it would mean guessing from shape. The specification's design for this is defence in depth, with adapter-side sanitisation before sending and server-side re-checking after; this is the re-check, and it was never the only check.
 
 `PUBLIC KEY` is deliberately not matched. Publishing a public key is the point of having one.
 
 ## D-123 — Confirmed is refused, suspected is kept, and neither is the final policy (P3-02)
 
-Two certainties. `confirmed` is a form that is a credential and is not plausibly anything else. `suspected` is a credential-named field holding something that reads like a word or a template — `{"password": "changeme"}`, `{"session": "morning"}` — where context says credential and content disagrees.
+Two certainties. `confirmed` is a form that is a credential and is not plausibly anything else. `suspected` is where the evidence is genuinely mixed.
+
+**Corrected by D-124.** As first written, `suspected` meant "the value reads like a word", which made certainty a measure of randomness wearing a semantic label — and made `{"password": "letmein"}` merely suspected, which is to say stored. Certainty now measures how strongly the *context* names a credential: a strong name is `confirmed` whatever the value looks like, and value shape only separates the two under an ambiguous name.
 
 P3-02 refuses `confirmed` and keeps `suspected`.
 
@@ -1108,3 +1112,23 @@ The refusal is not the reject policy. P3-03 owns that, and this is fail-closed h
 Keeping `suspected` is the deliberate half. Widening refusal to cover it would refuse configuration templates, documentation examples and the ordinary act of writing down that a credential was involved, and a caller who cannot record what happened is the failure this whole record exists to prevent. Nothing about a suspected finding is logged either: "we saw something that might be a secret at this path" only helps someone who already has the data, and it puts a claim about caller content into an operational log for nobody's benefit.
 
 The false-positive fixtures are treated as requirements rather than courtesy checks, and the detector was made the default policy so that every pre-existing test — roughly nineteen hundred of them, full of UUIDs, commit SHAs, snapshots and evidence references — runs as a false-positive corpus on every build.
+
+## D-124 — Shape can neither convict nor acquit, and a header must be parsed (P3-02, after review)
+
+Two findings from the second review of P3-02, with the same root: value shape was doing work that only meaning should do, and a pattern match was standing in for parsing.
+
+**Explicit context outranks value shape.** `looksLikeCredentialValue` required a digit, punctuation, mixed case or twenty characters, and it gated *everything* — including an explicit `PASSWORD=`. So `PASSWORD=letmein`, `API_KEY=abcdef`, `client_secret=supersecret` and `{"password":"letmein"}` were all stored in plaintext, and `PASSWORD="correct horse battery staple"` was too, because a passphrase contains spaces. The weakest real credentials were precisely the ones that got through, which is the worst possible bias for a detector to have.
+
+D-122 said meaning, never shape. It was applied in one direction only: shape was correctly refused as *evidence for* a secret, and then quietly accepted as *evidence against* one. People choose credentials that read like words, and that a password looks like a word is a fact about people rather than information about the string.
+
+Names now carry a strength. `strong` names — `password`, `api_key`, `client_secret`, `access_token`, `private_key` and the rest — have no ordinary reading, and under one the value's shape is not consulted at all. `ambiguous` names — `token`, `secret`, `session`, and compounds ending in them — do have an ordinary reading, and there value shape is what separates `confirmed` from `suspected`. That is the only place shape decides anything, which is what D-123's certainty was supposed to mean all along.
+
+The false-positive side is handled by reading the *content* rather than measuring it, in one place used by every rule: a value is a `placeholder` (already redacted, or a template), a `status` word (`unknown`, `expired`, `rotated` — a note about a credential rather than one), or a `value`. Only the third is a credential. The status list is deliberately small and closed, and anything not on it counts as a value, because being wrong there costs a refused note and being wrong the other way stores a password.
+
+**A header is parsed, not matched.** `authorization\s*:\s*\S+` confirmed `Authorization: disabled`, `Authorization: Bearer` with nothing after it, and `Authorization: Bearer [REDACTED]`. The bare form confirmed "Use Basic authentication for this endpoint." — `authentication` is fourteen characters of the right alphabet. A detector that refuses those teaches people to stop sending it things, which empties the record more effectively than having no detector.
+
+`Authorization` now requires a recognised scheme *and* a credential after it, and the credential goes through the same content reading, so a placeholder inside a header is treated exactly as a placeholder anywhere else. The bare `Bearer x` form has no explicit header to trust, so it additionally requires the token to read like a credential rather than like the next word of a sentence — with trailing sentence punctuation stripped first, since the full stop in "expects Bearer tokens." belongs to the sentence. Cookies are parsed into pairs and confirmed only when a pair holds an actual value.
+
+One line is judged once: a line beginning `Authorization:`, `Cookie:` or `Set-Cookie:` belongs to those parsers, and the generic assignment rule skips it. Without that, the assignment rule read `Authorization: Bearer [REDACTED]` as the field `Authorization` holding the value `Bearer` and confirmed it anyway — the same bug one rule further down. `authorization=rawtoken`, with `=` rather than `:`, is a variable assignment and is judged as one.
+
+Nothing about the leak guarantees changed, and the new weak-credential fixtures are covered by the same database, response and log sweeps as the rest.

@@ -272,15 +272,30 @@ describe('ordinary content is not a credential', () => {
     },
   );
 
-  it('keeps an ordinary word under a credential-named field, but says it is suspected', () => {
-    // Context says credential and content disagrees. Refusing would refuse
-    // documentation examples; ignoring the signal entirely would throw away
-    // something P3-03 may want.
+  it('keeps a word that describes the state of a credential', () => {
+    // `{"password": "rotated"}` is a note about a credential, not one. The
+    // status word is what says so — not the fact that it looks like a word,
+    // which under `password` proves nothing at all.
+    for (const [name, word] of [
+      ['password', 'rotated'],
+      ['api_key', 'expired'],
+      ['client_secret', 'unknown'],
+      ['token', 'revoked'],
+      ['session', 'disabled'],
+    ] as const) {
+      expect(detect(word, under('snapshot', name)), `${name}: ${word}`).toBeNull();
+    }
+  });
+
+  it('is unsure about an ordinary word under an ambiguous name', () => {
+    // `session` has an everyday reading, so the value gets a say and the
+    // answer is a shrug rather than a refusal. This is the one place value
+    // shape decides anything.
     expect(detect('morning', under('snapshot', 'session'))).toEqual({
       category: 'CREDENTIAL_FIELD',
       certainty: 'suspected',
     });
-    expect(detect('rotated', under('snapshot', 'password'))?.certainty).toBe('suspected');
+    expect(detect('sauce', under('snapshot', 'secret'))?.certainty).toBe('suspected');
   });
 
   it('does not treat length or randomness as evidence on its own', () => {
@@ -294,6 +309,131 @@ describe('ordinary content is not a credential', () => {
     ]) {
       expect(detect(text)).toBeNull();
     }
+  });
+});
+
+describe('a weak-looking credential is still a credential', () => {
+  // The correction from the second review. An earlier version required a
+  // digit or punctuation before believing an explicit `PASSWORD=`, which meant
+  // the weakest real passwords were exactly the ones it stored. People choose
+  // credentials that read like words; that is a fact about people, not
+  // evidence about the string.
+  it.each([
+    ['PASSWORD=letmein'],
+    ['PASSWORD=hunter2'],
+    ['password: letmein'],
+    ['API_KEY=abcdef'],
+    ['api_key=abcdef'],
+    ['CLIENT_SECRET=supersecret'],
+    ['client_secret=supersecret'],
+    ['access_token=letmein'],
+    ['refresh_token=opensesame'],
+    ['auth_token=letmein'],
+    ['session_token=letmein'],
+    ['db_password=letmein'],
+  ])('recognises %s despite the value reading like a word', (text) => {
+    expect(detect(text)).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'confirmed',
+    });
+  });
+
+  it.each([
+    ['password', 'letmein'],
+    ['api_key', 'abcdef'],
+    ['client_secret', 'supersecret'],
+    ['access_token', 'letmein'],
+    ['private_key', 'notreallyakey'],
+    ['db_password', 'letmein'],
+  ])('recognises a word under the strong name %s', (key, value) => {
+    expect(detect(value, under('snapshot', key))).toEqual({
+      category: 'CREDENTIAL_FIELD',
+      certainty: 'confirmed',
+    });
+  });
+
+  it('recognises a passphrase containing spaces', () => {
+    // A password is allowed to have spaces in it, and the ones that do are
+    // the ones least likely to look like credentials.
+    expect(detect('PASSWORD="correct horse battery staple"')?.certainty).toBe('confirmed');
+    expect(detect("password='correct horse battery staple'")?.certainty).toBe('confirmed');
+    expect(detect('correct horse battery staple', under('snapshot', 'password'))).toEqual({
+      category: 'CREDENTIAL_FIELD',
+      certainty: 'confirmed',
+    });
+  });
+
+  it('still keeps an explicit placeholder under a strong name', () => {
+    // The strong name does not override the one signal that says there is
+    // nothing here to protect.
+    for (const placeholder of ['[REDACTED]', '***', '<secret>', 'CHANGE_ME', 'REPLACE_WITH_KEY']) {
+      expect(detect(`PASSWORD=${placeholder}`), placeholder).toBeNull();
+      expect(detect(placeholder, under('snapshot', 'password')), placeholder).toBeNull();
+    }
+  });
+
+  it('does not let value shape decide anything under a strong name', () => {
+    // Same value, two names. Under `password` it is a credential; under an
+    // unrelated name it is a word. The name is doing all the work.
+    expect(detect('letmein', under('snapshot', 'password'))?.certainty).toBe('confirmed');
+    expect(detect('letmein', under('snapshot', 'note'))).toBeNull();
+  });
+});
+
+describe('an authorization header is parsed, not pattern-matched', () => {
+  it.each([
+    ['a header with no scheme at all', 'Authorization: disabled'],
+    ['a header with a scheme and nothing else', 'Authorization: Bearer'],
+    ['a header with a scheme and trailing space', 'Authorization: Bearer   '],
+    ['a header carrying an already-redacted credential', 'Authorization: Bearer [REDACTED]'],
+    ['a header carrying a placeholder', 'Authorization: Bearer <token>'],
+    ['a header carrying asterisks', 'Authorization: Basic ***'],
+    ['a sentence about basic authentication', 'Use Basic authentication for this endpoint.'],
+    ['a sentence about bearer authentication', 'Bearer authentication'],
+    ['a sentence naming the scheme', 'The endpoint expects Bearer tokens.'],
+  ])('keeps %s', (_label, text) => {
+    // "The line exists" is not the same claim as "a credential is present",
+    // and an earlier version confirmed every one of these — which is how a
+    // detector teaches people to ignore it.
+    expect(detect(text)).toBeNull();
+  });
+
+  it.each([
+    ['Authorization: Bearer abcdef0123456789abcdef'],
+    ['Authorization: Basic dXNlcjpwYXNzd29yZA=='],
+    ['authorization: bearer abcdef0123456789abcdef'],
+    ['Bearer sk-fake-0123456789abcdefghij'],
+  ])('still recognises %s', (text) => {
+    expect(detect(text)).toEqual({ category: 'AUTHORIZATION', certainty: 'confirmed' });
+  });
+
+  it('trusts an explicit header more than a bare scheme', () => {
+    // With `Authorization:` present the context is explicit, so a word-shaped
+    // credential is still a credential. Bare, `Bearer` is an English word and
+    // the token has to look like one.
+    expect(detect('Authorization: Bearer letmein')?.category).toBe('AUTHORIZATION');
+    expect(detect('Bearer letmein')).toBeNull();
+  });
+});
+
+describe('a cookie header is parsed the same way', () => {
+  it.each([
+    ['an already-redacted cookie', 'Cookie: sid=[REDACTED]'],
+    ['a placeholder cookie', 'Set-Cookie: session=<token>; HttpOnly'],
+    ['an asterisked cookie', 'Cookie: sid=***'],
+    ['a cookie header with no pair', 'Cookie: disabled'],
+    ['prose about cookies', 'The cookie was missing because the domain did not match.'],
+  ])('keeps %s', (_label, text) => {
+    // Placeholder treatment is the same here as in an assignment or a field,
+    // so a caller does not have to learn which rule saw their string.
+    expect(detect(text)).toBeNull();
+  });
+
+  it.each([
+    ['Cookie: sid=fake-8a7b6c5d4e3f2a1b; theme=dark'],
+    ['Set-Cookie: session=fake-8a7b6c5d4e; HttpOnly'],
+  ])('still recognises %s', (text) => {
+    expect(detect(text)).toEqual({ category: 'COOKIE', certainty: 'confirmed' });
   });
 });
 
