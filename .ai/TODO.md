@@ -60,10 +60,25 @@ The question D-060 deferred is now answered (D-063): a Verification retry replay
 
 Repository operations unchanged at fifteen — `appendVerification` and `listVerifications` already existed.
 
-### P2-06 — NEXT
+### P2-06 — DONE
 Problem state transition service.
 
-Depends on P2-03, P2-04 and P2-05, all satisfied. Nothing writes `status` today: it is not PATCHable (D-055) and no write moves it as a side effect (D-033, D-065). This task is where that becomes possible, and where `VERIFIED` has to be made to require at least one successful Verification — which is now findable mechanically, since `result` is a boolean the API cannot blur.
+One route: `POST /v1/problems/:problem_id/status-transitions`, taking only `target_status`. It is the only way a status changes — the Problem PATCH still refuses `status`, and no append moves it.
+
+Definition of Done verified against a real database: `VERIFIED` is unreachable without a successful Verification of the Problem's own, every move outside the matrix is refused, and a paused Problem resumes as either working status.
+
+The rule itself is `src/domain/problem-status.ts` — plain data and plain functions, no HTTP, no storage. All 25 status pairs are checked against a matrix written out independently of the implementation, so an added or removed move is visible. The architecture test now also forbids a status literal anywhere in `src/` outside the domain.
+
+A transition changes the status and nothing else: `fix_kind`, `confidence`, the flags and `version` all stay put, and a refusal writes nothing at all (D-069).
+
+Repository grew from fifteen operations to sixteen: `updateProblemStatus`, deliberately separate from `updateProblem` whose input still has no status field.
+
+### P2-07 — NEXT
+Optimistic locking on Problem.
+
+Depends on P2-03, satisfied. `version` exists, is response-only and nothing increments it — P2-03, P2-06 and every append left it alone on purpose so that this task owns the whole meaning at once.
+
+What is genuinely open: which writes increment it (the generic patch, transitions, both?), whether `expected_version` is required or optional, and what a conflict answers. P2-06 deliberately did not introduce a 409 or any conflict vocabulary (D-070), so that decision is unmade rather than half-made. Note the transition service has no compare-and-swap today: it reads the status, applies the rule and writes.
 
 ## BLOCKED
 

@@ -36,6 +36,7 @@ import {
   getProblem,
   listProblems,
   updateProblem,
+  updateProblemStatus,
   type CreateProblemInput,
   type ProblemRecord,
   type UpdateProblemInput,
@@ -55,6 +56,7 @@ import {
   type AppendVerificationInput,
   type VerificationRecord,
 } from '../db/verifications.js';
+import type { ProblemStatus } from '../domain/enums.js';
 import type { EnvironmentId } from '../domain/environment.js';
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
@@ -91,6 +93,18 @@ export interface MemoryRepository {
   updateProblem(
     problemId: ProblemId,
     input: UpdateProblemInput,
+  ): Promise<ProblemRecord | undefined>;
+
+  /**
+   * Moves a problem to a status. Undefined when it is not this owner's.
+   *
+   * Separate from `updateProblem`, whose input has no status field, so status
+   * has exactly one write path and the transition rules cannot be bypassed by
+   * assigning a field.
+   */
+  updateProblemStatus(
+    problemId: ProblemId,
+    status: ProblemStatus,
   ): Promise<ProblemRecord | undefined>;
 
   appendEvent(input: AppendEventInput): Promise<EventRecord>;
@@ -131,6 +145,8 @@ export function createMemoryRepository(
     getProblem: (problemId) => getProblem(executor, context, problemId),
     listProblems: (projectId) => listProblems(executor, context, projectId),
     updateProblem: (problemId, input) => updateProblem(executor, context, problemId, input),
+    updateProblemStatus: (problemId, status) =>
+      updateProblemStatus(executor, context, problemId, status),
 
     appendEvent: (input) => appendEvent(executor, context, input),
     listEvents: (problemId) => listEvents(executor, context, problemId),

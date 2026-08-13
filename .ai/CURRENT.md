@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-05 done; P2-06 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-06 done; P2-07 next)
 
 ## Source of truth
 
@@ -98,6 +98,26 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
 
+## What exists now — Status transitions (P2-06)
+
+| Method | Path |
+| --- | --- |
+| POST | `/v1/problems/:problem_id/status-transitions` |
+
+**The only way status changes.** Body is `{ "target_status": ... }` and nothing else. The Problem PATCH still refuses `status`, no append moves it, and `updateProblem`'s input has no status field — the repository has a separate `updateProblemStatus` for this one path.
+
+**The matrix.** `INVESTIGATING → FIX_CANDIDATE | PAUSED | CLOSED_UNRESOLVED`. `FIX_CANDIDATE → INVESTIGATING | VERIFIED | PAUSED | CLOSED_UNRESOLVED`. `PAUSED → INVESTIGATING | FIX_CANDIDATE | CLOSED_UNRESOLVED`. `VERIFIED` and `CLOSED_UNRESOLVED` lead nowhere. A status cannot move to itself.
+
+**Where the rule lives.** `src/domain/problem-status.ts`, as data and pure functions — no HTTP, no storage, no repository. All 25 pairs are tested against a matrix written out independently of it, and the architecture test forbids a status literal anywhere in `src/` outside the domain, so no route or service can decide part of it.
+
+**`VERIFIED` has to be earned.** Only from `FIX_CANDIDATE`, and only with at least one Verification *of this Problem's own* whose boolean `result` is true. A FIX event, a confident summary, a high confidence, another Problem's evidence and another owner's evidence all count for nothing. The replayed-verification case is covered explicitly: a retry aimed at a different Problem returns 201 with the original but records nothing here, and the transition is still refused.
+
+**PAUSED resumes.** Back to either working status; it is not terminal. The two terminal statuses are ends for now — reopening raises questions about whether old evidence still holds, and nothing answers those yet.
+
+**Status only.** `fix_kind`, `confidence`, `freshness`, `importance`, the memory flags and the text all stay put, and `version` does not move. A refusal writes nothing at all, `updated_at` included.
+
+**Every refusal is a 400.** Invalid enum, disallowed move, same status, terminal status, missing evidence — one code, one envelope. No 409 and no conflict vocabulary: that is P2-07's, and there is no compare-and-swap here.
+
 ## What exists now — Verification API (P2-05)
 
 | Method | Path |
@@ -136,37 +156,37 @@ Read this to know what you are building on.
 
 **Indexes.** One ordered index per list path — events and verifications by `(owner_id, problem_id, created_at, id)`, problems by `(owner_id, project_id, created_at, problem_id)` — plus the environment foreign key index. No index is a left prefix of another. Vector and full-text indexes belong to the retrieval phase.
 
-**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Fifteen operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, append/list Event, append/list Verification. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
+**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Sixteen operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, transition Problem status, append/list Event, append/list Verification. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
 
 **Executor.** `DatabaseExecutor` is `query` and nothing else. A pool satisfies it, and so will a client checked out for a transaction, so Phase 2 can add transactions without changing anything below. The repository does not own a transaction.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 890 tests across 37 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1024 tests across 40 files.
 
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
-- Recording a successful Verification does **not** move a Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That judgement is P2-06
+- Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - `version` exists on Problem and nothing increments it. It is response-only, no endpoint accepts it, and there is no `expected_version`. Optimistic locking is P2-07
-- Nothing changes a Problem's `status` or `fix_kind`. The Problem PATCH refuses both. Transitions are P2-06, close and review P2-12
+- Nothing changes a Problem's `fix_kind`. The Problem PATCH refuses it and a transition never sets it. Close and review are P2-12
 - No delete anywhere, no Environment update, no MCP, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
 - No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-06 — Problem state transition service.
+P2-07 — Optimistic locking on Problem.
 
 Not started.
 
 Notes for whoever picks this up:
-- Nothing writes `status` today. It is not PATCHable (D-055), no append moves it (D-033, D-065), and the database does not prevent any value. This task is where that changes, and it should end up the *only* way status moves
-- `VERIFIED` has to require at least one successful Verification. That is now findable mechanically: `result` is a boolean the API cannot blur (D-062), and `listVerifications` already exists. Do not infer success from a FIX Event or from prose
-- `version` is still response-only and nothing increments it. Optimistic locking is P2-07, so decide deliberately whether a transition touches `version` at all rather than adding it by reflex
-- `fix_kind` is P2-12's. FIX_CANDIDATE and the fix kind are separate axes (D-024), so a transition service should not start setting one from the other
-- The repository exposes fifteen operations and has `updateProblem`, but its input deliberately has no `status` field (D-055). Widening it is a decision this task has to make explicitly, not a detail
+- `version` has been left alone by every task so far, on purpose. It is response-only, nothing increments it, and no endpoint accepts `expected_version` — so this task owns the whole meaning at once rather than inheriting half of one
+- The open questions are real: which writes increment it (the generic patch, status transitions, both), whether `expected_version` is required or optional, and what a conflict answers. P2-06 deliberately introduced no 409 and no conflict vocabulary (D-070), so nothing is half-decided
+- There are now two write paths to a Problem — `updateProblem` and `updateProblemStatus` — and neither does a compare-and-swap. The transition service reads the status, applies the rule and writes; two concurrent callers can both pass
+- The appends are a separate case. Events and Verifications are idempotent on `client_event_id` (D-058, D-063) and touch no version; retry safety there is already solved and is not the same problem
+- Whatever the answer, `version` is currently in every Problem response and pinned at 1 by several tests. Changing when it moves will change those, which is the point at which to check the change is deliberate
 
 ## Core MVP milestone
 
