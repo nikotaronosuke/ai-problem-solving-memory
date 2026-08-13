@@ -10,9 +10,13 @@ export {
   createPermissivePolicy,
   formatFieldPath,
   SanitizationRejectedError,
+  UnsupportedSanitizationOutcomeError,
   type FieldPath,
+  type PathSegment,
+  type SanitizationLocationKind,
   type SanitizationOutcome,
   type SanitizationPolicy,
+  type SanitizationSite,
 } from './policy.js';
 export { sanitizeValue } from './sanitize.js';
 export { isSanitizedOperation, withSanitization } from './sanitizing-repository.js';
