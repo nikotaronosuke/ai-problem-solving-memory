@@ -76,6 +76,11 @@ export function registerMemoryControlRoutes(
     '/problems/:problem_id/memory-control',
     {
       schema: {
+        operationId: 'updateMemoryControl',
+        summary: 'Set how a problem is used as memory',
+        description:
+          'Not authorisation, and not enforced yet. `invalidate` accepts only true and sets freshness to INVALID.',
+        tags: ['Memory Controls'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',

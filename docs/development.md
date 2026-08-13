@@ -111,6 +111,15 @@ The Memory JSON API lives under `/v1`; `/health` sits outside it, because
 whether the process is serving is not part of the API contract. Everything
 under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 
+Three descriptions of this API would be two too many, so they have different
+jobs. The **machine-readable contract** is `GET /openapi.json` — OpenAPI 3.1,
+generated at startup from the schemas the routes declare, which is what a
+client generator should read. The **semantics** are in
+[`api-contract.md`](./api-contract.md): what a 404 means, how
+`expected_version` and `client_event_id` behave, what counts as evidence. What
+follows here is the working narrative for someone changing the code, and it
+does not restate field lists that the OpenAPI document already carries.
+
 | Method | Path                                          |
 | ------ | --------------------------------------------- |
 | GET    | `/v1/me`                                      |
@@ -137,6 +146,10 @@ under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 | GET    | `/v1/problems/:problem_id/usage-logs`         |
 | GET    | `/v1/problems/:problem_id/change-logs`        |
 | POST   | `/v1/problems/:problem_id/close`              |
+
+Outside `/v1`, alongside `/health`: `GET /openapi.json`, which needs no owner.
+It is generated rather than written, so a route schema change shows up in it
+in the same commit. It does not list itself.
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in

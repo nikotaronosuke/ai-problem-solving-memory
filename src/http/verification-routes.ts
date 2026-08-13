@@ -73,6 +73,11 @@ export function registerVerificationRoutes(
     '/problems/:problem_id/verifications',
     {
       schema: {
+        operationId: 'appendVerification',
+        summary: 'Record a check that was carried out',
+        description:
+          '`result` true means a check confirmed the state; false means it did not. Neither means "not checked yet".',
+        tags: ['Verifications'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',
@@ -126,6 +131,9 @@ export function registerVerificationRoutes(
     '/problems/:problem_id/verifications',
     {
       schema: {
+        operationId: 'listVerifications',
+        summary: 'List a problem\u2019s verifications',
+        tags: ['Verifications'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         response: {
           200: {

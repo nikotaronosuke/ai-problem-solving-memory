@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-12 done; P2-13 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-13 done; P2-14 next)
 
 ## Source of truth
 
@@ -97,6 +97,28 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 **Ownership first.** Both routes confirm the problem is the caller's before anything else. The unique index is evaluated before the foreign key, so an unchecked append could otherwise replay an event to someone with no right to it — idempotency is never a way past owner scope. Listing another owner's problem is a 404, not an empty list.
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
+
+## What exists now — The machine-readable contract (P2-13)
+
+| Method | Path |
+| --- | --- |
+| GET | `/openapi.json` |
+
+**Source of truth.** The route schemas, unchanged. `@fastify/swagger` in dynamic mode reads what Fastify already validates and serialises through, and assembles an OpenAPI 3.1 document from it. Nothing is hand-written and no generated artefact is committed, so there is no second description to keep in step (D-103, D-104).
+
+**OpenAPI 3.1, not 3.0.** The runtime schemas are plain JSON Schema — `type: ['string','null']`, enums containing `null`, `enum: [true]`, `minProperties`. 3.1 adopts that wholesale; 3.0 would have meant rewriting live validation into its `nullable` dialect, which is a document format deciding what the server accepts (D-105). Verified: every one of those survives generation intact, including the `\S` non-blank pattern.
+
+**Registration order.** The generator collects routes through an `onRoute` hook, and `register` is deferred — the hook does not exist until `ready()` runs the queue. A route added straight to the instance before then is missing from the document with nothing failing, which is what happened to `/health` while this was being written. Every route now goes through a queued plugin, and the inventory is asserted rather than trusted (D-106).
+
+**`/openapi.json`.** Outside `/v1` and unauthenticated: the shape of the API is not anyone's memory, and a client that cannot read it cannot learn how to establish an owner. Hidden from its own output. No YAML, no owner-scoped copy, no UI (D-107, D-109).
+
+**25 operations, stable names.** `healthCheck`, `getCurrentOwner`, and one per route. These are what a generated client calls its methods, so a rename is a breaking change to someone else's code (D-108). Eleven tags, classification only.
+
+**No invented authentication.** The document declares no security scheme and no header parameter. There is no client credential contract yet, and publishing `BearerAuth` would have generated clients sending a header nothing reads. `owner_id` is data, never a credential (D-110).
+
+**Drift detection.** 70 tests read the generated document and assert against literal values: the exact operation inventory both ways, unique operationIds, every enum set, required fields, `minProperties`, `additionalProperties: false`, the five error codes, and parity between `app.swagger()` and the served response. A route schema loosened by accident fails there (D-111).
+
+**Human semantics.** `docs/api-contract.md` — what a 404 means, how `expected_version` and `client_event_id` behave, what counts as evidence. No field list: that is the document's job.
 
 ## What exists now — Closing a Problem (P2-12)
 
@@ -274,7 +296,7 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1702 tests across 58 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1774 tests across 59 files.
 
 ## What is deliberately absent
 
@@ -284,20 +306,21 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
 - No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
-- No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
+- No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
+- No client SDK or codegen, and no authentication scheme. The document declares no security scheme because no client credential contract exists yet
 
 ## Immediate objective
 
-P2-13 — API contract / schema documentation.
+P2-14 — Phase 2 E2E.
 
 Not started.
 
 Notes for whoever picks this up:
-- Every route already declares request and response schemas, and they are what the server actually enforces. Whatever document is produced must not become a second source of truth that can drift from them
-- Nothing generates a document today, and nothing depends on one existing. Whether it is generated from the schemas or written alongside them is the first decision
-- The surface is now complete for Phase 2: health, `/v1/me`, Projects, Environments, Problems, Events, Verifications, transitions, Relations, UsageLogs, ChangeLogs, memory controls and close
-- The error envelope and its five codes are part of the contract, as is the rule that another owner's resource answers exactly as one that does not exist. A document that describes 404 without saying why would lose the point of it
-- `docs/development.md` already narrates the API in prose. Decide whether the new document replaces that section, references it, or sits beside it — three descriptions of one API is the failure mode
+- The required flow is in the private task breakdown: project and environment, problem, the event sequence, FIX_CANDIDATE, a successful verification, VERIFIED, a relation, a usage log, an edit and its change log
+- The negative cases are the point as much as the flow: VERIFIED without evidence, a stale version, a cross-owner reach, a duplicate `client_event_id`, an invalid relation
+- Every one of those is already covered per-endpoint. What E2E adds is that they hold *in sequence*, against one database, with state carried between steps — so a test that just re-runs the unit assertions in a row adds nothing
+- Phase 1 already has `tests/integration/phase1.integration.test.ts`, which runs one problem end to end through the repository. This is the same idea one layer up, through HTTP
+- Satisfying Phase 2's Definition of Done is what this closes out; do not start Phase 3
 
 ## Core MVP milestone
 
