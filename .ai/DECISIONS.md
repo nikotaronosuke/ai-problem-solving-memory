@@ -824,3 +824,61 @@ Turning off reads does not hide a Problem from its owner. Every read endpoint ke
 Nor does any endpoint start refusing writes when `memory_write_enabled` is false. Nothing in this phase can distinguish a person's own write from an assistant's automatic one, so enforcing the flag would mean guessing, and guessing would block the owner from their own record. What these controls govern is automatic retrieval and automatic writing, which belong to the retrieval layer and the AI adapter; recording the intent correctly now is what lets those honour it later.
 
 `changed_by` remains descriptive here as everywhere (D-091): a test writes `root`, `admin` and another owner's id into it and asserts each still reaches nothing.
+
+## D-097 — Closing is its own surface, not metadata on a transition (P2-12)
+
+`CLOSED_UNRESOLVED` and `PAUSED` were already reachable through `POST /v1/problems/:problem_id/status-transitions` (D-067), so a close endpoint had to justify itself rather than duplicate one.
+
+It does, because ending a Problem is usually more than moving its status. A conclusion carries what turned out to be the cause, what worked, what did not, what is still open, and whether the fix addressed the cause or worked around it. Hanging those on the transition route would give one endpoint two jobs and make a plain `INVESTIGATING → FIX_CANDIDATE` move carry fields that mean nothing to it.
+
+`POST /v1/problems/:problem_id/close` therefore takes only the three conclusions — `VERIFIED`, `PAUSED`, `CLOSED_UNRESOLVED`. `INVESTIGATING` and `FIX_CANDIDATE` are working states and are refused with a 400: two surfaces performing the same move differently is worse than one of them saying no. The transition route is unchanged and still performs every move, closing ones included, for a caller that has nothing to record.
+
+## D-098 — Closing applies the same rules, and gets no relaxation for being higher-level (P2-12)
+
+The close service does not re-decide which moves are legal. It calls `decideTransition` with the same inputs and the same evidence check, so the matrix and the `VERIFIED` gate (D-067, D-068) hold identically on both surfaces.
+
+This is the failure worth guarding: a convenient endpoint that quietly accepts what the strict one refuses. So `VERIFIED` still comes only from `FIX_CANDIDATE`, and still only when the Problem has a Verification of its own whose `result` is true — a `final_cause_summary` explaining the cause is an account, not evidence. A terminal Problem cannot be closed again, which keeps closing from becoming a way to revise a conclusion or a `fix_kind` after the fact. Integration tests assert each of those against a real database.
+
+The version is checked before the rule is applied, as in the transition service: a caller working from a stale read has a stale idea of the status too, and answering 409 first is both more accurate and less informative to someone probing.
+
+## D-099 — fix_kind is written by closing, and is a separate axis from status (P2-12)
+
+Nothing set `fix_kind` before this task. It is writable here and nowhere else in this phase: the Problem PATCH, the memory control route and the transition route all still refuse it, because whether a fix addressed the cause or worked around it is a conclusion rather than an edit.
+
+Absent leaves whatever is there; `null` clears it. The distinction is real — closing a Problem while saying nothing about the fix kind is not the same as saying there is no fix kind — so the command carries the property only when the request mentioned it, and the change log names `fix_kind` on the same condition.
+
+Status does not imply it in either direction. A Problem can be `VERIFIED` with no fix kind stated, and a `WORKAROUND` or even a `ROOT_FIX` can be recorded on one that was paused or closed unresolved. Verified says the fix holds; it does not say what the fix was.
+
+## D-100 — A review is Events, not a new resource (P2-12)
+
+The four summaries become ordinary Events: `final_cause_summary` a `DISCOVERY`, `effective_direction` a `FIX`, `dead_end_summary` a `DEAD_END`, `unresolved_points` a `HYPOTHESIS`. No Review table, no Review endpoint, no new event type.
+
+A review is a set of statements about the investigation, which is what an Event already is. Giving them their own home would put the same kind of information in two places with two ways of reading it, and any future retrieval would have to consult both.
+
+`unresolved_points` is a `HYPOTHESIS` rather than a `DISCOVERY` deliberately: an open question is something believed to matter and not yet settled, and filing an unknown as a fact is the mistake this record exists to avoid.
+
+All four are optional. Closing with nothing to add is legitimate — the event history may already say everything worth saying, and a required summary would be answered with filler. Each is non-blank when present, so a whitespace-only account is refused rather than stored.
+
+`changed_by` becomes each Event's `source_ai`: whoever concluded the Problem is who recorded these. It stays descriptive and never authorises (D-091).
+
+No `client_event_id` is asked of the caller, and the close body refuses one. The whole close is already protected by `expected_version` — resending one that succeeded conflicts rather than recording the review twice — so per-summary keys would be four more things for a client to get right for no additional guarantee.
+
+The Events themselves carry one as every Event does. The service mints a distinct id per review Event and stores it on the ordinary column, which is `not null` and unique per owner. Review Events are Events: no exception to the model, no nullable key, no review-specific schema.
+
+## D-101 — The whole conclusion is one act (P2-12)
+
+Status, `fix_kind`, the review Events and the change log entry commit together or not at all, in one transaction and one version step.
+
+A Problem marked verified with the account of why it was verified missing is the worst available outcome, and an account of a conclusion that never happened is barely better. Two tests make failure real rather than assumed: one where the Event write fails and one where the change log write fails, each asserting the Problem is untouched and nothing was left behind. Both were confirmed to fail when the transaction is removed.
+
+Status and `fix_kind` move in a single compare-and-swap, so a conclusion cannot land half-applied. Four concurrency tests race a close against another close, against the ordinary PATCH, against a transition and against a memory control change; in each exactly one wins, the version moves once, one change log entry exists, and the loser's review Events are absent. All four were confirmed to fail when the version predicate is removed.
+
+The summaries stay out of the change log, which names `status` and, conditionally, `fix_kind`. Free text is described rather than copied (D-090), and here it is not even described: the Events are where that text lives, and a second copy in the history would outlive any later removal.
+
+## D-102 — Simultaneous Events have no order, and that is left alone (P2-12)
+
+Two things about Events came out of writing multiple ones in a single transaction, which nothing did before this task.
+
+`appendEvent` recovered from a duplicate `client_event_id` by catching the unique-violation and re-reading the original row (D-059). Inside a transaction that is wrong: the failed statement aborts the enclosing transaction, and the recovery read fails too. It now writes with `on conflict (owner_id, client_event_id) do nothing returning` and reads the original only when nothing was written, so no error is raised on the ordinary retry path. P2-04's idempotency and concurrency tests were re-run against the change, including confirming the concurrency test still discriminates.
+
+The second is unfixed and deliberate. `created_at` defaults to `now()`, the transaction's timestamp, so all four review Events share one, and the Event list breaks that tie on the identifier — a random UUID. They therefore come back in an arbitrary order. Changing the default to `clock_timestamp()` would give insertion order, but it would alter the meaning of `created_at` for every Event in the system to solve a presentation problem: the four statements genuinely were made at the same moment, and each carries its own type, so a reader never needs their order to tell them apart. Recorded here so that a later retrieval layer that does want narrative order knows this is where to start.

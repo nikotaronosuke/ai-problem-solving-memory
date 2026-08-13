@@ -18,6 +18,7 @@ import {
   createUsageLogService,
   createChangeLogService,
   createMemoryControlService,
+  createProblemCloseService,
   createVerificationService,
   createEventService,
   createProblemService,
@@ -135,6 +136,7 @@ function buildApp(service: ProjectEnvironmentService, authenticated = true) {
     usageLogService: createUsageLogService(),
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
+    problemCloseService: createProblemCloseService(),
     logger: false,
   });
 }

@@ -28,6 +28,7 @@ import {
   createEventService,
   createHealthService,
   createMemoryControlService,
+  createProblemCloseService,
   createProblemService,
   createProblemStatusService,
   createProjectEnvironmentService,
@@ -79,6 +80,7 @@ describe.skipIf(databaseUrl === undefined)('Memory controls', () => {
       usageLogService: createUsageLogService(),
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
+      problemCloseService: createProblemCloseService(),
       logger: false,
     });
     appsCreated.push(app);

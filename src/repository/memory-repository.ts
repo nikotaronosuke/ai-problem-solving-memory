@@ -37,6 +37,7 @@ import {
   listProblems,
   updateProblem,
   updateProblemStatus,
+  updateProblemConclusion,
   type CreateProblemInput,
   type ProblemRecord,
   type UpdateProblemInput,
@@ -74,7 +75,7 @@ import {
   type AppendVerificationInput,
   type VerificationRecord,
 } from '../db/verifications.js';
-import type { ProblemStatus } from '../domain/enums.js';
+import type { FixKind, ProblemStatus } from '../domain/enums.js';
 import type { EnvironmentId } from '../domain/environment.js';
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
@@ -132,6 +133,20 @@ export interface MemoryRepository {
     problemId: ProblemId,
     expectedVersion: number,
     status: ProblemStatus,
+  ): Promise<ProblemRecord | undefined>;
+
+  /**
+   * Records how a problem concluded: status and fix kind together, in one
+   * version step.
+   *
+   * Separate from `updateProblemStatus` so that route cannot write a fix kind
+   * by accident — concluding is a different act from moving between working
+   * states, and neither surface should be able to do the other's job.
+   */
+  updateProblemConclusion(
+    problemId: ProblemId,
+    expectedVersion: number,
+    conclusion: { readonly status: ProblemStatus; readonly fixKind: FixKind | null },
   ): Promise<ProblemRecord | undefined>;
 
   appendEvent(input: AppendEventInput): Promise<EventRecord>;
@@ -204,6 +219,8 @@ export function createMemoryRepository(
       updateProblem(executor, context, problemId, expectedVersion, input),
     updateProblemStatus: (problemId, expectedVersion, status) =>
       updateProblemStatus(executor, context, problemId, expectedVersion, status),
+    updateProblemConclusion: (problemId, expectedVersion, conclusion) =>
+      updateProblemConclusion(executor, context, problemId, expectedVersion, conclusion),
 
     appendEvent: (input) => appendEvent(executor, context, input),
     listEvents: (problemId) => listEvents(executor, context, problemId),

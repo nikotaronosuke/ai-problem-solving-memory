@@ -133,6 +133,10 @@ under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 | POST   | `/v1/problems/:problem_id/status-transitions` |
 | POST   | `/v1/problems/:problem_id/relations`          |
 | GET    | `/v1/problems/:problem_id/relations`          |
+| POST   | `/v1/problems/:problem_id/usage-logs`         |
+| GET    | `/v1/problems/:problem_id/usage-logs`         |
+| GET    | `/v1/problems/:problem_id/change-logs`        |
+| POST   | `/v1/problems/:problem_id/close`              |
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in
@@ -145,11 +149,11 @@ no fix kind, low confidence and version 1 — the caller does not get to
 declare any of that.
 
 A patch changes only the fields it names. `status`, `fix_kind` and `version`
-are not among them: state transitions have their own endpoint, and `version`
-is the server's to move. Sending one is a validation failure rather than a
-silent no-op. `importance`, `confidence`, `freshness`, `suppressed` and the
-two memory flags are independent — setting any one of them never moves
-another.
+are not among them: state transitions have their own endpoint, `fix_kind` is
+written when a Problem is closed, and `version` is the server's to move.
+Sending one is a validation failure rather than a silent no-op. `importance`,
+`confidence`, `freshness`, `suppressed` and the two memory flags are
+independent — setting any one of them never moves another.
 
 Every write to a Problem carries `expected_version`, the version the caller
 last read:
@@ -170,8 +174,9 @@ assistants working on the same Problem is the normal case, and a silent
 overwrite would lose a finding without either of them noticing — which is
 worse than an error, because it looks like it worked.
 
-The ordinary patch and the status transition share that one version, so an
-edit and a transition conflict with each other rather than passing unseen.
+The ordinary patch, the status transition, the memory controls and closing all
+share that one version, so any two of them conflict with each other rather
+than passing unseen.
 Appends do not: an Event or Verification can be recorded whatever version the
 Problem is at, and recording one does not move it. Retry safety for an append
 is `client_event_id`, which answers a different question.
@@ -244,6 +249,70 @@ A transition changes the status and nothing else. `fix_kind`, `confidence`,
 verifying a Problem says the fix holds, not that anyone is more confident in
 the record or that the fix addressed the cause. The version moves, as it does
 for any successful write.
+
+Ending a Problem usually means more than moving its status, and
+`POST /v1/problems/:problem_id/close` is the one request for the whole of it:
+
+```json
+{
+  "expected_version": 4,
+  "changed_by": "claude-code",
+  "target_status": "VERIFIED",
+  "fix_kind": "ROOT_FIX",
+  "final_cause_summary": "The provider's registered redirect never matched.",
+  "effective_direction": "Align the registered redirect with the deployed one.",
+  "dead_end_summary": "Changing the app route alone did nothing.",
+  "unresolved_points": "Why preview differs from production is still open."
+}
+```
+
+Only the three conclusions are accepted: `VERIFIED`, `PAUSED` and
+`CLOSED_UNRESOLVED`. `INVESTIGATING` and `FIX_CANDIDATE` are working states
+and stay with the transition route, which is unchanged — two surfaces doing
+the same move differently is worse than one of them saying no.
+
+Underneath it is the same transition matrix and the same evidence gate.
+`VERIFIED` still comes only from `FIX_CANDIDATE`, and still only with a
+successful Verification of the Problem's own; a well-argued
+`final_cause_summary` is not evidence. A terminal Problem cannot be closed
+again, so this is not a way to revise a conclusion. Anything refused is a 400,
+and nothing at all is written.
+
+`fix_kind` is writable here and nowhere else in this phase — whether a fix
+addressed the cause or worked around it is a conclusion rather than an edit.
+Omitting it leaves whatever is there; sending `null` clears it. It is a
+separate axis from status in both directions: a Problem can be verified with
+no fix kind stated, and a `WORKAROUND` can be recorded on one that was only
+set aside.
+
+The four summaries are optional and each becomes an ordinary Event:
+`final_cause_summary` a `DISCOVERY`, `effective_direction` a `FIX`,
+`dead_end_summary` a `DEAD_END`, `unresolved_points` a `HYPOTHESIS`. There is
+no Review resource and no new event type: a review is a set of statements about
+the investigation, and putting them anywhere else would leave the same
+information in two places. An open question is recorded as a `HYPOTHESIS`
+rather than a `DISCOVERY`, because filing an unknown as a fact is the mistake
+this record exists to avoid. `changed_by` becomes each Event's `source_ai`.
+Closing with no summaries is fine — the history may already say everything
+worth saying.
+
+All of it is one act: the status and fix kind settle, the Events are written
+and one change log entry records it, in a single transaction and a single
+version step. Written together, they share a `created_at` and so have no
+order among themselves — each carries its own type, so a reader never needs
+one to tell them apart. A Problem marked verified with the account of why missing is the
+worst available outcome, so either all of it commits or none of it does. The
+summaries themselves stay out of the change log, which names `status` and, if
+the request mentioned it, `fix_kind`.
+
+Because the whole close is protected by `expected_version`, resending one that
+already succeeded conflicts rather than recording the review twice. There is
+no `client_event_id` here for the same reason.
+
+Nothing else is inferred. Closing does not raise confidence, refresh
+freshness, touch the memory controls, or create the Verification it requires.
+`PAUSED` stays resumable through the transition route, and the review it left
+behind remains as history.
 
 JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
 another owner answers exactly as one that does not exist.
