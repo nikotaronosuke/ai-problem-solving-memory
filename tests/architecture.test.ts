@@ -290,13 +290,19 @@ describe('application layer', () => {
     const offenders: string[] = [];
     for (const module of modules) {
       for (const specifier of importsOf(module.source)) {
-        // `db/health` and `db/pool` are the exception the health probe needs:
-        // it reports on the pool itself, which no repository operation covers.
+        // Four exceptions, all of them boundary types or lifecycle rather
+        // than data access. `db/health` and `db/pool` are what the health
+        // probe needs, since it reports on the pool itself and no repository
+        // operation covers that. `db/executor` and `db/transaction` are the
+        // seams: a service names them to say "something that can run a
+        // statement" and "something that can run several as one", and neither
+        // gives it a way to reach a table or a driver type.
         const reachesStorage =
           specifier.includes('/db/') &&
           !specifier.includes('/db/health') &&
           !specifier.includes('/db/pool') &&
-          !specifier.includes('/db/executor');
+          !specifier.includes('/db/executor') &&
+          !specifier.includes('/db/transaction');
         if (reachesStorage) {
           offenders.push(`${module.path} -> ${specifier}`);
         }

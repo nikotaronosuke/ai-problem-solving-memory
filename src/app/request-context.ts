@@ -26,6 +26,7 @@
 
 import type { EnvSource } from '../config/env.js';
 import type { DatabaseExecutor } from '../db/executor.js';
+import type { DatabaseTransactionRunner } from '../db/transaction.js';
 import { resolveOwnerContext } from '../owner/context.js';
 import { createMemoryRepository, type MemoryRepository } from '../repository/index.js';
 
@@ -37,6 +38,21 @@ import { createMemoryRepository, type MemoryRepository } from '../repository/ind
  */
 export interface AuthenticatedRequestContext {
   readonly repository: MemoryRepository;
+
+  /**
+   * Runs work as one transaction, against a repository bound to the same
+   * owner.
+   *
+   * The repository handed in is the same scope as `repository` but on a
+   * single connection, so several writes commit or roll back together.
+   * Throwing rolls back — which is how a service refuses partway through, and
+   * also what happens if something unexpected fails.
+   *
+   * Deliberately owner-scoped rather than exposing the transaction itself: a
+   * service still cannot name an owner, and still has no way to reach a
+   * connection or a driver type.
+   */
+  runInTransaction<T>(work: (repository: MemoryRepository) => Promise<T>): Promise<T>;
 }
 
 /** Raised when no owner could be established for a request. */
@@ -58,11 +74,18 @@ export interface RequestContextService {
 /**
  * Builds the request-context service.
  *
- * `executor` is whatever can run a statement, so a future transactional path
- * can supply a checked-out client without this changing.
+ * `executor` is whatever can run a statement, and `transactionRunner` is what
+ * turns several statements into one. Both are required: a context that could
+ * not start a transaction would have to fail at the moment a service tried,
+ * which is far too late to notice.
+ *
+ * The owner is resolved once and closed over, so the transactional repository
+ * is the same scope as the ordinary one by construction rather than by a
+ * caller remembering to pass the same context twice.
  */
 export function createRequestContextService(
   executor: DatabaseExecutor,
+  transactionRunner: DatabaseTransactionRunner,
   source: EnvSource = process.env,
 ): RequestContextService {
   return {
@@ -77,7 +100,13 @@ export function createRequestContextService(
         throw new RequestContextUnavailableError(internalReason);
       }
 
-      return { repository: createMemoryRepository(executor, ownerContext) };
+      return {
+        repository: createMemoryRepository(executor, ownerContext),
+        runInTransaction: (work) =>
+          transactionRunner.run((transactional) =>
+            work(createMemoryRepository(transactional, ownerContext)),
+          ),
+      };
     },
   };
 }

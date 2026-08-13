@@ -71,6 +71,7 @@ describe.skipIf(databaseUrl === undefined)('verifications', () => {
     if (ownersCreated.length > 0) {
       // Children first: every foreign key restricts deleting the parent.
       for (const table of [
+        'change_logs',
         'verifications',
         'events',
         'problems',

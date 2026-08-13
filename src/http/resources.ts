@@ -12,6 +12,7 @@
  */
 
 import type {
+  ChangeLogRecord,
   EnvironmentRecord,
   EventRecord,
   ProblemRecord,
@@ -471,6 +472,69 @@ export const USAGE_LOG_RESOURCE_SCHEMA = {
     'memory_id',
     'reason',
     'result',
+    'created_at',
+  ],
+  additionalProperties: false,
+} as const;
+
+export interface ChangeLogResource {
+  readonly change_log_id: string;
+  readonly owner_id: string;
+  readonly problem_id: string;
+  readonly changed_by: string;
+  readonly from_version: number;
+  readonly to_version: number;
+  readonly changes: Record<string, unknown>;
+  readonly created_at: string;
+}
+
+/**
+ * Maps a ChangeLog entry for the wire.
+ *
+ * `changes` passes through as stored. Its shape is decided in
+ * `src/domain/change-log.ts` — controlled values exact, free text described
+ * rather than copied — and reshaping it here would put that rule in two
+ * places.
+ *
+ * There is no `updated_at` and no `version`: an entry is a statement about a
+ * moment, and there is no path that edits one.
+ */
+export function toChangeLogResource(record: ChangeLogRecord): ChangeLogResource {
+  return {
+    change_log_id: record.changeLogId,
+    owner_id: record.ownerId,
+    problem_id: record.problemId,
+    changed_by: record.changedBy,
+    from_version: record.fromVersion,
+    to_version: record.toVersion,
+    changes: record.changes,
+    created_at: record.createdAt.toISOString(),
+  };
+}
+
+export const CHANGE_LOG_RESOURCE_SCHEMA = {
+  type: 'object',
+  properties: {
+    change_log_id: { type: 'string', format: 'uuid' },
+    owner_id: { type: 'string', format: 'uuid' },
+    problem_id: { type: 'string', format: 'uuid' },
+    changed_by: { type: 'string' },
+    from_version: { type: 'integer', minimum: 1 },
+    to_version: { type: 'integer', minimum: 2 },
+    // Keys are field names and values describe how each moved. Left
+    // unconstrained here for the same reason a snapshot is: the shape belongs
+    // to the layer that decides it.
+    changes: { type: 'object', additionalProperties: true },
+    created_at: { type: 'string', format: 'date-time' },
+  },
+  required: [
+    'change_log_id',
+    'owner_id',
+    'problem_id',
+    'changed_by',
+    'from_version',
+    'to_version',
+    'changes',
     'created_at',
   ],
   additionalProperties: false,

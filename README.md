@@ -51,6 +51,7 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - Problem 更新の楽観ロック（`expected_version` 必須。競合は 409 `VERSION_CONFLICT`）
 - Relation による Problem 同士のリンク（project を跨げます。owner は跨げません）
 - UsageLog による Memory 利用履歴（どの AI が何をどう使ったか。read の副作用では記録しません）
+- ChangeLog による Problem 変更履歴（変更と同一 transaction で自動記録。自由記述の値は複製しません）
 - リクエスト検証と、全エラー共通の JSON 形式
 
 AI 連携はまだこれからです。

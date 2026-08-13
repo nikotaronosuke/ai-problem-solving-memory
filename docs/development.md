@@ -60,9 +60,9 @@ schema change.
 
 The migrations establish the pipeline, the shared value sets (PostgreSQL
 DOMAINs over `text` with CHECK constraints, mirroring `src/domain/enums.ts`),
-the eight tables — `owners`, `projects`, `environments`, `problems`, `events`,
-`verifications`, `relations`, `usage_logs` — and the Phase 1 integrity and
-index set.
+the nine tables — `owners`, `projects`, `environments`, `problems`, `events`,
+`verifications`, `relations`, `usage_logs`, `change_logs` — and the Phase 1
+integrity and index set.
 
 Every foreign key deletes with `RESTRICT`, so a parent with children cannot be
 removed. That prevents implicit deletion, not deletion: a deliberate removal
@@ -154,8 +154,13 @@ Every write to a Problem carries `expected_version`, the version the caller
 last read:
 
 ```json
-{ "expected_version": 4, "title": "..." }
+{ "expected_version": 4, "changed_by": "claude-code", "title": "..." }
 ```
+
+`changed_by` is required on both write paths and says who is making the
+change. It is recorded in the change log rather than on the Problem, and it is
+descriptive: whatever a caller writes there, the owner comes from the
+established request context and the same data is reachable.
 
 If the Problem is still at that version the write happens and the version
 becomes 5; if not, nothing is written and the response is `409` with code
@@ -209,7 +214,7 @@ That step is `POST /v1/problems/:problem_id/status-transitions`, with a body
 naming only where the Problem should end up:
 
 ```json
-{ "target_status": "FIX_CANDIDATE", "expected_version": 4 }
+{ "target_status": "FIX_CANDIDATE", "expected_version": 4, "changed_by": "claude-code" }
 ```
 
 It is the only way a status changes — the Problem PATCH still refuses
@@ -395,3 +400,62 @@ This is Memory-specific history, not a general audit log. Tool calls, deploys,
 model invocations and approvals are not recorded here.
 
 Create and list only, like relations: no single-log read, update or delete.
+
+Every successful change to a Problem is recorded, automatically, as part of
+the same database transaction as the change itself. There is no endpoint that
+writes one: a Problem edited with no record of it, and a record of an edit
+that did not happen, are both worse than the write failing outright, so the
+two commit or roll back together.
+
+Read a Problem's history with `GET /v1/problems/:problem_id/change-logs`:
+
+```json
+{
+  "change_logs": [
+    {
+      "change_log_id": "...",
+      "problem_id": "...",
+      "changed_by": "claude-code",
+      "from_version": 1,
+      "to_version": 2,
+      "changes": {
+        "confidence": { "kind": "exact", "before": "LOW", "after": "HIGH" }
+      },
+      "created_at": "..."
+    }
+  ]
+}
+```
+
+One entry per mutation, not per field: a patch that changes five things is one
+thing that happened. The version pair brackets it, so the history reads as a
+chain.
+
+What an entry may contain is deliberately uneven. Controlled values — status,
+fix kind, importance, confidence, freshness, the memory flags — keep their
+before and after exactly, because that is what shows how judgement changed and
+because a value from a closed set cannot be a secret. Free text is described
+rather than copied:
+
+```json
+{
+  "title": {
+    "kind": "text_redacted",
+    "before_present": true,
+    "after_present": true,
+    "changed": true
+  }
+}
+```
+
+Titles and symptom notes can hold anything someone wrote, including things
+that later have to be removed, and a copy in the history would outlive the
+removal. What survives is enough to follow the shape of an edit without
+carrying its contents.
+
+A refused change records nothing — a stale version, a disallowed transition, a
+patch with nothing to change, a problem that is not yours. Only Problem
+mutations are tracked: creating a Problem, appending an event or verification,
+linking a relation and recording usage all leave the history untouched.
+
+There is no update or delete for an entry, and no way to write one directly.

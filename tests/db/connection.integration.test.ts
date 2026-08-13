@@ -59,6 +59,7 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
     // `problems`, P1-09 `events`, P1-10 `verifications`, P2-08 `relations`.
     // UsageLog and ChangeLog are still to come.
     expect(result.rows.map((row) => row.table_name).sort()).toEqual([
+      'change_logs',
       'environments',
       'events',
       'owners',

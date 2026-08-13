@@ -23,6 +23,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -30,6 +31,7 @@ import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
@@ -48,7 +50,9 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -56,6 +60,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
 
@@ -121,7 +126,11 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
   ])('refuses identically when the owner is %s', async (_label, source) => {
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, source),
+      requestContextService: createRequestContextService(
+        pool,
+        createTransactionRunner(pool),
+        source,
+      ),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -129,6 +138,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
 
@@ -146,7 +156,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
   it('leaves health working when no owner is configured', async () => {
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, {}),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {}),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -154,6 +164,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
 
@@ -177,9 +188,13 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
     );
     const app = buildMemoryHttpApp({
       healthService: createHealthService(ownPool),
-      requestContextService: createRequestContextService(ownPool, {
-        [MEMORY_OWNER_ID_VAR]: ownerId,
-      }),
+      requestContextService: createRequestContextService(
+        ownPool,
+        createTransactionRunner(ownPool),
+        {
+          [MEMORY_OWNER_ID_VAR]: ownerId,
+        },
+      ),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -187,6 +202,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
 

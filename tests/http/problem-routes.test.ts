@@ -19,6 +19,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type CreateProblemCommand,
@@ -115,6 +116,7 @@ function buildApp(service: ProblemService, authenticated = true) {
     verificationService: createVerificationService(),
     relationService: createRelationService(),
     usageLogService: createUsageLogService(),
+    changeLogService: createChangeLogService(),
     logger: false,
   });
 }
@@ -362,13 +364,17 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: { ...payload, expected_version: 4 },
+      payload: { ...payload, expected_version: 4, changed_by: 'claude-code' },
     });
 
     expect(response.statusCode).toBe(200);
     // Omitted fields are absent, not undefined, so the service can tell
     // "leave alone" from "clear". The token travels alongside them.
-    expect(calls.updateProblem?.command).toEqual({ ...expected, expectedVersion: 4 });
+    expect(calls.updateProblem?.command).toEqual({
+      ...expected,
+      expectedVersion: 4,
+      changedBy: 'claude-code',
+    });
     expect(calls.updateProblem?.problemId).toBe(PROBLEM_ID);
 
     await app.close();
@@ -381,11 +387,15 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: { confidence, expected_version: 4 },
+      payload: { confidence, expected_version: 4, changed_by: 'claude-code' },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(calls.updateProblem?.command).toEqual({ confidence, expectedVersion: 4 });
+    expect(calls.updateProblem?.command).toEqual({
+      confidence,
+      expectedVersion: 4,
+      changedBy: 'claude-code',
+    });
 
     await app.close();
   });
@@ -397,21 +407,31 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: { freshness, expected_version: 4 },
+      payload: { freshness, expected_version: 4, changed_by: 'claude-code' },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(calls.updateProblem?.command).toEqual({ freshness, expectedVersion: 4 });
+    expect(calls.updateProblem?.command).toEqual({
+      freshness,
+      expectedVersion: 4,
+      changedBy: 'claude-code',
+    });
 
     await app.close();
   });
 
   it.each([
     ['an empty body', {}],
-    // `expected_version` is a concurrency token, not a field being changed, so
-    // a body carrying only it changes nothing.
+    // `expected_version` and `changed_by` are a concurrency token and a
+    // signature, not fields being changed, so a body carrying only them
+    // changes nothing.
     ['only the expected version', { expected_version: 4 }],
-    ['a missing expected version', { title: 'renamed' }],
+    ['only the token and the signature', { expected_version: 4, changed_by: 'claude-code' }],
+    ['a missing expected version', { title: 'renamed', changed_by: 'claude-code' }],
+    ['a missing changed_by', { title: 'renamed', expected_version: 4 }],
+    ['an empty changed_by', { title: 'renamed', expected_version: 4, changed_by: '' }],
+    ['a whitespace-only changed_by', { title: 'x', expected_version: 4, changed_by: '   ' }],
+    ['a non-string changed_by', { title: 'x', expected_version: 4, changed_by: 42 }],
   ])('refuses a patch with %s', async (_label, payload) => {
     const calls: ServiceCalls = {};
     const app = buildApp(serviceRecording(calls));
@@ -442,7 +462,7 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: { ...payload, title: 'renamed' },
+      payload: { ...payload, changed_by: 'claude-code', title: 'renamed' },
     });
 
     // A concurrency token that can be misread is not one, so nothing is
@@ -474,7 +494,7 @@ describe('PATCH /v1/problems/:problem_id', () => {
       url: `/v1/problems/${PROBLEM_ID}`,
       // A valid token and a real change, so the refusal is attributable to
       // the field under test rather than to a malformed request.
-      payload: { ...payload, expected_version: 4, title: 'renamed' },
+      payload: { ...payload, expected_version: 4, changed_by: 'claude-code', title: 'renamed' },
     });
 
     // Status in particular: VERIFIED requires a successful Verification, and
@@ -502,7 +522,7 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: { ...payload, expected_version: 4 },
+      payload: { ...payload, expected_version: 4, changed_by: 'claude-code' },
     });
 
     expect(response.statusCode).toBe(400);
@@ -517,7 +537,7 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: '/v1/problems/not-a-uuid',
-      payload: { title: 'x', expected_version: 4 },
+      payload: { title: 'x', expected_version: 4, changed_by: 'claude-code' },
     });
 
     expect(response.statusCode).toBe(400);

@@ -30,6 +30,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -37,6 +38,7 @@ import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { generateProblemId } from '../../src/domain/problem.js';
@@ -67,7 +69,9 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -75,6 +79,7 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
     appsCreated.push(app);
@@ -118,7 +123,11 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
     return fixture.actor.app.inject({
       method: 'POST',
       url: `/v1/problems/${fixture.problemId}/status-transitions`,
-      payload: { target_status: targetStatus, expected_version: expectedVersion },
+      payload: {
+        target_status: targetStatus,
+        expected_version: expectedVersion,
+        changed_by: 'claude-code',
+      },
     });
   }
 
@@ -176,6 +185,7 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
     if (ownersCreated.length > 0) {
       // Children first: every foreign key restricts deleting the parent.
       for (const table of [
+        'change_logs',
         'verifications',
         'events',
         'problems',
@@ -497,7 +507,7 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
       const response = await fixture.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${generateProblemId()}/status-transitions`,
-        payload: { target_status: 'PAUSED', expected_version: 1 },
+        payload: { target_status: 'PAUSED', expected_version: 1, changed_by: 'claude-code' },
       });
 
       expect(response.statusCode).toBe(404);
@@ -555,7 +565,12 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
         // The transition moved the version, so the patch has to name the one
         // it produced — the two write paths share a lock rather than each
         // keeping their own.
-        payload: { confidence: 'HIGH', importance: true, expected_version: moved['version'] },
+        payload: {
+          confidence: 'HIGH',
+          importance: true,
+          changed_by: 'claude-code',
+          expected_version: moved['version'],
+        },
       });
 
       expect(patched.statusCode).toBe(200);
@@ -577,7 +592,11 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
       const response = await mine.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${theirs.problemId}/status-transitions`,
-        payload: { target_status: 'CLOSED_UNRESOLVED', expected_version: 1 },
+        payload: {
+          target_status: 'CLOSED_UNRESOLVED',
+          expected_version: 1,
+          changed_by: 'claude-code',
+        },
       });
 
       expect(response.statusCode).toBe(404);
@@ -592,12 +611,12 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
       const crossOwner = await mine.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${theirs.problemId}/status-transitions`,
-        payload: { target_status: 'PAUSED', expected_version: 1 },
+        payload: { target_status: 'PAUSED', expected_version: 1, changed_by: 'claude-code' },
       });
       const unknown = await mine.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${generateProblemId()}/status-transitions`,
-        payload: { target_status: 'PAUSED', expected_version: 1 },
+        payload: { target_status: 'PAUSED', expected_version: 1, changed_by: 'claude-code' },
       });
 
       // `request_id` differs per request, so the comparison is of the part

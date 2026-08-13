@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-09 done; P2-10 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-10 done; P2-11 next)
 
 ## Source of truth
 
@@ -97,6 +97,26 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 **Ownership first.** Both routes confirm the problem is the caller's before anything else. The unique index is evaluated before the foreign key, so an unchecked append could otherwise replay an event to someone with no right to it — idempotency is never a way past owner scope. Listing another owner's problem is a 404, not an empty list.
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
+
+## What exists now — ChangeLog (P2-10)
+
+| Method | Path |
+| --- | --- |
+| GET | `/v1/problems/:problem_id/change-logs` |
+
+**Written by the service, never by a caller.** No POST, PATCH or DELETE, and no field of an entry comes from a request body. A history a caller can author is not a history. Not a trigger either: what may be recorded is a product decision.
+
+**One transaction with the change.** Both mutating services run inside `runInTransaction`, and the entry is written there. A Problem edited with no record, or a record of an edit that did not happen, are both worse than the write failing. `src/db/transaction.ts` is the runner; `pg` stops there, and a service sees only an owner-scoped repository.
+
+**One entry per mutation.** Five fields changed is one entry naming five fields. `from_version` and `to_version` bracket it, a CHECK requires them to differ by exactly one, and `(owner, problem, to_version)` is unique — the compare-and-swap already guarantees that, and the constraint states it.
+
+**Refused changes record nothing.** Stale version, disallowed transition, missing evidence, nothing-to-change, another owner's problem. Throwing inside the transaction rolls it back.
+
+**Controlled values exact, free text described.** `status`, `fix_kind`, `importance`, `confidence`, `freshness` and the flags keep their before and after. `title`, `symptoms`, `problem_domain`, `suspected_boundary` and `source_ai` record only presence and whether the value differed — a copy would outlive a later removal and defeat it.
+
+**`changed_by` required on both write paths.** Free-form, recorded in the history rather than on the Problem, and never consulted for authorisation.
+
+**Only Problem mutations.** Creating a Problem, appending an Event or Verification, linking a Relation and recording usage all leave the history untouched.
 
 ## What exists now — UsageLog API (P2-09)
 
@@ -198,7 +218,7 @@ Read this to know what you are building on.
 
 **Runtime.** TypeScript in strict mode, ESM with `NodeNext`, npm with a committed lockfile. `npm run check` runs typecheck, lint, format check and tests; `npm run build` compiles to `dist/`. See `docs/development.md` for commands.
 
-**Database.** PostgreSQL, with Supabase CLI + Docker as the local environment. Eleven migrations under `supabase/migrations/`, replayable onto a clean database with `npm run db:reset`. Eight public tables: `owners`, `projects`, `environments`, `problems`, `events`, `verifications`, `relations`, `usage_logs`.
+**Database.** PostgreSQL, with Supabase CLI + Docker as the local environment. Twelve migrations under `supabase/migrations/`, replayable onto a clean database with `npm run db:reset`. Nine public tables: `owners`, `projects`, `environments`, `problems`, `events`, `verifications`, `relations`, `usage_logs`, `change_logs`.
 
 **Value sets.** Eight closed sets — ProblemStatus, FixKind, EventType, VerificationType, RelationType, UsageAction, Confidence, Freshness — declared once in `src/domain/enums.ts` and enforced by text-backed PostgreSQL DOMAINs with CHECK constraints. No native enum types. A test drives every application value through the database and compares the constraint back, so the two cannot drift.
 
@@ -208,17 +228,17 @@ Read this to know what you are building on.
 
 **Events and Verifications.** Both are append-only: no update path, no `updated_at`, no trigger. A Verification attaches to the Problem directly, never to an Event, and carries a boolean `result` so a successful verification can be found mechanically. `client_event_id` is required and unique per `(owner_id, client_event_id)` within each table, so a retried write cannot land twice.
 
-**Deletes.** All nine foreign keys are `ON DELETE RESTRICT`, schema-wide. A parent with children cannot be removed. Deliberate removal still works from the leaves up; only implicit removal is prevented.
+**Deletes.** All ten foreign keys are `ON DELETE RESTRICT`, schema-wide. A parent with children cannot be removed. Deliberate removal still works from the leaves up; only implicit removal is prevented.
 
 **Indexes.** One ordered index per list path — events and verifications by `(owner_id, problem_id, created_at, id)`, problems by `(owner_id, project_id, created_at, problem_id)` — plus the environment foreign key index. No index is a left prefix of another. Vector and full-text indexes belong to the retrieval phase.
 
-**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Twenty operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, transition Problem status, append/list Event, append/list Verification, create/list Relation, create/list UsageLog. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
+**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Twenty-two operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, transition Problem status, append/list Event, append/list Verification, create/list Relation, create/list UsageLog, create/list ChangeLog. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
 
-**Executor.** `DatabaseExecutor` is `query` and nothing else. A pool satisfies it, and so will a client checked out for a transaction, so Phase 2 can add transactions without changing anything below. The repository does not own a transaction.
+**Executor.** `DatabaseExecutor` is `query` and nothing else. A pool satisfies it, and so does a client checked out for a transaction — which is what P2-10 needed, and it changed nothing below. `DatabaseTransactionRunner` in `src/db/transaction.ts` runs work as one transaction; the repository still does not own one.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1371 tests across 49 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1497 tests across 54 files.
 
 ## What is deliberately absent
 
@@ -232,16 +252,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P2-10 — ChangeLog.
+P2-11 — Memory control API.
 
 Not started.
 
 Notes for whoever picks this up:
-- Starts at the schema, as P2-08 and P2-09 did
-- The first decision is whether a change is logged by the service itself or by an explicit call. D-084 argues that *reads* must not write, and that reasoning does not carry over: the service genuinely knows when a Problem changed, in a way it can never know what an adapter "used". Decide it on its own merits rather than by analogy
-- What there is to log is bounded. Problems are the only mutable entity: the ordinary patch, the status transition, and nothing else. Events, Verifications, Relations and UsageLogs are append-only or create-only
-- If a change is logged as part of the write, the failure question follows immediately: does a logging failure fail the write? A half-logged change is worse than an unlogged one, so this probably wants the same transaction — which is the first real use for the `DatabaseExecutor` seam that has been there since P1-12
-- The owner boundary and the not-found unification apply as everywhere else
+- Most of the storage already exists. `memory_read_enabled`, `memory_write_enabled` and `suppressed` are patchable today, independent of one another (D-056), and every change to them is now logged (D-087)
+- So the first question is what a dedicated surface adds over the generic patch. If the answer is "nothing", saying so is a legitimate outcome; if it is "a control has meanings the flags do not carry", name them before adding a route
+- Invalidation is the open one. `freshness` already has `INVALID` and `SUPERSEDED`, and `suppressed` is a separate axis. Whether "invalidate this memory" means one of those, both, or something new is a decision rather than a lookup
+- Complete deletion is in the specification but is not this task unless the breakdown says so. Note that P2-10 was built so it would not obstruct one: free text is described in the history, never copied (D-090)
+- Whatever is added, controls are per Problem and per owner, and the not-found unification applies as everywhere else
 
 ## Core MVP milestone
 

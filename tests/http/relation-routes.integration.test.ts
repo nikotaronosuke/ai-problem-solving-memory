@@ -32,6 +32,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -39,6 +40,7 @@ import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { RELATION_TYPES } from '../../src/domain/enums.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
@@ -65,7 +67,9 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -73,6 +77,7 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
     appsCreated.push(app);
@@ -162,6 +167,7 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
     if (ownersCreated.length > 0) {
       // Children first: every foreign key restricts deleting the parent.
       for (const table of [
+        'change_logs',
         'relations',
         'verifications',
         'events',
@@ -480,7 +486,11 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
           const response = await actor.app.inject({
             method: 'PATCH',
             url: `/v1/problems/${problem}`,
-            payload: { expected_version: current['version'], title: `edit ${index}` },
+            payload: {
+              expected_version: current['version'],
+              changed_by: 'claude-code',
+              title: `edit ${index}`,
+            },
           });
           expect(response.statusCode).toBe(200);
         }
@@ -506,7 +516,7 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
       const toCandidate = await actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${verified}/status-transitions`,
-        payload: { target_status: 'FIX_CANDIDATE', expected_version: 1 },
+        payload: { target_status: 'FIX_CANDIDATE', expected_version: 1, changed_by: 'claude-code' },
       });
       expect(toCandidate.statusCode).toBe(200);
       const verification = await actor.app.inject({
@@ -523,7 +533,7 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
       const toVerified = await actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${verified}/status-transitions`,
-        payload: { target_status: 'VERIFIED', expected_version: 2 },
+        payload: { target_status: 'VERIFIED', expected_version: 2, changed_by: 'claude-code' },
       });
       expect(toVerified.statusCode).toBe(200);
 
@@ -533,14 +543,14 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
       const otherToCandidate = await actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${other}/status-transitions`,
-        payload: { target_status: 'FIX_CANDIDATE', expected_version: 1 },
+        payload: { target_status: 'FIX_CANDIDATE', expected_version: 1, changed_by: 'claude-code' },
       });
       expect(otherToCandidate.statusCode).toBe(200);
 
       const attempt = await actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${other}/status-transitions`,
-        payload: { target_status: 'VERIFIED', expected_version: 2 },
+        payload: { target_status: 'VERIFIED', expected_version: 2, changed_by: 'claude-code' },
       });
 
       // Evidence is per problem. Being similar to something that was checked
@@ -559,6 +569,7 @@ describe.skipIf(databaseUrl === undefined)('Relation API', () => {
         method: 'PATCH',
         url: `/v1/problems/${from}`,
         payload: {
+          changed_by: 'claude-code',
           expected_version: 1,
           confidence: 'HIGH',
           freshness: 'SUPERSEDED',

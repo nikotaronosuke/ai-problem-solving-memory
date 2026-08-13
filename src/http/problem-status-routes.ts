@@ -30,6 +30,7 @@ import { PROBLEM_STATUSES } from '../domain/enums.js';
 import { ERROR_RESPONSE_SCHEMA } from './errors.js';
 import {
   EXPECTED_VERSION_SCHEMA,
+  NON_BLANK_STRING_SCHEMA,
   PROBLEM_ID_PARAMS_SCHEMA,
   PROBLEM_RESOURCE_SCHEMA,
   toProblemResource,
@@ -54,6 +55,7 @@ function contextOf(request: FastifyRequest): AuthenticatedRequestContext {
 interface TransitionBody {
   target_status: (typeof PROBLEM_STATUSES)[number];
   expected_version: number;
+  changed_by: string;
 }
 
 export function registerProblemStatusRoutes(
@@ -77,8 +79,10 @@ export function registerProblemStatusRoutes(
             // Two separate locks would let an edit and a transition pass each
             // other unnoticed.
             expected_version: EXPECTED_VERSION_SCHEMA,
+            // Who is making the change, for the change log. Descriptive only.
+            changed_by: NON_BLANK_STRING_SCHEMA,
           },
-          required: ['target_status', 'expected_version'],
+          required: ['target_status', 'expected_version', 'changed_by'],
           // Refuses everything else, including `status`, `current_status`,
           // `problem_id`, `owner_id`, `fix_kind` and `version`. A transition
           // changes status and nothing else; `version` in particular is the
@@ -93,6 +97,7 @@ export function registerProblemStatusRoutes(
       const problem = await service.transition(contextOf(request), request.params.problem_id, {
         targetStatus: request.body.target_status,
         expectedVersion: request.body.expected_version,
+        changedBy: request.body.changed_by,
       });
       return toProblemResource(problem);
     },

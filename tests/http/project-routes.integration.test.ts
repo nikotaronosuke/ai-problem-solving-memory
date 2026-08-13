@@ -22,6 +22,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -29,6 +30,7 @@ import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateEnvironmentId } from '../../src/domain/environment.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { generateProjectId } from '../../src/domain/project.js';
@@ -55,7 +57,9 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -63,6 +67,7 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
     appsCreated.push(app);

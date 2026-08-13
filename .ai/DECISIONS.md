@@ -740,3 +740,49 @@ Adopting a `VERIFIED` memory does not let the current Problem become `VERIFIED`.
 Create and list only, with the list scoped to the problem being worked on: "what did this investigation draw on?" is the question. "Where has this memory been used?" is a different one, and the index for it exists but no endpoint asks it yet.
 
 Retention and correction are deliberately undecided. There is no update or delete path, but that is not a promise that usage history is kept forever — deciding that belongs with whatever privacy and export work comes later, not with the table that first stores it. No idempotency key either: whether a resent log needs one is a question for when adapter retry behaviour is designed, and copying `client_event_id` across from the append paths would answer it by reflex.
+
+## D-087 — Change history is written by the service, never by a caller (P2-10)
+
+A successful Problem mutation records its own history. There is no `POST` for a change log entry, no `PATCH`, no `DELETE`, and no field of an entry comes from a request body: the versions come from the mutation, the owner from the established context, the time from the database. A history a caller can author is not a history, and one it can edit afterwards is worth less than none.
+
+Not a trigger either. What may be recorded is a product decision — some values exactly, some deliberately not — and a trigger would have neither the context to tell them apart nor anywhere to say why.
+
+Only the two mutable Problem paths are tracked: the ordinary `PATCH` and the status transition. Creating a Problem, appending an Event or Verification, linking a Relation and recording usage all leave the history untouched. Those are either creations or append-only records that already are their own history; a change log for them would restate what the row already says.
+
+## D-088 — The change and its record are one transaction (P2-10)
+
+Both mutating services run inside `runInTransaction`, and the change log insert happens there. A Problem edited with no record of it, and a record of an edit that did not happen, are both worse than the write failing outright.
+
+This is the first thing that genuinely needed more than one statement to succeed together, and it is what `DatabaseExecutor` was shaped for since D-039. `DatabaseTransactionRunner` in `src/db/transaction.ts` checks out a client, begins, and commits — or rolls back if the work throws, which means an unexpected failure rolls back too rather than needing to be anticipated. `pg` stops there: the application layer sees `runInTransaction(work)` handed an owner-scoped repository, so a service still cannot name an owner or reach a connection.
+
+The transaction does not replace the compare-and-swap. The version predicate on the update is still what arbitrates a race (D-073); the transaction is what keeps the record with the change. Two integration tests inject a failing `createChangeLog` at the seam the service already uses and assert the Problem is unchanged — version, fields and `updated_at` — and both were confirmed to fail against a non-transactional context first.
+
+## D-089 — One entry per mutation, bracketed by versions (P2-10)
+
+A patch that changes five fields is one thing that happened, so it is one entry naming five fields. `from_version` and `to_version` bracket it, and a CHECK requires them to differ by exactly one — a successful mutation moves the version by one, so anything else describes something that could not have occurred.
+
+`(owner_id, problem_id, to_version)` is unique. The compare-and-swap already means only one writer produces a given version; the constraint states that in the schema so a second entry claiming it is refused rather than silently accumulating. No history is reconstructed for Problems that changed before P2-10 — an invented past is worse than an admitted gap.
+
+A refused mutation records nothing: a stale version, a disallowed transition, a missing successful Verification, a patch with nothing to change, a problem that is not the caller's. Throwing inside the transaction rolls it back, so this needs no separate handling.
+
+Same-value writes are recorded honestly. Writing `LOW` over `LOW` still moves the version, so an entry is owed, and it says the value did not move rather than pretending the field was untouched. P2-10 did not change what the mutation endpoints accept.
+
+## D-090 — Free text is described, never copied (P2-10)
+
+Controlled values — `status`, `fix_kind`, `importance`, `confidence`, `freshness`, and the memory flags — keep their before and after exactly. They come from closed sets, they are what shows how judgement about a Problem changed, and a value from a fixed list cannot be a secret.
+
+Free text — `title`, `symptoms`, `problem_domain`, `suspected_boundary`, `source_ai` — is not copied. An entry records that the field was part of the change, whether it went from or to absent, and whether the value actually differed. Nothing else.
+
+The reason is the one the specification names: a value removed from a Problem later must not survive in its history. A copy here would outlive the removal and quietly defeat it, and complete deletion is a real requirement rather than a hypothetical one. Tests write deliberately distinctive strings and assert they appear nowhere in the stored `changes`, read straight from the table.
+
+`fix_kind` is listed although nothing writes it yet: when close and review arrive they will move it, and deciding its treatment now is better than leaving it to whoever adds the write. A field with no decided treatment is ignored rather than copied by default.
+
+## D-091 — changed_by is required, and describes rather than authorises (P2-10)
+
+Both Problem write paths now require `changed_by`, free-form and non-blank. A history that cannot say who changed something answers half the question it exists to answer, and there is no other source for it — the owner identifies whose data it is, not which assistant or person acted.
+
+Free-form for the reasons `source_ai` is (D-026, D-085): assistant and tool names change, and manual edits exist alongside automated ones.
+
+It is never consulted for authorisation. A test writes another assistant's name, `manual`, another owner's id and `root` into the field and asserts each reaches exactly the same data — a 404 for the other owner's Problem in every case. It is also not a Problem field: it lives in the history and nowhere else.
+
+`expected_version` plus `changed_by` alone is refused, as an empty patch was before (D-071): a token and a signature are not a change.

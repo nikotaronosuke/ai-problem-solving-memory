@@ -35,12 +35,14 @@ import {
   createRelationService,
   createRequestContextService,
   createUsageLogService,
+  createChangeLogService,
   createVerificationService,
 } from '../../src/app/index.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { USAGE_ACTIONS } from '../../src/domain/enums.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
@@ -67,7 +69,9 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -75,6 +79,7 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
     appsCreated.push(app);
@@ -171,6 +176,7 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
     if (ownersCreated.length > 0) {
       // Children first: every foreign key restricts deleting the parent.
       for (const table of [
+        'change_logs',
         'usage_logs',
         'relations',
         'verifications',
@@ -519,7 +525,11 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
           await actor.app.inject({
             method: 'POST',
             url: `/v1/problems/${memory}/status-transitions`,
-            payload: { target_status: 'FIX_CANDIDATE', expected_version: 1 },
+            payload: {
+              target_status: 'FIX_CANDIDATE',
+              expected_version: 1,
+              changed_by: 'claude-code',
+            },
           })
         ).statusCode,
       ).toBe(200);
@@ -542,7 +552,7 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
           await actor.app.inject({
             method: 'POST',
             url: `/v1/problems/${memory}/status-transitions`,
-            payload: { target_status: 'VERIFIED', expected_version: 2 },
+            payload: { target_status: 'VERIFIED', expected_version: 2, changed_by: 'claude-code' },
           })
         ).statusCode,
       ).toBe(200);
@@ -558,14 +568,18 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
           await actor.app.inject({
             method: 'POST',
             url: `/v1/problems/${current}/status-transitions`,
-            payload: { target_status: 'FIX_CANDIDATE', expected_version: 1 },
+            payload: {
+              target_status: 'FIX_CANDIDATE',
+              expected_version: 1,
+              changed_by: 'claude-code',
+            },
           })
         ).statusCode,
       ).toBe(200);
       const attempt = await actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${current}/status-transitions`,
-        payload: { target_status: 'VERIFIED', expected_version: 2 },
+        payload: { target_status: 'VERIFIED', expected_version: 2, changed_by: 'claude-code' },
       });
 
       // Memory is a candidate, not an answer. Having adopted something that
@@ -610,7 +624,12 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
           await actor.app.inject({
             method: 'PATCH',
             url: `/v1/problems/${memory}`,
-            payload: { expected_version: 1, confidence: 'HIGH', freshness: 'SUPERSEDED' },
+            payload: {
+              changed_by: 'claude-code',
+              expected_version: 1,
+              confidence: 'HIGH',
+              freshness: 'SUPERSEDED',
+            },
           })
         ).statusCode,
       ).toBe(200);

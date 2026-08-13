@@ -28,6 +28,7 @@ import Fastify, {
 
 import type {
   AuthenticatedRequestContext,
+  ChangeLogService,
   EventService,
   HealthService,
   ProblemService,
@@ -45,6 +46,7 @@ import {
   ResourceNotFoundError,
 } from '../app/index.js';
 import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './errors.js';
+import { registerChangeLogRoutes } from './change-log-routes.js';
 import { registerEventRoutes } from './event-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
@@ -66,6 +68,7 @@ export interface MemoryHttpAppDependencies {
   readonly verificationService: VerificationService;
   readonly relationService: RelationService;
   readonly usageLogService: UsageLogService;
+  readonly changeLogService: ChangeLogService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -276,6 +279,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       registerVerificationRoutes(scope, dependencies.verificationService);
       registerRelationRoutes(scope, dependencies.relationService);
       registerUsageLogRoutes(scope, dependencies.usageLogService);
+      registerChangeLogRoutes(scope, dependencies.changeLogService);
 
       done();
     },

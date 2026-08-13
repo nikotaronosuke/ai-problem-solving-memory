@@ -29,6 +29,7 @@ import type { AuthenticatedRequestContext } from './request-context.js';
 import type { Confidence, Freshness } from '../domain/enums.js';
 import { toEnvironmentId } from '../domain/environment.js';
 import { toProblemId } from '../domain/problem.js';
+import { describeProblemChanges } from './problem-changes.js';
 import { toProjectId, type ProjectId } from '../domain/project.js';
 import type { ProblemRecord, UpdateProblemInput } from '../repository/index.js';
 
@@ -51,6 +52,15 @@ export interface UpdateProblemCommand {
    * else's finding without either of them noticing.
    */
   readonly expectedVersion: number;
+  /**
+   * Who is making the change.
+   *
+   * Required, and recorded in the change log rather than on the Problem. A
+   * history that cannot say who changed something answers half the question
+   * it exists to answer. Descriptive only: it is never consulted for
+   * authorisation.
+   */
+  readonly changedBy: string;
   readonly title?: string;
   readonly symptoms?: string;
   readonly problemDomain?: string | null;
@@ -193,6 +203,23 @@ export function createProblemService(): ProblemService {
         ...(command.suppressed !== undefined ? { suppressed: command.suppressed } : {}),
       };
 
+      // Wire names, in the order the fields are declared above, for the change
+      // log. Derived from the same conditionals so the two cannot disagree
+      // about what the patch touched.
+      const changedFields = [
+        ...(command.title !== undefined ? ['title'] : []),
+        ...(command.symptoms !== undefined ? ['symptoms'] : []),
+        ...(command.problemDomain !== undefined ? ['problem_domain'] : []),
+        ...(command.suspectedBoundary !== undefined ? ['suspected_boundary'] : []),
+        ...(command.sourceAi !== undefined ? ['source_ai'] : []),
+        ...(command.importance !== undefined ? ['importance'] : []),
+        ...(command.confidence !== undefined ? ['confidence'] : []),
+        ...(command.freshness !== undefined ? ['freshness'] : []),
+        ...(command.memoryReadEnabled !== undefined ? ['memory_read_enabled'] : []),
+        ...(command.memoryWriteEnabled !== undefined ? ['memory_write_enabled'] : []),
+        ...(command.suppressed !== undefined ? ['suppressed'] : []),
+      ];
+
       if (Object.keys(patch).length === 0) {
         // Transport rejects this too. Repeated here because an update that
         // changes nothing would still move `updated_at`. `expectedVersion` is
@@ -201,30 +228,43 @@ export function createProblemService(): ProblemService {
         throw new InvalidApplicationInputError('A problem update must change at least one field.');
       }
 
-      // Existence is settled before the version is, so a caller guessing at a
-      // version for a problem that is not theirs gets the same 404 as for one
-      // that does not exist. Answering "wrong version" would confirm it is
-      // real.
-      const current = await context.repository.getProblem(target);
-      if (current === undefined) {
-        throw new ResourceNotFoundError();
-      }
-      if (current.version !== command.expectedVersion) {
-        throw new ProblemVersionConflictError();
-      }
+      // The read, the write and the record of it are one transaction. A
+      // Problem edited with no history, or a history entry for an edit that
+      // did not happen, are both worse than the write failing outright.
+      return context.runInTransaction(async (repository) => {
+        // Existence is settled before the version is, so a caller guessing at
+        // a version for a problem that is not theirs gets the same 404 as for
+        // one that does not exist. Answering "wrong version" would confirm it
+        // is real.
+        const current = await repository.getProblem(target);
+        if (current === undefined) {
+          throw new ResourceNotFoundError();
+        }
+        if (current.version !== command.expectedVersion) {
+          throw new ProblemVersionConflictError();
+        }
 
-      const updated = await context.repository.updateProblem(
-        target,
-        command.expectedVersion,
-        patch,
-      );
-      if (updated === undefined) {
-        // The read above said the version matched, so the only way to be here
-        // is another writer landing in between. The predicate on the update is
-        // what makes that a refusal rather than a silent overwrite.
-        throw new ProblemVersionConflictError();
-      }
-      return updated;
+        const updated = await repository.updateProblem(target, command.expectedVersion, patch);
+        if (updated === undefined) {
+          // The read above said the version matched, so the only way to be
+          // here is another writer landing in between. The predicate on the
+          // update is what makes that a refusal rather than a silent
+          // overwrite — the transaction does not replace it.
+          throw new ProblemVersionConflictError();
+        }
+
+        // Only the fields this patch named. `patch` uses internal names; the
+        // log uses the ones a caller sent and a reader will recognise.
+        await repository.createChangeLog({
+          problemId: target,
+          changedBy: command.changedBy,
+          fromVersion: current.version,
+          toVersion: updated.version,
+          changes: describeProblemChanges(current, updated, changedFields),
+        });
+
+        return updated;
+      });
     },
   };
 }

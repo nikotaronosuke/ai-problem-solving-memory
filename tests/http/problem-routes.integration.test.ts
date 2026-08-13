@@ -23,6 +23,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -30,6 +31,7 @@ import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { CONFIDENCES, FRESHNESSES } from '../../src/domain/enums.js';
 import { generateEnvironmentId } from '../../src/domain/environment.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
@@ -63,7 +65,9 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -71,6 +75,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
     appsCreated.push(app);
@@ -130,7 +135,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       await app.close();
     }
     if (ownersCreated.length > 0) {
-      for (const table of ['problems', 'environments', 'projects', 'owners']) {
+      for (const table of ['change_logs', 'problems', 'environments', 'projects', 'owners']) {
         await pool.query(`delete from public.${table} where owner_id = any($1::uuid[])`, [
           ownersCreated,
         ]);
@@ -381,7 +386,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: { title: 'renamed', expected_version: 1 },
+        payload: { title: 'renamed', changed_by: 'claude-code', expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(200);
@@ -424,7 +429,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: { ...patch, expected_version: 1 },
+        payload: { ...patch, changed_by: 'claude-code', expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(200);
@@ -438,7 +443,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: { confidence, expected_version: 1 },
+        payload: { confidence, changed_by: 'claude-code', expected_version: 1 },
       });
 
       expect(response.json()).toMatchObject({ confidence });
@@ -451,7 +456,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: { freshness, expected_version: 1 },
+        payload: { freshness, changed_by: 'claude-code', expected_version: 1 },
       });
 
       expect(response.json()).toMatchObject({ freshness });
@@ -470,7 +475,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
         const response = await fixture.actor.app.inject({
           method: 'PATCH',
           url: `/v1/problems/${id}`,
-          payload: { ...payload, expected_version: version },
+          payload: { ...payload, changed_by: 'claude-code', expected_version: version },
         });
         expect(response.statusCode).toBe(200);
         const body = response.json<Record<string, unknown>>();
@@ -526,7 +531,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${generateProblemId()}`,
-        payload: { title: 'ghost', expected_version: 1 },
+        payload: { title: 'ghost', changed_by: 'claude-code', expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(404);
@@ -550,7 +555,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
         await mine.actor.app.inject({
           method: 'PATCH',
           url: `/v1/problems/${theirProblemId}`,
-          payload: { title: 'stolen', expected_version: 1 },
+          payload: { title: 'stolen', changed_by: 'claude-code', expected_version: 1 },
         }),
         await mine.actor.app.inject({
           method: 'GET',
@@ -601,12 +606,12 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const crossOwner = await mine.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${theirProblemId}`,
-        payload: { title: 'stolen', expected_version: 1 },
+        payload: { title: 'stolen', changed_by: 'claude-code', expected_version: 1 },
       });
       const unknown = await mine.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${absentProblemId}`,
-        payload: { title: 'stolen', expected_version: 1 },
+        payload: { title: 'stolen', changed_by: 'claude-code', expected_version: 1 },
       });
 
       expect(crossOwner.statusCode).toBe(404);

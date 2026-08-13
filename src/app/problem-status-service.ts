@@ -40,6 +40,7 @@ import {
 import type { AuthenticatedRequestContext } from './request-context.js';
 import type { ProblemStatus } from '../domain/enums.js';
 import { decideTransition, requiresSuccessfulVerification } from '../domain/problem-status.js';
+import { describeProblemChanges } from './problem-changes.js';
 import { toProblemId, type ProblemId } from '../domain/problem.js';
 import type { ProblemRecord } from '../repository/index.js';
 
@@ -47,6 +48,13 @@ export interface TransitionCommand {
   readonly targetStatus: ProblemStatus;
   /** The version the caller last read. Required, as for any Problem write. */
   readonly expectedVersion: number;
+  /**
+   * Who is making the change.
+   *
+   * Required, and recorded in the change log rather than on the Problem.
+   * Descriptive only: never consulted for authorisation.
+   */
+  readonly changedBy: string;
 }
 
 export interface ProblemStatusService {
@@ -77,57 +85,64 @@ export function createProblemStatusService(): ProblemStatusService {
       const { targetStatus, expectedVersion } = command;
       const target = asProblemId(problemId);
 
-      const problem = await context.repository.getProblem(target);
-      if (problem === undefined) {
-        // Unknown and another owner's are the same answer, as everywhere else,
-        // and this comes first: a conflict raised for someone else's problem
-        // would confirm that it exists.
-        throw new ResourceNotFoundError();
-      }
+      // The read, the write and the record of it are one transaction, as for
+      // the ordinary update.
+      return context.runInTransaction(async (repository) => {
+        const problem = await repository.getProblem(target);
+        if (problem === undefined) {
+          // Unknown and another owner's are the same answer, as everywhere
+          // else, and this comes first: a conflict raised for someone else's
+          // problem would confirm that it exists.
+          throw new ResourceNotFoundError();
+        }
 
-      if (problem.version !== expectedVersion) {
-        // Before the rule, deliberately. The caller is reasoning about a
-        // problem as it was, so the useful answer is "read it again" rather
-        // than a verdict on a move it might not have asked for had it known.
-        throw new ProblemVersionConflictError();
-      }
+        if (problem.version !== expectedVersion) {
+          // Before the rule, deliberately. The caller is reasoning about a
+          // problem as it was, so the useful answer is "read it again" rather
+          // than a verdict on a move it might not have asked for had it known.
+          throw new ProblemVersionConflictError();
+        }
 
-      // Looked up only when it can matter, and which status that is comes
-      // from the domain rather than a comparison written here. The repository
-      // is owner-scoped and takes the problem id, so this can only ever see
-      // this Problem's own verifications — another Problem's evidence is not
-      // reachable from here even by mistake.
-      const hasSuccessfulVerification = requiresSuccessfulVerification(targetStatus)
-        ? (await context.repository.listVerifications(target)).some(
-            (verification) => verification.result,
-          )
-        : false;
+        // Looked up only when it can matter, and which status that is comes
+        // from the domain rather than a comparison written here. The
+        // repository is owner-scoped and takes the problem id, so this can
+        // only ever see this Problem's own verifications — another Problem's
+        // evidence is not reachable from here even by mistake.
+        const hasSuccessfulVerification = requiresSuccessfulVerification(targetStatus)
+          ? (await repository.listVerifications(target)).some((verification) => verification.result)
+          : false;
 
-      const decision = decideTransition({
-        currentStatus: problem.status,
-        targetStatus,
-        hasSuccessfulVerification,
+        const decision = decideTransition({
+          currentStatus: problem.status,
+          targetStatus,
+          hasSuccessfulVerification,
+        });
+
+        if (!decision.allowed) {
+          // Every refusal is bad input rather than a conflict, and throwing
+          // rolls the transaction back, so a refused move records nothing.
+          throw new InvalidApplicationInputError(decision.reason);
+        }
+
+        const updated = await repository.updateProblemStatus(target, expectedVersion, targetStatus);
+        if (updated === undefined) {
+          // The version matched when it was read, so another writer landed in
+          // between. The predicate on the update is what turns that into a
+          // refusal instead of one of them quietly overwriting the other.
+          throw new ProblemVersionConflictError();
+        }
+
+        // A transition moves one field, so the record names one field.
+        await repository.createChangeLog({
+          problemId: target,
+          changedBy: command.changedBy,
+          fromVersion: problem.version,
+          toVersion: updated.version,
+          changes: describeProblemChanges(problem, updated, ['status']),
+        });
+
+        return updated;
       });
-
-      if (!decision.allowed) {
-        // Every refusal is bad input rather than a conflict. P2-07 introduces
-        // the vocabulary for concurrency conflicts, and inventing part of it
-        // here would leave two tasks describing the same thing differently.
-        throw new InvalidApplicationInputError(decision.reason);
-      }
-
-      const updated = await context.repository.updateProblemStatus(
-        target,
-        expectedVersion,
-        targetStatus,
-      );
-      if (updated === undefined) {
-        // The version matched when it was read, so another writer landed in
-        // between. The predicate on the update is what turns that into a
-        // refusal instead of one of them quietly overwriting the other.
-        throw new ProblemVersionConflictError();
-      }
-      return updated;
     },
   };
 }
