@@ -6,7 +6,16 @@
  * made here rather than a consequence of how the database happens to answer.
  */
 
+export { InvalidApplicationInputError, ResourceNotFoundError } from './errors.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
+export {
+  createProjectEnvironmentService,
+  type CreateEnvironmentCommand,
+  type CreateProjectCommand,
+  type ProjectEnvironmentService,
+  type UpdateProjectCommand,
+} from './project-environment-service.js';
+export type { EnvironmentRecord, ProjectRecord } from '../repository/index.js';
 export {
   createRequestContextService,
   RequestContextUnavailableError,

@@ -406,3 +406,43 @@ This is a personal server holding one person's memory. Reaching the network shou
 A blank `HOST` is refused rather than treated as loopback: an empty value is far more likely to be a broken deployment script than a request for the safe option, and defaulting it would hide the mistake. `PORT` must be digits within 1–65535, checked by pattern rather than numeric coercion, because `Number()` accepts `'3000.5'`, `'0x0bb8'` and `'3e3'`.
 
 Credential headers — authorization, cookie, api-key, proxy-authorization, set-cookie — are redacted by the logger, and request bodies are not logged. The failure mode is silent: a credential written to a log once is a credential in a file nobody thinks to check.
+
+## D-048 — Project and Environment route shape (P2-02)
+
+Projects are a top-level collection: `POST /v1/projects`, `GET /v1/projects`, `GET|PATCH /v1/projects/:project_id`.
+
+Environments are created and listed under their project — `POST|GET /v1/projects/:project_id/environments` — so the project id has exactly one source. Accepting it in both a path and a body would create a state where the two disagree, and someone would then have to decide which wins. A single environment is read by its own id, `GET /v1/environments/:environment_id`, because an environment id already identifies one record.
+
+There is no delete anywhere in this phase, and no Environment update: an Environment is a point in time, per D-019, and changed conditions are a new snapshot.
+
+## D-049 — Project update is partial and never upserts (P2-02)
+
+`PATCH` carries only the fields being changed. An absent field is left alone; an explicit `null` clears `repo` or `platform`; a blank string normalises to null, matching D-018.
+
+`owner_id`, `project_id`, `created_at` and `updated_at` are refused rather than ignored, along with any unknown field. Silently dropping them would let a caller believe it had set an owner.
+
+An empty patch is refused at the schema and again in the application layer. It would still move `updated_at`, recording a change that did not happen — and the second check exists because the first only protects the HTTP path.
+
+The update is scoped by owner and never inserts. Patching an unknown or another owner's id is a 404 that creates nothing, so a mistyped id cannot quietly produce a record.
+
+`updated_at` is written explicitly in the statement rather than by a trigger, following D-024: a write that forgets it should be a visible bug.
+
+## D-050 — Lists are ordered in SQL and unfiltered (P2-02)
+
+Both list endpoints order by `created_at` then the resource id, in the query itself. Timestamps collide, and without a second key the order of colliding rows is whatever the database returns, which can differ between reads — the same reasoning as D-029.
+
+No pagination, filtering or search in this phase. Adding them before there is a caller would fix a shape that the retrieval work has not yet justified.
+
+## D-051 — Not-found is unified, and checked before listing (P2-02)
+
+The application layer raises one `ResourceNotFoundError` whether a resource does not exist or belongs to another owner, and transport renders both as the same 404 body. Distinguishing them would answer "does this id exist?" for anyone who asks — the existence oracle the storage layer was built to avoid.
+
+Listing a project's environments verifies the project first. Returning an empty list for a project that is not the owner's would say "it exists and has none", which is both untrue and a small leak. An owner's own project with no environments still returns an empty list, which is the honest answer.
+
+Transport maps application errors by type and never names a database error class; the architecture test enforces that, so PostgreSQL cannot become part of the HTTP contract by accident.
+
+## D-052 — The snapshot boundary is the HTTP schema (P2-02)
+
+`snapshot` is accepted only as a JSON object at the top level, with unconstrained keys inside. An array, string, number, boolean or null is a 400 before the request reaches the domain.
+
+The domain converter is unchanged. It accepts any non-array object, which is correct for its own layer, and the HTTP boundary is where the narrower rule belongs: what arrives there is parsed JSON, so the shapes the converter cannot describe cannot appear.

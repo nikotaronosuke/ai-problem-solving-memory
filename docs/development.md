@@ -107,8 +107,27 @@ curl http://127.0.0.1:3000/v1/me    # {"owner_id":"..."}
 ```
 
 The Memory JSON API lives under `/v1`; `/health` sits outside it, because
-whether the process is serving is not part of the API contract. `/v1/me`
-needs an owner, so `npm run owner:bootstrap` must have run.
+whether the process is serving is not part of the API contract. Everything
+under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
+
+| Method | Path                                    |
+| ------ | --------------------------------------- |
+| GET    | `/v1/me`                                |
+| POST   | `/v1/projects`                          |
+| GET    | `/v1/projects`                          |
+| GET    | `/v1/projects/:project_id`              |
+| PATCH  | `/v1/projects/:project_id`              |
+| POST   | `/v1/projects/:project_id/environments` |
+| GET    | `/v1/projects/:project_id/environments` |
+| GET    | `/v1/environments/:environment_id`      |
+
+Environments are created and listed under their project, so the project id
+has one source and cannot disagree with itself. An Environment is a point in
+time: there is no update or delete for one, and nothing is deleted in this
+phase.
+
+JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
+another owner answers exactly as one that does not exist.
 
 Failures share one shape, and a client branches on `error.code`:
 

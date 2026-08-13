@@ -26,6 +26,7 @@ import type { DatabaseExecutor } from '../db/executor.js';
 import {
   createEnvironment,
   getEnvironment,
+  listEnvironments,
   type CreateEnvironmentInput,
   type EnvironmentRecord,
 } from '../db/environments.js';
@@ -39,8 +40,11 @@ import {
 import {
   createProject,
   getProject,
+  listProjects,
+  updateProject,
   type CreateProjectInput,
   type ProjectRecord,
+  type UpdateProjectInput,
 } from '../db/projects.js';
 import {
   appendVerification,
@@ -56,9 +60,9 @@ import type { ProjectId } from '../domain/project.js';
 /**
  * Owner-scoped storage for the Memory model.
  *
- * The surface is deliberately the Phase 1 minimum. Listing projects, updating,
- * deleting, searching, relations and logs are Phase 2 work, and adding them
- * early would commit to shapes the service layer has not asked for yet.
+ * The surface grows one operation at a time, as an API needs it. Deleting,
+ * searching, relations and logs are still absent, and adding them before a
+ * caller exists would commit to shapes nothing has asked for yet.
  */
 export interface MemoryRepository {
   /** The owner every operation on this repository is scoped to. */
@@ -66,9 +70,16 @@ export interface MemoryRepository {
 
   createProject(input: CreateProjectInput): Promise<ProjectRecord>;
   getProject(projectId: ProjectId): Promise<ProjectRecord | undefined>;
+  listProjects(): Promise<ProjectRecord[]>;
+  /** Undefined when the project is not this owner's, as with `getProject`. */
+  updateProject(
+    projectId: ProjectId,
+    input: UpdateProjectInput,
+  ): Promise<ProjectRecord | undefined>;
 
   createEnvironment(input: CreateEnvironmentInput): Promise<EnvironmentRecord>;
   getEnvironment(environmentId: EnvironmentId): Promise<EnvironmentRecord | undefined>;
+  listEnvironments(projectId: ProjectId): Promise<EnvironmentRecord[]>;
 
   createProblem(input: CreateProblemInput): Promise<ProblemRecord>;
   getProblem(problemId: ProblemId): Promise<ProblemRecord | undefined>;
@@ -100,9 +111,12 @@ export function createMemoryRepository(
 
     createProject: (input) => createProject(executor, context, input),
     getProject: (projectId) => getProject(executor, context, projectId),
+    listProjects: () => listProjects(executor, context),
+    updateProject: (projectId, input) => updateProject(executor, context, projectId, input),
 
     createEnvironment: (input) => createEnvironment(executor, context, input),
     getEnvironment: (environmentId) => getEnvironment(executor, context, environmentId),
+    listEnvironments: (projectId) => listEnvironments(executor, context, projectId),
 
     createProblem: (input) => createProblem(executor, context, input),
     getProblem: (problemId) => getProblem(executor, context, problemId),
