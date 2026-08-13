@@ -114,12 +114,27 @@ Schema counts moved as expected: migrations 10 → 11, tables 7 → 8, DOMAINs 7
 
 Repository grew from eighteen operations to twenty: `createUsageLog`, `listUsageLogs`.
 
-### P2-10 — NEXT
+### P2-10 — DONE
 ChangeLog.
 
-Depends on P2-03, satisfied. See the private task breakdown for its Definition of Done. Like P2-08 and P2-09 it starts at the schema.
+A twelfth migration adds the `change_logs` table; one route follows: `GET /v1/problems/:problem_id/change-logs`. Reading only — entries are written by the two mutating services, never by a caller.
 
-The shape of the question differs from UsageLog's, though: a ChangeLog records who changed what and how, so unlike usage — which the adapter alone can characterise — the service already knows when a change happens. Whether that makes it a write side effect rather than an explicit call is this task's first decision, and D-084 argues only about reads, so it does not settle it. Note also that Problems are the only mutable entity (D-071), which bounds what there is to log.
+Definition of Done verified against a real database: who changed what, when, and how is readable from the history, and the before/after policy does not contradict the secrecy requirement — free text is described rather than copied, checked by writing distinctive strings and asserting they appear nowhere in the stored `changes`.
+
+The change and its record are one transaction (D-088). This is what the `DatabaseExecutor` seam was shaped for, and `src/db/transaction.ts` is the runner. Both rollback tests were confirmed to fail against a non-transactional context before being kept.
+
+`changed_by` is now required on both Problem write paths, and is descriptive rather than authorising (D-091). One entry per mutation, bracketed by versions, with a unique constraint per `(owner, problem, to_version)` (D-089). Refused mutations record nothing.
+
+Schema counts moved as expected: migrations 11 → 12, tables 8 → 9, foreign keys 9 → 10, all still RESTRICT. No new DOMAIN, still no native enum and no trigger.
+
+Repository grew from twenty operations to twenty-two: `createChangeLog`, `listChangeLogs`.
+
+### P2-11 — NEXT
+Memory control API.
+
+Depends on P2-03 and P2-10, both satisfied. See the private task breakdown for its Definition of Done.
+
+Note what already exists: `memory_read_enabled`, `memory_write_enabled` and `suppressed` are patchable today and independent of one another (D-056), and every change to them is now logged. So the question is not how to store the controls but what a dedicated surface adds over the generic patch — and whether invalidation means a flag, a freshness value, or something else again.
 
 ## BLOCKED
 

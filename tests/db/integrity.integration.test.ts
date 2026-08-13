@@ -41,6 +41,7 @@ const OWNED_TABLES = [
   'verifications',
   'relations',
   'usage_logs',
+  'change_logs',
 ] as const;
 
 interface Chain {
@@ -114,6 +115,9 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       const links = result.rows.map((row) => `${row.child}: ${row.definition}`).sort();
 
       expect(links).toEqual([
+        // A change log entry belongs to the problem it describes, and that
+        // problem cannot be removed while its history exists.
+        'change_logs: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'environments: FOREIGN KEY (owner_id, project_id) REFERENCES projects(owner_id, project_id) ON DELETE RESTRICT',
         'events: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'problems: FOREIGN KEY (owner_id, project_id, environment_id) REFERENCES environments(owner_id, project_id, environment_id) ON DELETE RESTRICT',
@@ -142,8 +146,8 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       // 'r' is RESTRICT. Anything else here would mean Memory could be
       // discarded as a side effect of deleting something above it.
       expect(result.rows.every((row) => row.confdeltype === 'r')).toBe(true);
-      // Nine: the relations and usage_logs tables each bring one per end.
-      expect(result.rows).toHaveLength(9);
+      // Ten: relations and usage_logs bring one per end, change_logs one.
+      expect(result.rows).toHaveLength(10);
     });
 
     it('carries owner_id on every table, so owner scope never needs a join', async () => {
@@ -522,7 +526,7 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
   });
 
   describe('schema scope', () => {
-    it('holds Phase 1 to its six tables', async () => {
+    it('holds exactly the tables the phases have added', async () => {
       const result = await pool.query<{ table_name: string }>(
         "select table_name from information_schema.tables where table_schema = 'public'",
       );

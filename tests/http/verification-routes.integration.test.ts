@@ -30,6 +30,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -37,6 +38,7 @@ import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { VERIFICATION_TYPES } from '../../src/domain/enums.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
@@ -69,7 +71,9 @@ describe.skipIf(databaseUrl === undefined)('Verification API', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -77,6 +81,7 @@ describe.skipIf(databaseUrl === undefined)('Verification API', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
     appsCreated.push(app);
@@ -176,6 +181,7 @@ describe.skipIf(databaseUrl === undefined)('Verification API', () => {
     if (ownersCreated.length > 0) {
       // Children first: every foreign key restricts deleting the parent.
       for (const table of [
+        'change_logs',
         'verifications',
         'events',
         'problems',

@@ -91,7 +91,14 @@ describe.skipIf(databaseUrl === undefined)('relations in the database', () => {
   afterAll(async () => {
     if (ownersCreated.length > 0) {
       // Children first: every foreign key restricts deleting the parent.
-      for (const table of ['relations', 'problems', 'environments', 'projects', 'owners']) {
+      for (const table of [
+        'change_logs',
+        'relations',
+        'problems',
+        'environments',
+        'projects',
+        'owners',
+      ]) {
         await pool.query(`delete from public.${table} where owner_id = any($1::uuid[])`, [
           ownersCreated,
         ]);

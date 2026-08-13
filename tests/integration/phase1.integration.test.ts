@@ -449,6 +449,7 @@ async function cleanUpOwners(pool: DatabasePool, ownerIds: readonly OwnerId[]): 
   }
 
   for (const table of [
+    'change_logs',
     'verifications',
     'events',
     'problems',

@@ -62,6 +62,7 @@ interface CreateProblemBody {
 
 interface UpdateProblemBody {
   expected_version: number;
+  changed_by: string;
   title?: string;
   symptoms?: string;
   problem_domain?: string | null;
@@ -167,6 +168,11 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
             // do. It is a concurrency token, not a stored field — `version`
             // itself stays unwritable.
             expected_version: EXPECTED_VERSION_SCHEMA,
+            // Who is making the change. Required, and recorded in the change
+            // log rather than on the Problem — a history that cannot say who
+            // changed something answers half the question it exists for.
+            // Descriptive only, never consulted for authorisation.
+            changed_by: NON_BLANK_STRING_SCHEMA,
             title: NON_BLANK_STRING_SCHEMA,
             symptoms: NON_BLANK_STRING_SCHEMA,
             problem_domain: NULLABLE_TEXT_SCHEMA,
@@ -182,11 +188,12 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
             memory_write_enabled: { type: 'boolean' },
             suppressed: { type: 'boolean' },
           },
-          required: ['expected_version'],
-          // `expected_version` plus at least one field actually being changed.
-          // A patch that changes nothing would still move `updated_at` and the
-          // version, recording a change that never happened.
-          minProperties: 2,
+          required: ['expected_version', 'changed_by'],
+          // The two required fields plus at least one field actually being
+          // changed. A patch that changes nothing would still move
+          // `updated_at` and the version, recording a change that never
+          // happened.
+          minProperties: 3,
           // Everything absent from `properties` is refused: status, fix_kind,
           // version, the identifiers and the timestamps. Status in particular
           // must not be reachable here — VERIFIED requires a successful
@@ -200,6 +207,7 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
       const body = request.body;
       const command: UpdateProblemCommand = {
         expectedVersion: body.expected_version,
+        changedBy: body.changed_by,
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.symptoms !== undefined ? { symptoms: body.symptoms } : {}),
         ...(body.problem_domain !== undefined ? { problemDomain: body.problem_domain } : {}),
