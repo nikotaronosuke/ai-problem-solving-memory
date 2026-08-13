@@ -377,7 +377,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: { title: 'renamed' },
+        payload: { title: 'renamed', expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(200);
@@ -393,10 +393,11 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
         symptoms: created['symptoms'],
         problem_domain: 'auth',
         created_at: created['created_at'],
-        // Not writable, and unchanged by a write.
+        // Not writable. Status and fix kind are unchanged by an ordinary
+        // update; version moves because a successful write moves it.
         status: 'INVESTIGATING',
         fix_kind: null,
-        version: 1,
+        version: 2,
       });
       expect(new Date(patched['updated_at'] as string).getTime()).toBeGreaterThanOrEqual(
         new Date(created['updated_at'] as string).getTime(),
@@ -419,7 +420,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: patch,
+        payload: { ...patch, expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(200);
@@ -433,7 +434,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: { confidence },
+        payload: { confidence, expected_version: 1 },
       });
 
       expect(response.json()).toMatchObject({ confidence });
@@ -446,7 +447,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${created['problem_id'] as string}`,
-        payload: { freshness },
+        payload: { freshness, expected_version: 1 },
       });
 
       expect(response.json()).toMatchObject({ freshness });
@@ -457,14 +458,20 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const created = await createProblem(fixture);
       const id = created['problem_id'] as string;
 
+      // Each write moves the version, so the next one has to name the version
+      // the last one produced — which is the contract working, not a detail of
+      // the test.
+      let version = created['version'] as number;
       const patch = async (payload: Record<string, unknown>) => {
         const response = await fixture.actor.app.inject({
           method: 'PATCH',
           url: `/v1/problems/${id}`,
-          payload,
+          payload: { ...payload, expected_version: version },
         });
         expect(response.statusCode).toBe(200);
-        return response.json<Record<string, unknown>>();
+        const body = response.json<Record<string, unknown>>();
+        version = body['version'] as number;
+        return body;
       };
 
       // Suppressing must not disable reads: "surface this less" and "do not
@@ -515,7 +522,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const response = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${generateProblemId()}`,
-        payload: { title: 'ghost' },
+        payload: { title: 'ghost', expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(404);
@@ -539,7 +546,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
         await mine.actor.app.inject({
           method: 'PATCH',
           url: `/v1/problems/${theirProblemId}`,
-          payload: { title: 'stolen' },
+          payload: { title: 'stolen', expected_version: 1 },
         }),
         await mine.actor.app.inject({
           method: 'GET',
@@ -590,12 +597,12 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       const crossOwner = await mine.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${theirProblemId}`,
-        payload: { title: 'stolen' },
+        payload: { title: 'stolen', expected_version: 1 },
       });
       const unknown = await mine.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${absentProblemId}`,
-        payload: { title: 'stolen' },
+        payload: { title: 'stolen', expected_version: 1 },
       });
 
       expect(crossOwner.statusCode).toBe(404);

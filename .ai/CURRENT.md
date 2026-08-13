@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-06 done; P2-07 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-07 done; P2-08 next)
 
 ## Source of truth
 
@@ -74,7 +74,7 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **What a patch may change.** Eleven fields: the five text fields, `importance`, `confidence`, `freshness`, `memory_read_enabled`, `memory_write_enabled`, `suppressed`. Partial semantics are P2-02's — absent leaves alone, `null` clears, blank normalises to null, an empty patch is refused, and it never upserts.
 
-**What it may not.** `status` is not PATCHable: transitions are P2-06's and `VERIFIED` has to be earned. `fix_kind` belongs to P2-12, and `version` is response-only until P2-07 makes it an optimistic lock — there is no `expected_version` and nothing increments it. All three are 400, not silently dropped.
+**What it may not.** `status` is not PATCHable: transitions have their own route and `VERIFIED` has to be earned. `fix_kind` belongs to P2-12. `version` cannot be assigned either — it is the server's to move — though since P2-07 a patch must carry `expected_version` saying which version it acts on. All three of `status`, `fix_kind` and `version` are 400, not silently dropped.
 
 **Independent flags.** Setting `suppressed` does not disable reads; setting `importance` does not raise confidence; `freshness` moves nothing else. Every combination is representable, and an integration test asserts the couplings do not exist.
 
@@ -98,6 +98,22 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
 
+## What exists now — Optimistic locking (P2-07)
+
+**Every Problem write names a version.** `expected_version` is required on `PATCH /v1/problems/:problem_id` and on the status transition. An integer from 1, never coerced: `"4"`, `4.5`, `0`, `true` and null are 400. It is a token, not a field — `version` itself stays unwritable, and a body carrying only the token is refused because it changes nothing.
+
+**Success moves it, refusal does not.** A successful write sets `version = version + 1` in the statement itself, never from a caller's value. Everything refused — an empty patch, a stale write, a disallowed transition, a missing successful Verification — leaves the record untouched, `updated_at` included.
+
+**One lock, both paths.** The ordinary update and the status transition share the same column, so an edit and a transition conflict with each other. Two separate locks would let someone edit a Problem out from under a transition with neither noticing.
+
+**The database decides.** The write is `update ... where owner_id = ? and problem_id = ? and version = ?`. The service compares versions too, but the predicate is what settles a race; a read-then-write leaves a window where both callers believe they won. Three integration tests race real requests — two patches, two transitions, a patch against a transition — and each was confirmed to fail against a read-then-write before being kept.
+
+**`VERSION_CONFLICT`, 409.** A fifth error code, because a client acts on it differently: re-read and decide again. The message names no version — a client knows what it sent, and reporting the current one would describe a record rather than the request.
+
+**Order of checks.** Ownership first, so another owner's Problem is a 404 whatever version is guessed. Then the version, then the transition rule: a caller working from a stale read has a stale idea of the status too, so the useful answer is "read it again" rather than a verdict on a move it might not have asked for.
+
+**Appends are not versioned.** Events and Verifications carry no `expected_version`, do not check the Problem's version and do not move it. An append still succeeds after a Problem write was refused as stale — losing what was learned because the body of the record was contended would be the wrong trade. Their retry protection is `client_event_id`, which answers a different question.
+
 ## What exists now — Status transitions (P2-06)
 
 | Method | Path |
@@ -114,9 +130,9 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **PAUSED resumes.** Back to either working status; it is not terminal. The two terminal statuses are ends for now — reopening raises questions about whether old evidence still holds, and nothing answers those yet.
 
-**Status only.** `fix_kind`, `confidence`, `freshness`, `importance`, the memory flags and the text all stay put, and `version` does not move. A refusal writes nothing at all, `updated_at` included.
+**Status only.** `fix_kind`, `confidence`, `freshness`, `importance`, the memory flags and the text all stay put. A refusal writes nothing at all, `updated_at` included. The version moves on success, since P2-07 — see below.
 
-**Every refusal is a 400.** Invalid enum, disallowed move, same status, terminal status, missing evidence — one code, one envelope. No 409 and no conflict vocabulary: that is P2-07's, and there is no compare-and-swap here.
+**Refusals from the rule are 400.** Invalid enum, disallowed move, same status, terminal status, missing evidence — one code, one envelope. A stale `expected_version` is the separate 409 that P2-07 added, and is checked before the rule.
 
 ## What exists now — Verification API (P2-05)
 
@@ -162,14 +178,13 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1024 tests across 40 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1064 tests across 41 files.
 
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
-- `version` exists on Problem and nothing increments it. It is response-only, no endpoint accepts it, and there is no `expected_version`. Optimistic locking is P2-07
 - Nothing changes a Problem's `fix_kind`. The Problem PATCH refuses it and a transition never sets it. Close and review are P2-12
 - No delete anywhere, no Environment update, no MCP, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
@@ -177,16 +192,17 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P2-07 — Optimistic locking on Problem.
+P2-08 — Relation entity / API.
 
 Not started.
 
 Notes for whoever picks this up:
-- `version` has been left alone by every task so far, on purpose. It is response-only, nothing increments it, and no endpoint accepts `expected_version` — so this task owns the whole meaning at once rather than inheriting half of one
-- The open questions are real: which writes increment it (the generic patch, status transitions, both), whether `expected_version` is required or optional, and what a conflict answers. P2-06 deliberately introduced no 409 and no conflict vocabulary (D-070), so nothing is half-decided
-- There are now two write paths to a Problem — `updateProblem` and `updateProblemStatus` — and neither does a compare-and-swap. The transition service reads the status, applies the rule and writes; two concurrent callers can both pass
-- The appends are a separate case. Events and Verifications are idempotent on `client_event_id` (D-058, D-063) and touch no version; retry safety there is already solved and is not the same problem
-- Whatever the answer, `version` is currently in every Problem response and pinned at 1 by several tests. Changing when it moves will change those, which is the point at which to check the change is deliberate
+- Unlike P2-04 through P2-07 this one starts at the schema. There is no relations table, no migration, no domain type and no repository operation — the first decision is what a Relation actually holds
+- Relations cross Problems, and every rule so far has been careful to keep Problems apart: evidence is per Problem (D-068), and one Problem's Verification cannot support another. A Relation is the first thing that deliberately links two, so what it may and may not carry across is the substance
+- The owner check is what makes that safe. A Relation to another owner's Problem must not be creatable, and refusing it must not reveal that the other Problem exists — same 404 as everywhere else
+- Both endpoints of a Relation need the same treatment. Checking only the source would let someone probe for target ids
+- Whether a Relation is versioned, append-only or updatable is open. Events and Verifications are append-only; Problems are versioned (D-071). Do not assume it inherits either — decide from what a Relation is for
+
 
 ## Core MVP milestone
 

@@ -48,6 +48,7 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - Event の append と Problem 単位一覧（`client_event_id` による再送の冪等性つき）
 - Verification の append と Problem 単位一覧（同じく冪等）
 - Problem の状態遷移（専用 endpoint。`VERIFIED` には成功 Verification が必須）
+- Problem 更新の楽観ロック（`expected_version` 必須。競合は 409 `VERSION_CONFLICT`）
 - リクエスト検証と、全エラー共通の JSON 形式
 
 AI 連携はまだこれからです。

@@ -90,20 +90,29 @@ export interface MemoryRepository {
   getProblem(problemId: ProblemId): Promise<ProblemRecord | undefined>;
   listProblems(projectId: ProjectId): Promise<ProblemRecord[]>;
   /** Undefined when the problem is not this owner's, as with `getProblem`. */
+  /**
+   * Updates a problem if it is still at `expectedVersion`.
+   *
+   * Undefined when nothing matched — not this owner's, or already moved on.
+   * The caller decides which, having established existence first.
+   */
   updateProblem(
     problemId: ProblemId,
+    expectedVersion: number,
     input: UpdateProblemInput,
   ): Promise<ProblemRecord | undefined>;
 
   /**
-   * Moves a problem to a status. Undefined when it is not this owner's.
+   * Moves a problem to a status if it is still at `expectedVersion`.
    *
    * Separate from `updateProblem`, whose input has no status field, so status
    * has exactly one write path and the transition rules cannot be bypassed by
-   * assigning a field.
+   * assigning a field. It shares the same version, though: both are writes to
+   * one problem and must be able to conflict with each other.
    */
   updateProblemStatus(
     problemId: ProblemId,
+    expectedVersion: number,
     status: ProblemStatus,
   ): Promise<ProblemRecord | undefined>;
 
@@ -144,9 +153,10 @@ export function createMemoryRepository(
     createProblem: (input) => createProblem(executor, context, input),
     getProblem: (problemId) => getProblem(executor, context, problemId),
     listProblems: (projectId) => listProblems(executor, context, projectId),
-    updateProblem: (problemId, input) => updateProblem(executor, context, problemId, input),
-    updateProblemStatus: (problemId, status) =>
-      updateProblemStatus(executor, context, problemId, status),
+    updateProblem: (problemId, expectedVersion, input) =>
+      updateProblem(executor, context, problemId, expectedVersion, input),
+    updateProblemStatus: (problemId, expectedVersion, status) =>
+      updateProblemStatus(executor, context, problemId, expectedVersion, status),
 
     appendEvent: (input) => appendEvent(executor, context, input),
     listEvents: (problemId) => listEvents(executor, context, problemId),
