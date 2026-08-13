@@ -230,6 +230,24 @@ describe('application layer', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('does not name a database-layer error type', async () => {
+    const modules = await readModules(join(SRC, 'app'));
+
+    // The same rule transport follows. `DuplicateClientEventIdError` matters
+    // most here: idempotent append is the database layer's to implement, and
+    // a service that caught this would be deciding storage behaviour from
+    // above — the place where it could not see a concurrent writer.
+    const offenders = modules
+      .filter((module) =>
+        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|DuplicateClientEventIdError|EmptyProjectUpdateError|EmptyProblemUpdateError)\b/.test(
+          module.source,
+        ),
+      )
+      .map((module) => module.path);
+
+    expect(offenders).toEqual([]);
+  });
+
   it('reaches the database only through the repository', async () => {
     const modules = await readModules(join(SRC, 'app'));
 

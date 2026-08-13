@@ -38,10 +38,21 @@ Which fields a caller may set was decided here (D-054, D-055). A new Problem's s
 
 Repository grew from thirteen operations to fifteen: `listProblems`, `updateProblem`.
 
-### P2-04 — NEXT
-Event API.
+### P2-04 — DONE
+Event append / list API.
 
-Depends on P2-03, which is satisfied. See the private task breakdown for its Definition of Done. Note what is still deliberately absent: a duplicate `client_event_id` is currently refused, not replayed, and returning the original is this task's decision to make.
+Two routes: `POST|GET /v1/problems/:problem_id/events`. No single-event read, no update, no delete.
+
+Definition of Done verified against a real database: the same `client_event_id` sent again does not produce a second event, and a `HYPOTHESIS → ATTEMPT → DEAD_END → DISCOVERY → FIX` history appends and reads back in order.
+
+The open question D-027 left is now settled (D-058): a retry returns the original event with the same 201 and the same body, the first write wins even if the retry's payload differs, and the key is the owner's rather than the problem's. The race is arbitrated by the unique index rather than by a read-then-write, and the concurrency test was confirmed to fail against the naive version before being kept.
+
+Repository operations unchanged at fifteen — `appendEvent` and `listEvents` already existed.
+
+### P2-05 — NEXT
+Verification append / list API.
+
+Depends on P2-03, which is satisfied. A duplicate Verification `client_event_id` is still refused, deliberately: P2-05 decides what a Verification retry returns, including what it should mean when the original recorded a different `result`. Do not assume it is the same answer Events gave — see D-060.
 
 ## BLOCKED
 

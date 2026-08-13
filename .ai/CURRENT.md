@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01, P2-02, P2-03 done; P2-04 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-04 done; P2-05 next)
 
 ## Source of truth
 
@@ -78,6 +78,28 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **Independent flags.** Setting `suppressed` does not disable reads; setting `importance` does not raise confidence; `freshness` moves nothing else. Every combination is representable, and an integration test asserts the couplings do not exist.
 
+## What exists now — Event API (P2-04)
+
+| Method | Path |
+| --- | --- |
+| POST / GET | `/v1/problems/:problem_id/events` |
+
+**Append-only, and still is.** No single-event read, no update, no delete, no `updated_at`, no trigger. A later correction is a `USER_CORRECTION` event. P2-04 did not make an Event mutable to get idempotency.
+
+**What a caller supplies.** `event_type`, `summary` and `client_event_id` are required; `result`, `reason`, `source_ai` and `evidence_ref` are optional. The problem comes from the path. `problem_id`, `owner_id`, `event_id` and `created_at` in the body are 400.
+
+**Retry returns the original.** A second append carrying the same `client_event_id` returns the event the first one wrote — same 201, same body, same `event_id` and `created_at`. The status does not distinguish the two, because the client wanted the event, not the history of its own connection.
+
+**First write wins.** If the retry's payload differs, the original is returned unchanged. Applying the new payload would edit an append-only record; writing a second event would hide a client bug worth surfacing.
+
+**The key is the owner's, not the problem's.** `(owner_id, client_event_id)`. Retrying against a different problem replays the original, `problem_id` and all, so the client can see it reused a key. Two owners may use the same value independently.
+
+**Ownership first.** Both routes confirm the problem is the caller's before anything else. The unique index is evaluated before the foreign key, so an unchecked append could otherwise replay an event to someone with no right to it — idempotency is never a way past owner scope. Listing another owner's problem is a 404, not an empty list.
+
+**The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
+
+**Verifications are unchanged.** A duplicate Verification `client_event_id` is still refused. That difference is deliberate and asserted by a test; P2-05 decides what a Verification retry means.
+
 ## What exists now
 
 Read this to know what you are building on.
@@ -104,33 +126,33 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 730 tests across 33 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 802 tests across 35 files.
 
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Recording a successful Verification does **not** move a Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That judgement is P2-06
-- A duplicate `client_event_id` is refused, not replayed. Returning the original is P2-04 for Events and P2-05 for Verifications
+- A duplicate Verification `client_event_id` is refused, not replayed. Returning the original is P2-05. Events already replay, since P2-04
 - `version` exists on Problem and nothing increments it. It is response-only, no endpoint accepts it, and there is no `expected_version`. Optimistic locking is P2-07
 - Nothing changes a Problem's `status` or `fix_kind`. The Problem PATCH refuses both. Transitions are P2-06, close and review P2-12
-- No Event or Verification endpoints. Those are P2-04 onward
+- No Verification endpoints. Those are P2-05
 - No delete anywhere, no Environment update, no MCP, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
 - No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-04 — Event API.
+P2-05 — Verification append/list API.
 
 Not started.
 
 Notes for whoever picks this up:
-- The pattern is established: add repository operations if needed, extend or add an application service, register routes in the `/v1` scope, map records explicitly in `src/http/resources.ts`
-- `appendEvent` and `listEvents` already exist on the repository, and `events (owner_id, problem_id, created_at, event_id)` indexes the list path
-- The open decision is `client_event_id`. Today a duplicate is refused with a database error the application layer has no HTTP meaning for. Whether a retry returns the original event is this task's call, and it decides whether the endpoint is idempotent
-- Events are append-only (D-026): no update, no delete, and no `updated_at` to move
-- The repository now exposes 15 operations
+- `appendVerification` and `listVerifications` already exist on the repository, and `verifications (owner_id, problem_id, created_at, verification_id)` indexes the list path. Fifteen operations is likely still enough
+- The Event API is the template for route shape, ownership checks and the append-only stance. Copying it wholesale is not the same as deciding, though — see the next point
+- Verification retry is the real decision. Events replay the original (D-058) and Verifications still refuse. What a retry should return when the original recorded a different `result` is genuinely open: a Verification is evidence, and "the same write, sent again" is a weaker claim there than it is for an Event
+- `result` is a boolean because P2-06 has to find a successful Verification mechanically (D-031). Do not let a replay decision blur it
+- Recording a Verification still must not move a Problem to `VERIFIED` (D-033). That is P2-06
 
 ## Core MVP milestone
 

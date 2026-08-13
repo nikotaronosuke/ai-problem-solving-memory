@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 import {
+  createEventService,
   createHealthService,
   createProblemService,
   createProjectEnvironmentService,
@@ -53,6 +54,7 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
       requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
+      eventService: createEventService(),
       logger: false,
     });
     appsCreated.push(app);

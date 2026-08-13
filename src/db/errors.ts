@@ -27,9 +27,11 @@ export class ProblemNotAvailableError extends Error {
  * The namespace is per table: an Event and a Verification may each carry the
  * same value, since they are separate writes.
  *
- * Phase 2 replaces this rejection with returning the original record, so a
- * retry becomes a no-op rather than an error — P2-04 for Events, P2-05 for
- * Verifications.
+ * Only Verifications raise this now. P2-04 replaced the Event rejection with
+ * returning the original event, so an Event retry is a no-op rather than an
+ * error; P2-05 does the same for Verifications. Until then the two behave
+ * differently on purpose, and this stays because the Verification path still
+ * needs it.
  */
 export class DuplicateClientEventIdError extends Error {
   constructor() {

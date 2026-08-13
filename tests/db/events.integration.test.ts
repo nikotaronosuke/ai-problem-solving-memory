@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { createEnvironment } from '../../src/db/environments.js';
-import { DuplicateClientEventIdError, ProblemNotAvailableError } from '../../src/db/errors.js';
+import { ProblemNotAvailableError } from '../../src/db/errors.js';
 import { appendEvent, listEvents } from '../../src/db/events.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
@@ -316,7 +316,35 @@ describe.skipIf(databaseUrl === undefined)('events', () => {
   });
 
   describe('retry protection', () => {
-    it('refuses a second write carrying the same client event id', async () => {
+    // P1-09 refused a duplicate; since P2-04 the same write sent again returns
+    // what the first attempt produced. What has not changed is that only one
+    // row can exist — the unique index is still what decides, and the tests
+    // below check the row count as well as the answer.
+    it('returns the original event when the same client event id is sent again', async () => {
+      const fixture = await makeFixture();
+      const clientEventId = generateClientEventId();
+
+      const original = await appendEvent(pool, fixture.context, {
+        problemId: fixture.problemId,
+        eventType: 'ATTEMPT',
+        summary: 'First attempt',
+        clientEventId,
+      });
+
+      const retry = await appendEvent(pool, fixture.context, {
+        problemId: fixture.problemId,
+        eventType: 'ATTEMPT',
+        summary: 'Same write, retried',
+        clientEventId,
+      });
+
+      // The retry's payload is not applied: the first write is the write.
+      expect(retry).toEqual(original);
+      expect(retry.summary).toBe('First attempt');
+      expect(await listEvents(pool, fixture.context, fixture.problemId)).toHaveLength(1);
+    });
+
+    it('still stores only one row, whatever the append path answers', async () => {
       const fixture = await makeFixture();
       const clientEventId = generateClientEventId();
 
@@ -327,40 +355,49 @@ describe.skipIf(databaseUrl === undefined)('events', () => {
         clientEventId,
       });
 
+      // Straight past the append path, to confirm the constraint itself is
+      // intact rather than the behaviour merely being implemented above it.
       await expect(
-        appendEvent(pool, fixture.context, {
-          problemId: fixture.problemId,
-          eventType: 'ATTEMPT',
-          summary: 'Same write, retried',
-          clientEventId,
-        }),
-      ).rejects.toThrow(DuplicateClientEventIdError);
-
-      expect(await listEvents(pool, fixture.context, fixture.problemId)).toHaveLength(1);
+        pool.query(
+          `insert into public.events
+                  (event_id, owner_id, problem_id, event_type, summary, client_event_id)
+                values ($1, $2, $3, 'ATTEMPT', $4, $5)`,
+          [
+            generateEventId(),
+            fixture.context.ownerId,
+            fixture.problemId,
+            'Second row for the same key',
+            clientEventId,
+          ],
+        ),
+      ).rejects.toThrow(/events_owner_id_client_event_id_key/);
     });
 
-    it('refuses it even when retried against a different problem', async () => {
+    it('returns the original even when retried against a different problem', async () => {
       const context = await makeOwnerContext();
       const first = await makeFixture(context);
       const second = await makeFixture(context);
       const clientEventId = generateClientEventId();
 
-      await appendEvent(pool, context, {
+      const original = await appendEvent(pool, context, {
         problemId: first.problemId,
         eventType: 'ATTEMPT',
         summary: 'First attempt',
         clientEventId,
       });
 
-      // Scoping uniqueness to the problem would let this through.
-      await expect(
-        appendEvent(pool, context, {
-          problemId: second.problemId,
-          eventType: 'ATTEMPT',
-          summary: 'Retried against the wrong problem',
-          clientEventId,
-        }),
-      ).rejects.toThrow(DuplicateClientEventIdError);
+      // The key is the owner's, not the problem's. Scoping uniqueness to the
+      // problem would produce a second event here.
+      const retry = await appendEvent(pool, context, {
+        problemId: second.problemId,
+        eventType: 'ATTEMPT',
+        summary: 'Retried against the wrong problem',
+        clientEventId,
+      });
+
+      expect(retry).toEqual(original);
+      expect(retry.problemId).toBe(first.problemId);
+      expect(await listEvents(pool, context, second.problemId)).toHaveLength(0);
     });
 
     it('lets a different owner use the same client event id', async () => {

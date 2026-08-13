@@ -476,3 +476,37 @@ The identifiers and timestamps are refused as before. None of the three exclusio
 `importance`, `confidence`, `freshness`, `memory_read_enabled`, `memory_write_enabled` and `suppressed` are stored and changed one at a time. Setting one never moves another, and every combination is representable.
 
 The tempting couplings are all wrong. Important does not mean correct, so marking a Problem important must not raise confidence (D-024). Suppressing means "surface this less", not "do not read this", so it must not disable reads. Going stale is a fact about the memory, not an instruction to hide it. Deriving any of these from another would replace the user's judgement with a guess, and the guess would be unrecoverable — there would be no way to say "important but still unproven".
+
+## D-057 — Event route shape (P2-04)
+
+Both routes are nested under the problem: `POST|GET /v1/problems/:problem_id/events`. The problem id has one source, as with Environments under a Project (D-048).
+
+There is no single-event read, no update, no delete and no unscoped `/v1/events`. Events are append-only (D-026), and a route that reads one event by id would exist only to be followed by a route that edits it.
+
+`problem_id`, `owner_id`, `event_id` and `created_at` are refused in the body. The problem comes from the path; the other three are the server's. Append and list both confirm the problem is the caller's before doing anything, so listing another owner's problem is a 404 rather than an empty list — an empty list would say "it exists and has none".
+
+## D-058 — An Event retry returns the original, and the first write wins (P2-04)
+
+D-027 left this open: P1-09 refused a duplicate `client_event_id`, and P2-04 was to decide what a retry should do instead. It returns the event the first attempt wrote, with 201 and the same body as the original response. A client that never learned whether its request arrived can send it again and get a definite answer either way, which is the whole point of the identifier.
+
+The status does not change between the first attempt and a retry. Distinguishing them would tell the client something it cannot act on and did not ask about — it wanted the event, not the history of its own connection.
+
+If the retry's payload differs, the original is still returned, unchanged. Applying the new payload would edit an append-only record. Creating a second event would hide the fact that the client reused a key by mistake, which is a client bug worth surfacing rather than absorbing.
+
+The namespace is `(owner_id, client_event_id)`, not the problem, so a retry aimed at a different problem replays the original — including its `problem_id`, which is how the client sees what it actually did. Ownership of the problem in the path is confirmed first regardless: the unique index is evaluated before the foreign key, so an unchecked append could otherwise replay an event to someone with no right to it. Idempotency is never the route past owner scope.
+
+## D-059 — The unique constraint arbitrates the race, in the database layer (P2-04)
+
+The append attempts the insert and reads the original back only after the unique index refuses it. Reading first and inserting if nothing was found leaves a window where concurrent attempts all find nothing and all insert; the constraint is the only thing that can decide between simultaneous writers, so it is what decides.
+
+An integration test sends the same key six times at once and asserts one event and one `event_id`. It opens the pool's connections first — otherwise the earlier attempts finish while the later ones are still connecting, and nothing races. It was confirmed to fail against a read-then-write append before being kept.
+
+The handling lives in `src/db/events.ts`. The application layer does not catch `DuplicateClientEventIdError` and transport does not know the name; the architecture test now enforces that for `src/app` as well as `src/http`. A service that caught it would be deciding storage behaviour from the one place that cannot see a concurrent writer.
+
+One consequence of a failed insert is an aborted transaction. That is fine while each statement is its own implicit transaction, and a savepoint will be needed if the append is ever called inside an explicit one.
+
+## D-060 — Event and Verification replay arrive separately (P2-04)
+
+Only Events replay. A duplicate Verification `client_event_id` is still refused, and P2-05 changes that.
+
+The two were not done together on purpose. `client_event_id` namespaces are per table (D-032), so the paths are independent, and changing the shared error's meaning for both at once would make P2-05 a rename rather than a decision — including the question of what a Verification retry means when the original recorded a different `result`. Until then the difference is deliberate and is asserted by a test, so it reads as a decision rather than an oversight.
