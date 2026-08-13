@@ -962,3 +962,45 @@ Asserting against the constants the routes import would prove the constants equa
 The inventory is exact in both directions, so an added, moved or removed route has to be stated in the test too. A test that discovers the routes it checks agrees with whatever it finds.
 
 The parity test pins that `GET /openapi.json` returns the same document `app.swagger()` reports, and the same one on a second request, so the endpoint cannot become a separately-rendered description.
+
+## D-112 — Sanitization sits where a repository is handed out (P3-01)
+
+The boundary wraps the repository, at `app/request-context.ts`, and nowhere else.
+
+A service does not build a repository — it receives one from the request context, and that is the only way to obtain one. Wrapping at the handout therefore puts the policy on the path of every write there is, without any service knowing it is there, and an adapter written later gets its context by the same route and inherits the same checkpoint. There is no second entrance to remember.
+
+The alternative considered was a `sanitize()` call at the top of each service or route handler. It works until someone adds a write and does not know the convention, and it would not have covered a caller that is not HTTP at all. A boundary that depends on being remembered reports success while a path goes around it, which is the failure this task exists to prevent.
+
+Both handouts are wrapped: the ordinary repository and the transactional one. Wrapping only the first would leave exactly the multi-write paths — close, and every change log — unchecked, which is the opposite of the right priority. An architecture test asserts the count of wrapped constructions equals the count of constructions, and that this file is the only one that constructs.
+
+It is a `Proxy` rather than a hand-written wrapper for the same reason it is not a per-service call. A wrapper enumerating twelve write methods still compiles, still delegates and silently stops covering a thirteenth. Intercepting every call means a new operation is covered because nothing had to be updated for it to be.
+
+Reads are named; anything unnamed is treated as a write. An operation added and never classified is inspected rather than skipped, so the cost of forgetting is a redundant look at an identifier instead of an unchecked write.
+
+## D-113 — Nothing is checked by field name (P3-01)
+
+The traversal descends through objects and arrays to every string it can reach, and reports where each was found. It has no list of fields.
+
+An Environment snapshot is arbitrary JSON the caller composed, and a change log's `changes` has a shape that depends on which fields moved. A boundary checking named fields would be correct for exactly as long as nobody added a field, and would never look inside a snapshot at all — which is the most likely place for a stray `.env` value to arrive.
+
+Identifiers are inspected too. Excluding them would mean this layer deciding which fields matter, and which fields matter is precisely what P3-02 owns. The path — `createEnvironment.0.snapshot.auth.token`, `appendEvent.0.summary` — is passed to the policy so that judgement can be made where it belongs.
+
+The traversal preserves shape exactly: key order, array length, `null` as `null`, and keys whose value is `undefined` still present. That last one is not tidiness. Absent and `null` are different instructions on a partial Problem update — leave this alone, versus clear it — and a traversal that collapsed them would change what a patch does, far from here and for reasons nobody would connect back. It rebuilds rather than mutates, so a service is never surprised by its own input changing and a refusal partway through leaves nothing half-altered.
+
+## D-114 — The boundary ships without a judgement (P3-01)
+
+The policy this phase installs keeps every string. There is no pattern list, no length threshold and no heuristic.
+
+P3-01 is the checkpoint; P3-02 decides what a secret is and P3-03 decides what to do about one. Shipping a provisional detector would have been worse than shipping none: it would look like coverage, its false negatives would be invisible, and the real detector would arrive having to argue against an incumbent nobody designed.
+
+It also makes the installation verifiable. With a policy that changes nothing, every Phase 1 and Phase 2 test passing unaltered is the evidence that a mandatory checkpoint was placed in front of every write without altering any of them.
+
+The interface is deliberately narrow. A policy is shown one string and its path, and answers keep, replace or reject. It is not given the record, cannot reach the database, and cannot decide whether a write happens. Keeping it that small is what lets the boundary guarantee the policy was consulted for every value — there is nothing else it could have needed.
+
+## D-115 — A refusal carries the field, never the value (P3-01)
+
+`SanitizationRejectedError` holds the path and the policy's reason. The rejected string is absent from the message, the properties and anything derived from them, and a test asserts it appears in none of them.
+
+An error travels: into a log line, possibly into a report, through several layers on its way out. Putting the refused value in it would mean the one mechanism built to keep secrets out of storage is also the mechanism that copies them somewhere nobody thinks to check. The field and the reason are what an operator needs, and neither is the secret.
+
+Transport maps it to the existing `INVALID_REQUEST`. The request carried something that may not be stored, which is a bad request rather than a server fault, and adding an error code now would fix an answer P3-03 has not yet decided. With the current policy the path is unreachable, so no client-visible contract changed.
