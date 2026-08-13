@@ -335,6 +335,81 @@ describe('import detector', () => {
   });
 });
 
+describe('sanitization boundary', () => {
+  it('knows nothing about transport, the driver or SQL', async () => {
+    const modules = await readModules(join(SRC, 'sanitization'));
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // It sits between the services and storage. Reaching either outward
+        // to HTTP or downward to the driver would tie the one mandatory
+        // checkpoint to a particular caller or a particular database.
+        if (
+          isDriverOrVendor(specifier) ||
+          specifier === 'fastify' ||
+          specifier.startsWith('fastify/') ||
+          specifier.startsWith('@fastify/') ||
+          specifier.includes('/http/') ||
+          specifier.includes('/db/')
+        ) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+      if (
+        /\bselect\b.*\bfrom\b|\binsert into\b|\bupdate public\.|\bdelete from\b/i.test(
+          module.source,
+        )
+      ) {
+        offenders.push(`${module.path} contains SQL`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('is not reached into by the domain', async () => {
+    const modules = await readModules(join(SRC, 'domain'));
+
+    const offenders = modules
+      .filter((module) => importsOf(module.source).some((s) => s.includes('/sanitization/')))
+      .map((module) => module.path);
+
+    // Whether a value is a secret is not a rule about problem solving. Mixing
+    // privacy into the domain would make the rules answerable only with a
+    // policy in hand.
+    expect(offenders).toEqual([]);
+  });
+
+  it('is the only thing a repository is handed out through', async () => {
+    const modules = await readModules(SRC);
+
+    // Call sites, not the definition or the re-export.
+    const callsIt = (source: string): boolean =>
+      /(?<!function\s)\bcreateMemoryRepository\s*\(/.test(source);
+
+    const builders = modules
+      .filter((module) => callsIt(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    // A service never constructs a repository; it is given one. So there is
+    // exactly one place where the boundary could be forgotten, and this is
+    // the test that notices if a second appears.
+    expect(builders).toEqual(['app/request-context.ts']);
+
+    const context = modules.find((module) => module.path === 'app/request-context.ts');
+    const constructions = context?.source.match(/createMemoryRepository\s*\(/g) ?? [];
+    const wrapped = context?.source.match(/withSanitization\s*\(\s*createMemoryRepository/g) ?? [];
+
+    // Both handouts — the ordinary repository and the transactional one —
+    // must be wrapped. Wrapping one and not the other would leave exactly the
+    // multi-write paths unchecked.
+    expect(constructions.length).toBeGreaterThan(0);
+    expect(wrapped).toHaveLength(constructions.length);
+  });
+});
+
 describe('contract generation', () => {
   it('is named in one transport module and nowhere else', async () => {
     const modules = await readModules(SRC);

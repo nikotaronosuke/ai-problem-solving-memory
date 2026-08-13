@@ -46,6 +46,7 @@ import {
   ProblemVersionConflictError,
   RequestContextUnavailableError,
   ResourceNotFoundError,
+  SanitizationRejectedError,
 } from '../app/index.js';
 import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './errors.js';
 import { registerChangeLogRoutes } from './change-log-routes.js';
@@ -181,6 +182,25 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
 
     if (error instanceof InvalidApplicationInputError) {
       request.log.info({ err: error }, 'request rejected by the application layer');
+      void reply
+        .code(ERROR_STATUS.INVALID_REQUEST)
+        .send(buildErrorEnvelope('INVALID_REQUEST', request.id));
+      return;
+    }
+
+    if (error instanceof SanitizationRejectedError) {
+      // The request carried something that may not be stored. It is a bad
+      // request, not a server fault, so it reuses `INVALID_REQUEST` rather
+      // than adding a code — what a client is told about a refused value is
+      // P3-03's to settle, and inventing a contract for it now would fix that
+      // answer before the question has been decided.
+      //
+      // Logged by field and reason only. The error carries no part of the
+      // value, and the log line must not reintroduce it.
+      request.log.warn(
+        { field: error.field, reason: error.reason },
+        'request rejected by the sanitization boundary',
+      );
       void reply
         .code(ERROR_STATUS.INVALID_REQUEST)
         .send(buildErrorEnvelope('INVALID_REQUEST', request.id));

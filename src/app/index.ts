@@ -73,3 +73,12 @@ export {
   type AuthenticatedRequestContext,
   type RequestContextService,
 } from './request-context.js';
+// Re-exported so transport maps the refusal without importing the boundary
+// directly: what a client is told about a refused value stays a decision of
+// this layer, not of the layer that detected it.
+export {
+  createPermissivePolicy,
+  SanitizationRejectedError,
+  type SanitizationOutcome,
+  type SanitizationPolicy,
+} from '../sanitization/index.js';
