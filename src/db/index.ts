@@ -72,6 +72,19 @@ export {
   type RelationRecord,
 } from './relations.js';
 
+// Running several statements as one. Needed first by change logging, which
+// has to succeed or fail with the change it describes.
+export { createTransactionRunner, type DatabaseTransactionRunner } from './transaction.js';
+
+// Problem mutation history. The create is called by the mutating services
+// inside their transaction, not by anything a caller can reach.
+export {
+  createChangeLog,
+  listChangeLogs,
+  type ChangeLogRecord,
+  type CreateChangeLogInput,
+} from './change-logs.js';
+
 // Memory-specific usage history. Create and list only, and not a global audit
 // log: tool calls, deploys and approvals belong to a layer above this one.
 export {

@@ -51,6 +51,12 @@ import {
   type UpdateProjectInput,
 } from '../db/projects.js';
 import {
+  createChangeLog,
+  listChangeLogs,
+  type ChangeLogRecord,
+  type CreateChangeLogInput,
+} from '../db/change-logs.js';
+import {
   createUsageLog,
   listUsageLogs,
   type CreateUsageLogInput,
@@ -134,6 +140,16 @@ export interface MemoryRepository {
   appendVerification(input: AppendVerificationInput): Promise<VerificationRecord>;
   listVerifications(problemId: ProblemId): Promise<VerificationRecord[]>;
 
+  /**
+   * Records that a problem changed.
+   *
+   * Called by the services that mutate a Problem, with an executor already
+   * inside a transaction, so the record and the change stand or fall
+   * together. Not reachable from HTTP.
+   */
+  createChangeLog(input: CreateChangeLogInput): Promise<ChangeLogRecord>;
+  listChangeLogs(problemId: ProblemId): Promise<ChangeLogRecord[]>;
+
   createUsageLog(input: CreateUsageLogInput): Promise<UsageLogRecord>;
   /**
    * What memory was used while working on this problem.
@@ -194,6 +210,9 @@ export function createMemoryRepository(
 
     appendVerification: (input) => appendVerification(executor, context, input),
     listVerifications: (problemId) => listVerifications(executor, context, problemId),
+
+    createChangeLog: (input) => createChangeLog(executor, context, input),
+    listChangeLogs: (problemId) => listChangeLogs(executor, context, problemId),
 
     createUsageLog: (input) => createUsageLog(executor, context, input),
     listUsageLogs: (problemId) => listUsageLogs(executor, context, problemId),

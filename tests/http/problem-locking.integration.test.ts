@@ -32,6 +32,7 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -39,6 +40,7 @@ import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { generateProblemId } from '../../src/domain/problem.js';
@@ -69,7 +71,9 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
+      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
+        [MEMORY_OWNER_ID_VAR]: ownerId,
+      }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -77,6 +81,7 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
       verificationService: createVerificationService(),
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
       logger: false,
     });
     appsCreated.push(app);
@@ -117,11 +122,17 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
     return { actor, problemId: problem.json<{ problem_id: string }>().problem_id };
   }
 
+  /**
+   * Patches, supplying `changed_by` unless the caller set it.
+   *
+   * Every mutation needs one since P2-10, and these tests are about
+   * concurrency rather than about who made the change.
+   */
   function patch(fixture: Fixture, body: Record<string, unknown>) {
     return fixture.actor.app.inject({
       method: 'PATCH',
       url: `/v1/problems/${fixture.problemId}`,
-      payload: body,
+      payload: { changed_by: 'claude-code', ...body },
     });
   }
 
@@ -129,7 +140,11 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
     return fixture.actor.app.inject({
       method: 'POST',
       url: `/v1/problems/${fixture.problemId}/status-transitions`,
-      payload: { target_status: targetStatus, expected_version: expectedVersion },
+      payload: {
+        target_status: targetStatus,
+        expected_version: expectedVersion,
+        changed_by: 'claude-code',
+      },
     });
   }
 
@@ -164,6 +179,7 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
     if (ownersCreated.length > 0) {
       // Children first: every foreign key restricts deleting the parent.
       for (const table of [
+        'change_logs',
         'verifications',
         'events',
         'problems',
@@ -511,17 +527,17 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
         await mine.actor.app.inject({
           method: 'PATCH',
           url: `/v1/problems/${theirs.problemId}`,
-          payload: { expected_version: 1, title: 'stolen' },
+          payload: { changed_by: 'claude-code', expected_version: 1, title: 'stolen' },
         }),
         await mine.actor.app.inject({
           method: 'PATCH',
           url: `/v1/problems/${theirs.problemId}`,
-          payload: { expected_version: 99, title: 'stolen' },
+          payload: { changed_by: 'claude-code', expected_version: 99, title: 'stolen' },
         }),
         await mine.actor.app.inject({
           method: 'POST',
           url: `/v1/problems/${theirs.problemId}/status-transitions`,
-          payload: { target_status: 'PAUSED', expected_version: 1 },
+          payload: { target_status: 'PAUSED', expected_version: 1, changed_by: 'claude-code' },
         }),
       ];
 
@@ -539,12 +555,12 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
       const crossOwner = await mine.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${theirs.problemId}`,
-        payload: { expected_version: 1, title: 'x' },
+        payload: { changed_by: 'claude-code', expected_version: 1, title: 'x' },
       });
       const unknown = await mine.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${generateProblemId()}`,
-        payload: { expected_version: 1, title: 'x' },
+        payload: { changed_by: 'claude-code', expected_version: 1, title: 'x' },
       });
 
       // `request_id` differs per request, so the comparison is of the part

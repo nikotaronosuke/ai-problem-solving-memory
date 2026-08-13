@@ -22,6 +22,7 @@ export {
   type CreateUsageLogCommand,
   type UsageLogService,
 } from './usage-log-service.js';
+export { createChangeLogService, type ChangeLogService } from './change-log-service.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
 export {
   createProjectEnvironmentService,
@@ -42,6 +43,7 @@ export {
   type UpdateProblemCommand,
 } from './problem-service.js';
 export type {
+  ChangeLogRecord,
   EnvironmentRecord,
   EventRecord,
   ProblemRecord,

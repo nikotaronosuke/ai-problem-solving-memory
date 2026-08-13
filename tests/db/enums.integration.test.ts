@@ -78,6 +78,7 @@ describe.skipIf(databaseUrl === undefined)('domain enums in the database', () =>
     // replaces, from when `relations` was the example of one that did not
     // exist yet.
     expect(result.rows.map((row) => row.table_name).sort()).toEqual([
+      'change_logs',
       'environments',
       'events',
       'owners',

@@ -20,11 +20,13 @@ import {
   createProjectEnvironmentService,
   createRelationService,
   createUsageLogService,
+  createChangeLogService,
   createRequestContextService,
   createVerificationService,
 } from './app/index.js';
 import { resolveDatabaseConfig } from './db/config.js';
 import { closePool, createPool } from './db/pool.js';
+import { createTransactionRunner } from './db/transaction.js';
 import { buildMemoryHttpApp, REDACTED_LOG_PATHS } from './http/index.js';
 import { buildStartupSummary, formatStartupSummary } from './service.js';
 
@@ -33,7 +35,7 @@ const pool = createPool(resolveDatabaseConfig({ nodeEnv: env.nodeEnv }));
 
 const app = buildMemoryHttpApp({
   healthService: createHealthService(pool),
-  requestContextService: createRequestContextService(pool),
+  requestContextService: createRequestContextService(pool, createTransactionRunner(pool)),
   projectEnvironmentService: createProjectEnvironmentService(),
   problemService: createProblemService(),
   problemStatusService: createProblemStatusService(),
@@ -41,6 +43,7 @@ const app = buildMemoryHttpApp({
   verificationService: createVerificationService(),
   relationService: createRelationService(),
   usageLogService: createUsageLogService(),
+  changeLogService: createChangeLogService(),
   logger: {
     level: env.logLevel,
     // Credentials must not survive into a log file, and the failure is silent
