@@ -110,12 +110,24 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
     return { actor, problemId: problem.json<{ problem_id: string }>().problem_id };
   }
 
-  function transition(fixture: Fixture, targetStatus: string) {
+  function transitionAt(fixture: Fixture, targetStatus: string, expectedVersion: number) {
     return fixture.actor.app.inject({
       method: 'POST',
       url: `/v1/problems/${fixture.problemId}/status-transitions`,
-      payload: { target_status: targetStatus },
+      payload: { target_status: targetStatus, expected_version: expectedVersion },
     });
+  }
+
+  /**
+   * Transitions using whatever version the problem is at now.
+   *
+   * Most tests here are about the rule rather than about concurrency, so they
+   * read the current version first. The locking tests name a version
+   * deliberately, with `transitionAt`.
+   */
+  async function transition(fixture: Fixture, targetStatus: string) {
+    const current = await readProblem(fixture);
+    return transitionAt(fixture, targetStatus, current['version'] as number);
   }
 
   async function transitionOk(fixture: Fixture, targetStatus: string) {
@@ -336,8 +348,9 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
         problem_id: before['problem_id'],
         project_id: before['project_id'],
         created_at: before['created_at'],
-        // P2-07 owns what an increment means; nothing moves it here.
-        version: 1,
+        // A successful write moves the version, so the next caller has to be
+        // working from this one.
+        version: (before['version'] as number) + 1,
       });
       expect(new Date(after['updated_at'] as string).getTime()).toBeGreaterThanOrEqual(
         new Date(before['updated_at'] as string).getTime(),
@@ -480,7 +493,7 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
       const response = await fixture.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${generateProblemId()}/status-transitions`,
-        payload: { target_status: 'PAUSED' },
+        payload: { target_status: 'PAUSED', expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(404);
@@ -530,12 +543,15 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
 
     it('still applies an ordinary patch without touching the status', async () => {
       const fixture = await makeFixture();
-      await transitionOk(fixture, 'FIX_CANDIDATE');
+      const moved = await transitionOk(fixture, 'FIX_CANDIDATE');
 
       const patched = await fixture.actor.app.inject({
         method: 'PATCH',
         url: `/v1/problems/${fixture.problemId}`,
-        payload: { confidence: 'HIGH', importance: true },
+        // The transition moved the version, so the patch has to name the one
+        // it produced — the two write paths share a lock rather than each
+        // keeping their own.
+        payload: { confidence: 'HIGH', importance: true, expected_version: moved['version'] },
       });
 
       expect(patched.statusCode).toBe(200);
@@ -543,6 +559,7 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
         confidence: 'HIGH',
         importance: true,
         status: 'FIX_CANDIDATE',
+        version: (moved['version'] as number) + 1,
       });
     });
   });
@@ -556,7 +573,7 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
       const response = await mine.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${theirs.problemId}/status-transitions`,
-        payload: { target_status: 'CLOSED_UNRESOLVED' },
+        payload: { target_status: 'CLOSED_UNRESOLVED', expected_version: 1 },
       });
 
       expect(response.statusCode).toBe(404);
@@ -571,12 +588,12 @@ describe.skipIf(databaseUrl === undefined)('Problem status transitions', () => {
       const crossOwner = await mine.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${theirs.problemId}/status-transitions`,
-        payload: { target_status: 'PAUSED' },
+        payload: { target_status: 'PAUSED', expected_version: 1 },
       });
       const unknown = await mine.actor.app.inject({
         method: 'POST',
         url: `/v1/problems/${generateProblemId()}/status-transitions`,
-        payload: { target_status: 'PAUSED' },
+        payload: { target_status: 'PAUSED', expected_version: 1 },
       });
 
       // `request_id` differs per request, so the comparison is of the part

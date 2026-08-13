@@ -19,6 +19,8 @@ export const ERROR_CODES = [
   'UNAUTHENTICATED',
   /** No such route or resource. */
   'NOT_FOUND',
+  /** The problem changed since the caller last read it. */
+  'VERSION_CONFLICT',
   /** Something went wrong that the client cannot act on. */
   'INTERNAL_ERROR',
 ] as const;
@@ -40,11 +42,16 @@ export interface ErrorEnvelope {
  * does. In particular the unauthenticated message is identical whether the
  * owner was unset, malformed or simply does not exist — otherwise the response
  * answers "does this owner exist?" for anyone who asks.
+ *
+ * The conflict message names no version either. A client that gets one already
+ * knows what it sent and can re-read the problem; telling it the current
+ * number would let someone probe a resource they were refused access to.
  */
 const MESSAGES: Record<ErrorCode, string> = {
   INVALID_REQUEST: 'Request validation failed.',
   UNAUTHENTICATED: 'No owner context could be established for this request.',
   NOT_FOUND: 'Not found.',
+  VERSION_CONFLICT: 'Problem version conflict.',
   INTERNAL_ERROR: 'Internal server error.',
 };
 
@@ -52,6 +59,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   INVALID_REQUEST: 400,
   UNAUTHENTICATED: 401,
   NOT_FOUND: 404,
+  VERSION_CONFLICT: 409,
   INTERNAL_ERROR: 500,
 };
 

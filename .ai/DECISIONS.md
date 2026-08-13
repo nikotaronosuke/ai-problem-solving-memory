@@ -606,3 +606,47 @@ A status not in the canonical set fails schema validation; a move outside the ma
 No new error code and no 409. P2-07 introduces the vocabulary for concurrency conflicts, and borrowing part of it now would leave two tasks describing the same thing differently. The domain reports a specific refusal reason for the log; the client gets the shared envelope, as it does for every other application-level refusal.
 
 Unknown and cross-owner Problems answer 404 with an identical body, as everywhere else.
+
+## D-071 — Every Problem write names the version it acts on (P2-07)
+
+`expected_version` is required on both write paths: `PATCH /v1/problems/:problem_id` and `POST /v1/problems/:problem_id/status-transitions`. An integer from 1, refused rather than coerced — `"4"`, `4.5`, `0`, `true` and null are all 400, because a concurrency token that can be misread is not one.
+
+Required rather than optional. Optional would mean the unsafe call is the shorter one, and a Problem is exactly the kind of record where two people or assistants work on the same thing: a silent overwrite loses a finding with nobody aware, which is worse than an error because it looks like it worked.
+
+It is a token, not a field. `version` itself stays unwritable, and a body carrying only `expected_version` is refused — it changes nothing, so it would move `updated_at` and the version to record a change that never happened, the same objection D-049 raises to an empty patch.
+
+This supersedes the part of D-055 that refused `expected_version` on the PATCH, and the part of D-069 that refused it on a transition. Both refused it because P2-07 had not yet decided what it meant; it now means this.
+
+## D-072 — A successful Problem write increments the version; nothing else does (P2-07)
+
+Both write paths increment, in the statement itself — `version = version + 1`, never assigned from a caller's value. Both share the one column, so an ordinary edit and a status transition conflict with each other. Two separate locks would let someone edit a Problem out from under a transition with neither noticing, which is the failure this task exists to prevent.
+
+A refused write does not increment. Everything the earlier tasks refuse — an empty patch, a disallowed transition, the same status, a terminal status, a missing successful Verification — leaves the record untouched including `updated_at`, and tests check that by re-reading the whole record.
+
+Events and Verifications are not versioned. They carry no `expected_version`, do not check the Problem's version and do not move it, so a Problem at version 5 accepts appends exactly as at version 1 — and an append still succeeds after a Problem write was refused as stale. Losing what was learned because the body of the record was contended would be the wrong trade. Their retry protection is `client_event_id` (D-058, D-063), which answers a different question: the same write arriving twice, not two writers overwriting each other.
+
+D-069 said `version` does not move for a transition, which was true until this task; that is now superseded.
+
+## D-073 — The database decides the conflict (P2-07)
+
+The write is `update ... where owner_id = ? and problem_id = ? and version = ?`. The application also compares versions after reading, but the predicate is what settles it: reading and then updating without it leaves a window in which another writer lands in between and both callers believe they won. Only one statement can match a given version.
+
+Three integration tests race real requests — two patches, two transitions, and a patch against a transition — and each asserts one 200, one 409, and a final version of exactly 2. They were confirmed to fail against a read-then-write append first, where all three produce two 200s and a lost update.
+
+The zero-row result is what the application reads as a conflict, not a PostgreSQL error code. Nothing above the database layer inspects a driver error, so optimistic locking does not make PostgreSQL part of the HTTP contract.
+
+There is no `for update`, no transaction and no retry. A conflict is reported to the caller, who is the one who can decide whether their change still makes sense against what is now there.
+
+## D-074 — VERSION_CONFLICT is a fifth error code (P2-07)
+
+409 with `{ "error": { "code": "VERSION_CONFLICT", "message": "Problem version conflict." } }`. It earns a code of its own because a client acts differently on it than on anything else: re-read the Problem and decide again. That is not a validation failure and not something the caller cannot act on.
+
+The message names no version. A client already knows what it sent and can re-read to see where things stand; reporting the current number would hand out a fact about a record rather than about the request.
+
+D-070 said P2-06 introduced no conflict vocabulary so that this task could own it whole. It does.
+
+## D-075 — Ownership before version, and version before the rule (P2-07)
+
+An unknown Problem and another owner's are still one 404, and that check comes first. A 409 for a Problem someone does not own would confirm it exists, and would let them search for its version — the existence oracle every other decision here avoids. Tests send both a right and a wrong version at another owner's Problem and expect 404 either way.
+
+Within the caller's own Problems the version is checked before the transition rule is applied. A caller working from a stale read has a stale idea of the current status too, so judging its request against a status it has not seen would answer a question it did not ask — and could allow a move it would not have requested had it known. The useful answer is "read it again". Schema validation still comes before both, so a malformed request is a 400 regardless.

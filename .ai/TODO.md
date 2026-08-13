@@ -73,12 +73,25 @@ A transition changes the status and nothing else: `fix_kind`, `confidence`, the 
 
 Repository grew from fifteen operations to sixteen: `updateProblemStatus`, deliberately separate from `updateProblem` whose input still has no status field.
 
-### P2-07 — NEXT
+### P2-07 — DONE
 Optimistic locking on Problem.
 
-Depends on P2-03, satisfied. `version` exists, is response-only and nothing increments it — P2-03, P2-06 and every append left it alone on purpose so that this task owns the whole meaning at once.
+`expected_version` is required on both Problem write paths — the ordinary PATCH and the status transition — and both increment the version on success and share the one column, so an edit and a transition conflict with each other rather than passing unseen.
 
-What is genuinely open: which writes increment it (the generic patch, transitions, both?), whether `expected_version` is required or optional, and what a conflict answers. P2-06 deliberately did not introduce a 409 or any conflict vocabulary (D-070), so that decision is unmade rather than half-made. Note the transition service has no compare-and-swap today: it reads the status, applies the rule and writes.
+Definition of Done verified against a real database: two writes from the same version leave one 200 and one 409, and Event and Verification appends keep working independently of the Problem's version. The three racing tests were confirmed to fail against a read-then-write first, where all three produce two 200s and a lost update.
+
+`VERSION_CONFLICT` is a fifth error code at 409, naming no version (D-074). Ownership is settled before the version, and the version before the transition rule (D-075).
+
+Events and Verifications are deliberately not versioned: their retry protection is `client_event_id`, which answers a different question (D-072).
+
+Repository operations unchanged at sixteen — both write signatures gained `expectedVersion` rather than a new operation appearing.
+
+### P2-08 — NEXT
+Relation entity / API.
+
+Depends on P2-03, satisfied. See the private task breakdown for its Definition of Done. Nothing exists yet: no table, no migration, no domain type — so unlike P2-04 through P2-07 this one starts at the schema rather than at the API.
+
+Note that Relations cross Problems, which every rule so far has been careful to keep separate: evidence is per Problem (D-068), and the owner check is what makes a cross-Problem reference safe. A relation to another owner's Problem must not be creatable, and must not be able to reveal that one exists.
 
 ## BLOCKED
 

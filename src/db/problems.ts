@@ -288,7 +288,8 @@ export class EmptyProblemUpdateError extends Error {
 }
 
 /**
- * Updates one of the context owner's problems.
+ * Updates one of the context owner's problems, if it is still the version the
+ * caller last read.
  *
  * Only the fields present are written. Each is independent: setting one never
  * adjusts another. Marking a problem important does not raise its confidence,
@@ -296,23 +297,32 @@ export class EmptyProblemUpdateError extends Error {
  * freshness and the three flags are separate axes, and quietly coupling them
  * would record a judgement nobody made.
  *
- * `updated_at` is set explicitly. `version` is deliberately left alone: P2-07
- * makes it an optimistic lock, and incrementing it now would imply a
- * concurrency guarantee that does not yet exist.
+ * `version` is part of the `where` clause and is incremented by the statement
+ * itself, never assigned from caller input. That is what makes this a
+ * compare-and-swap rather than a check followed by a write: reading the
+ * current version and then updating without the predicate leaves a window in
+ * which another writer lands in between, and both callers believe they won.
+ * The predicate closes it, because only one statement can match a given
+ * version.
  *
- * Returns undefined when the problem is unknown or another owner's, matching
- * `getProblem`. Never inserts, so a mistyped id cannot create a record.
+ * `updated_at` is set explicitly, as elsewhere.
+ *
+ * Returns undefined when nothing matched — the problem is unknown, another
+ * owner's, or no longer at `expectedVersion`. Those are different answers to a
+ * client, so the caller establishes which before calling; here they are the
+ * same non-event. Never inserts, so a mistyped id cannot create a record.
  */
 export async function updateProblem(
   executor: DatabaseExecutor,
   context: OwnerContext,
   problemId: ProblemId,
+  expectedVersion: number,
   input: UpdateProblemInput,
 ): Promise<ProblemRecord | undefined> {
   const assignments: string[] = [];
   // Column names are written here and nowhere else. Only values are
   // parameterised; no caller input ever becomes a SQL identifier.
-  const values: unknown[] = [context.ownerId, problemId];
+  const values: unknown[] = [context.ownerId, problemId, expectedVersion];
 
   function assign(column: string, value: unknown): void {
     values.push(value);
@@ -359,8 +369,8 @@ export async function updateProblem(
 
   const result = await executor.query<ProblemRow>(
     `update public.problems
-        set ${assignments.join(', ')}, updated_at = now()
-      where owner_id = $1 and problem_id = $2
+        set ${assignments.join(', ')}, version = version + 1, updated_at = now()
+      where owner_id = $1 and problem_id = $2 and version = $3
      returning ${PROBLEM_COLUMNS}`,
     values,
   );
@@ -370,7 +380,8 @@ export async function updateProblem(
 }
 
 /**
- * Moves one of the context owner's problems to a status.
+ * Moves one of the context owner's problems to a status, if it is still the
+ * version the caller last read.
  *
  * Separate from `updateProblem` on purpose, and `UpdateProblemInput` has no
  * `status` field, so there is exactly one way status can change. A generic
@@ -379,34 +390,35 @@ export async function updateProblem(
  * makes stepping past them impossible rather than merely discouraged.
  *
  * Whether the move is allowed is decided above this, by the domain rule. This
- * writes what it was told to write.
+ * writes what it was told to write, if the version still matches.
  *
- * Only `status` and `updated_at` change. `version` is untouched, following
- * `updateProblem`: P2-07 owns what an increment means, and moving it here
- * would imply a concurrency guarantee that does not exist yet. `fix_kind`,
- * `confidence`, `freshness`, `importance`, the memory flags and the
- * identifiers are all left alone — a Problem being verified says nothing
- * about how confident anyone is in it, or whether the fix addressed the cause.
+ * The same compare-and-swap as `updateProblem`, and deliberately the same
+ * `version` column rather than a second scheme of its own. Both are writes to
+ * one Problem, so a status transition and an ordinary update must be able to
+ * conflict with each other; two separate locks would let a caller edit a
+ * Problem out from under a transition and neither would notice.
  *
- * There is no compare-and-swap here. Two callers transitioning the same
- * Problem at once can both read the same current status and both write; the
- * last one wins. Detecting that is optimistic locking, which is P2-07's.
+ * Only `status`, `version` and `updated_at` change. `fix_kind`, `confidence`,
+ * `freshness`, `importance`, the memory flags and the identifiers are all left
+ * alone — a Problem being verified says nothing about how confident anyone is
+ * in it, or whether the fix addressed the cause.
  *
- * Returns undefined when the problem is unknown or another owner's, matching
- * `getProblem`. Never inserts.
+ * Returns undefined when nothing matched: unknown, another owner's, or no
+ * longer at `expectedVersion`. Never inserts.
  */
 export async function updateProblemStatus(
   executor: DatabaseExecutor,
   context: OwnerContext,
   problemId: ProblemId,
+  expectedVersion: number,
   status: ProblemStatus,
 ): Promise<ProblemRecord | undefined> {
   const result = await executor.query<ProblemRow>(
     `update public.problems
-        set status = $3, updated_at = now()
-      where owner_id = $1 and problem_id = $2
+        set status = $4, version = version + 1, updated_at = now()
+      where owner_id = $1 and problem_id = $2 and version = $3
      returning ${PROBLEM_COLUMNS}`,
-    [context.ownerId, problemId, status],
+    [context.ownerId, problemId, expectedVersion, status],
   );
 
   const row = result.rows[0];

@@ -38,6 +38,7 @@ import type {
 } from '../app/index.js';
 import {
   InvalidApplicationInputError,
+  ProblemVersionConflictError,
   RequestContextUnavailableError,
   ResourceNotFoundError,
 } from '../app/index.js';
@@ -142,6 +143,16 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     // inspecting a driver error, so PostgreSQL stays out of the HTTP contract.
     if (error instanceof ResourceNotFoundError) {
       void reply.code(ERROR_STATUS.NOT_FOUND).send(buildErrorEnvelope('NOT_FOUND', request.id));
+      return;
+    }
+
+    if (error instanceof ProblemVersionConflictError) {
+      // The client can act on this: re-read the problem and decide again. It
+      // is reached only for a problem already established as the caller's, so
+      // it reveals nothing a 404 was protecting.
+      void reply
+        .code(ERROR_STATUS.VERSION_CONFLICT)
+        .send(buildErrorEnvelope('VERSION_CONFLICT', request.id));
       return;
     }
 

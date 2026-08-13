@@ -28,9 +28,10 @@ import {
   type HealthService,
   type ProblemRecord,
   type ProblemStatusService,
+  type TransitionCommand,
   type RequestContextService,
 } from '../../src/app/index.js';
-import { PROBLEM_STATUSES, type ProblemStatus } from '../../src/domain/enums.js';
+import { PROBLEM_STATUSES } from '../../src/domain/enums.js';
 import type { EnvironmentId } from '../../src/domain/environment.js';
 import type { OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
@@ -70,14 +71,16 @@ function problemRecord(overrides: Partial<ProblemRecord> = {}): ProblemRecord {
 }
 
 interface ServiceCalls {
-  transition?: { problemId: string; targetStatus: ProblemStatus };
+  transition?: { problemId: string; command: TransitionCommand };
 }
 
 function serviceRecording(calls: ServiceCalls): ProblemStatusService {
   return {
-    transition: (_context, problemId, targetStatus) => {
-      calls.transition = { problemId, targetStatus };
-      return Promise.resolve(problemRecord({ status: targetStatus }));
+    transition: (_context, problemId, command) => {
+      calls.transition = { problemId, command };
+      return Promise.resolve(
+        problemRecord({ status: command.targetStatus, version: command.expectedVersion + 1 }),
+      );
     },
   };
 }
@@ -117,7 +120,7 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: URL,
-      payload: { target_status: 'VERIFIED' },
+      payload: { target_status: 'VERIFIED', expected_version: 1 },
     });
 
     // 200, not 201: nothing was created, an existing problem moved.
@@ -140,7 +143,8 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
       memory_read_enabled: true,
       memory_write_enabled: true,
       suppressed: false,
-      version: 1,
+      // The write happened, so the version the caller must send next moved on.
+      version: 2,
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-02T00:00:00.000Z',
     });
@@ -152,9 +156,16 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const calls: ServiceCalls = {};
     const app = buildApp(serviceRecording(calls));
 
-    await app.inject({ method: 'POST', url: URL, payload: { target_status: 'PAUSED' } });
+    await app.inject({
+      method: 'POST',
+      url: URL,
+      payload: { target_status: 'PAUSED', expected_version: 1 },
+    });
 
-    expect(calls.transition).toEqual({ problemId: PROBLEM_ID, targetStatus: 'PAUSED' });
+    expect(calls.transition).toEqual({
+      problemId: PROBLEM_ID,
+      command: { targetStatus: 'PAUSED', expectedVersion: 1 },
+    });
 
     await app.close();
   });
@@ -166,26 +177,33 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: URL,
-      payload: { target_status: status },
+      payload: { target_status: status, expected_version: 1 },
     });
 
     // Transport does not decide which moves are legal; every canonical status
     // reaches the service, which asks the domain rule.
     expect(response.statusCode).toBe(200);
-    expect(calls.transition?.targetStatus).toBe(status);
+    expect(calls.transition?.command.targetStatus).toBe(status);
 
     await app.close();
   });
 
   it.each([
     ['no body at all', undefined],
-    ['a missing target status', {}],
-    ['an unknown status', { target_status: 'RESOLVED' }],
-    ['a retired status name', { target_status: 'OPEN' }],
-    ['a lowercase status', { target_status: 'verified' }],
-    ['a null status', { target_status: null }],
-    ['a non-string status', { target_status: 3 }],
-    ['an empty status', { target_status: '' }],
+    ['a missing target status', { expected_version: 1 }],
+    ['an unknown status', { target_status: 'RESOLVED', expected_version: 1 }],
+    ['a retired status name', { target_status: 'OPEN', expected_version: 1 }],
+    ['a lowercase status', { target_status: 'verified', expected_version: 1 }],
+    ['a null status', { target_status: null, expected_version: 1 }],
+    ['a non-string status', { target_status: 3, expected_version: 1 }],
+    ['an empty status', { target_status: '', expected_version: 1 }],
+    ['a missing expected version', { target_status: 'PAUSED' }],
+    ['a string expected version', { target_status: 'PAUSED', expected_version: '1' }],
+    ['a fractional expected version', { target_status: 'PAUSED', expected_version: 1.5 }],
+    ['a zero expected version', { target_status: 'PAUSED', expected_version: 0 }],
+    ['a negative expected version', { target_status: 'PAUSED', expected_version: -1 }],
+    ['a null expected version', { target_status: 'PAUSED', expected_version: null }],
+    ['a boolean expected version', { target_status: 'PAUSED', expected_version: true }],
   ])('refuses %s', async (_label, payload) => {
     const calls: ServiceCalls = {};
     const app = buildApp(serviceRecording(calls));
@@ -210,7 +228,6 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     ['problem_id', PROBLEM_ID],
     ['owner_id', OWNER_ID],
     ['version', 1],
-    ['expected_version', 1],
     ['fix_kind', 'ROOT_FIX'],
     ['confidence', 'HIGH'],
     ['created_at', '2026-01-01T00:00:00.000Z'],
@@ -222,7 +239,7 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: URL,
-      payload: { target_status: 'PAUSED', [field]: value },
+      payload: { target_status: 'PAUSED', expected_version: 1, [field]: value },
     });
 
     // `expected_version` in particular: optimistic locking is P2-07's, and
@@ -245,7 +262,7 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: URL,
-      payload: { target_status: 'VERIFIED' },
+      payload: { target_status: 'VERIFIED', expected_version: 1 },
     });
 
     // No new code and no 409. P2-07 introduces the vocabulary for conflicts;
@@ -266,7 +283,7 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: URL,
-      payload: { target_status: 'FIX_CANDIDATE' },
+      payload: { target_status: 'FIX_CANDIDATE', expected_version: 1 },
     });
 
     // The envelope is the contract; the specific reason stays in the log,
@@ -282,7 +299,7 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: URL,
-      payload: { target_status: 'PAUSED' },
+      payload: { target_status: 'PAUSED', expected_version: 1 },
     });
 
     expect(response.statusCode).toBe(404);
@@ -298,7 +315,7 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/v1/problems/not-a-uuid/status-transitions',
-      payload: { target_status: 'PAUSED' },
+      payload: { target_status: 'PAUSED', expected_version: 1 },
     });
 
     expect(response.statusCode).toBe(400);
@@ -314,7 +331,7 @@ describe('POST /v1/problems/:problem_id/status-transitions', () => {
     const response = await app.inject({
       method: 'POST',
       url: URL,
-      payload: { target_status: 'PAUSED' },
+      payload: { target_status: 'PAUSED', expected_version: 1 },
     });
 
     expect(response.statusCode).toBe(401);
@@ -372,7 +389,7 @@ describe('status has exactly one write path', () => {
     const response = await app.inject({
       method: 'POST',
       url,
-      payload: { target_status: 'PAUSED' },
+      payload: { target_status: 'PAUSED', expected_version: 1 },
     });
 
     expect(response.statusCode).toBe(404);

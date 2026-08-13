@@ -29,6 +29,7 @@ import type { AuthenticatedRequestContext, ProblemStatusService } from '../app/i
 import { PROBLEM_STATUSES } from '../domain/enums.js';
 import { ERROR_RESPONSE_SCHEMA } from './errors.js';
 import {
+  EXPECTED_VERSION_SCHEMA,
   PROBLEM_ID_PARAMS_SCHEMA,
   PROBLEM_RESOURCE_SCHEMA,
   toProblemResource,
@@ -38,6 +39,7 @@ const COMMON_ERROR_RESPONSES = {
   400: ERROR_RESPONSE_SCHEMA,
   401: ERROR_RESPONSE_SCHEMA,
   404: ERROR_RESPONSE_SCHEMA,
+  409: ERROR_RESPONSE_SCHEMA,
   500: ERROR_RESPONSE_SCHEMA,
 } as const;
 
@@ -51,6 +53,7 @@ function contextOf(request: FastifyRequest): AuthenticatedRequestContext {
 
 interface TransitionBody {
   target_status: (typeof PROBLEM_STATUSES)[number];
+  expected_version: number;
 }
 
 export function registerProblemStatusRoutes(
@@ -69,12 +72,17 @@ export function registerProblemStatusRoutes(
             // comes from the record, not from the caller: accepting both
             // would let them disagree.
             target_status: { type: 'string', enum: [...PROBLEM_STATUSES] },
+            // A transition is a write to the Problem like any other, so it
+            // carries the same concurrency token and shares the same version.
+            // Two separate locks would let an edit and a transition pass each
+            // other unnoticed.
+            expected_version: EXPECTED_VERSION_SCHEMA,
           },
-          required: ['target_status'],
+          required: ['target_status', 'expected_version'],
           // Refuses everything else, including `status`, `current_status`,
-          // `problem_id`, `owner_id`, `fix_kind`, `version` and
-          // `expected_version`. A transition changes status and nothing else,
-          // and optimistic locking is P2-07's to introduce.
+          // `problem_id`, `owner_id`, `fix_kind` and `version`. A transition
+          // changes status and nothing else; `version` in particular is the
+          // server's to move, and is never assigned from a caller's value.
           additionalProperties: false,
         },
         // 200 rather than 201: nothing was created, an existing Problem moved.
@@ -82,11 +90,10 @@ export function registerProblemStatusRoutes(
       },
     },
     async (request) => {
-      const problem = await service.transition(
-        contextOf(request),
-        request.params.problem_id,
-        request.body.target_status,
-      );
+      const problem = await service.transition(contextOf(request), request.params.problem_id, {
+        targetStatus: request.body.target_status,
+        expectedVersion: request.body.expected_version,
+      });
       return toProblemResource(problem);
     },
   );

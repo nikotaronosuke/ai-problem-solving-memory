@@ -6,7 +6,11 @@
  * made here rather than a consequence of how the database happens to answer.
  */
 
-export { InvalidApplicationInputError, ResourceNotFoundError } from './errors.js';
+export {
+  InvalidApplicationInputError,
+  ProblemVersionConflictError,
+  ResourceNotFoundError,
+} from './errors.js';
 export { createEventService, type AppendEventCommand, type EventService } from './event-service.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
 export {
@@ -16,7 +20,11 @@ export {
   type ProjectEnvironmentService,
   type UpdateProjectCommand,
 } from './project-environment-service.js';
-export { createProblemStatusService, type ProblemStatusService } from './problem-status-service.js';
+export {
+  createProblemStatusService,
+  type ProblemStatusService,
+  type TransitionCommand,
+} from './problem-status-service.js';
 export {
   createProblemService,
   type CreateProblemCommand,

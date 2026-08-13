@@ -35,3 +35,26 @@ export class InvalidApplicationInputError extends Error {
     this.name = 'InvalidApplicationInputError';
   }
 }
+
+/**
+ * The problem changed since the caller last read it.
+ *
+ * Raised when a write names a version the problem is no longer at. The write
+ * did not happen and nothing was partially applied.
+ *
+ * Distinct from `ResourceNotFoundError` on purpose, and reachable only after
+ * the problem has been confirmed to be this owner's. A conflict answered for a
+ * problem someone does not own would say "this exists, you just guessed the
+ * version wrong" — the existence oracle every other decision here avoids.
+ *
+ * It carries no version number. A client that gets one already knows what it
+ * sent, and can re-read the problem to see where things stand; reporting the
+ * current version would hand out a fact about a record rather than about the
+ * request.
+ */
+export class ProblemVersionConflictError extends Error {
+  constructor() {
+    super('The problem has changed since it was read.');
+    this.name = 'ProblemVersionConflictError';
+  }
+}
