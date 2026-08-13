@@ -8,7 +8,7 @@ Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
 Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
-Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 done; P3-02 next)
+Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01, P3-02 done; P3-03 next)
 
 ## Source of truth
 
@@ -298,7 +298,7 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1880 tests across 63 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 2050 tests across 66 files.
 
 ## What exists now — Phase 2 end to end (P2-14)
 
@@ -338,6 +338,28 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Tested by breaking it.** Unwrapping the transactional repository, making the traversal shallow, and misclassifying one write as a read each fail multiple guards, including the architecture test that asserts every handout is wrapped and the one that asserts a refused close leaves nothing behind.
 
+## What exists now — Secret detection (P3-02)
+
+`src/sanitization/secrets/`. No route, no table, no repository operation, no new dependency: a detector and a policy, plugged into the boundary P3-01 built.
+
+**Detection and action are separate files on purpose.** `detector.ts` says what a string is; `policy.ts` says what happens to it. P3-03 changes the second without reopening the first (D-120).
+
+**Meaning, never shape.** No entropy score and no length threshold. Every rule needs a signal that says *credential*: a PEM header, a JWT whose header actually decodes, an `Authorization` or `Cookie` line, a credential-named assignment, or a credential-named field in the caller's own structure. "Long random string" describes a UUID, a commit SHA and every evidence reference in the system, and a detector built on it would refuse the things that make a Memory worth keeping (D-122).
+
+**Context comes from the structured path.** `{"api_key": "9f2c..."}` is recognised because the nearest key is named `api_key`, which is what P3-01's raw `FieldPath` is for. The association survives an array — `{"api_keys": ["..."]}` — and does not carry past an unrelated field.
+
+**Keys and values alike.** A credential written into an object key is a credential; the content rules do not care which it was.
+
+**Six categories, two certainties.** `PRIVATE_KEY`, `JWT`, `AUTHORIZATION`, `COOKIE`, `CREDENTIAL_ASSIGNMENT`, `CREDENTIAL_FIELD`; `confirmed` and `suspected`. Named after how something was recognised rather than after a vendor, which keeps this from being a token dictionary that is stale the week it is written.
+
+**A finding holds no part of what it found.** Category and certainty, both from closed sets. No matched text, no excerpt, no offset, no hash — `JSON.stringify` of a finding is two short identifiers (D-121).
+
+**Confirmed is refused; suspected is kept.** Refusal is fail-closed holding P3-02's own completion condition, not the reject policy: P3-03 owns that. `suspected` — a credential-named field holding an ordinary word — is kept, because refusing configuration templates and documentation examples would make the record unusable, and nothing about it is logged either (D-123).
+
+**False positives are a requirement, not a courtesy.** UUIDs, commit SHAs, content hashes, evidence references, URLs, file paths, package versions, PUBLIC keys, redaction markers and prose containing the words token/password/secret are all kept, each with a fixture. The detector is also the default policy, so all 1904 pre-existing tests act as a false-positive corpus and pass unaltered.
+
+**Nothing new escapes.** The refusal is P3-01's: a safe locator and a key/value kind. The category is not published, the policy still has no name, and a real detector now drives the leak tests rather than a hand-written stub. A direct scan of every column of every table confirms no marker reached storage.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -345,26 +367,26 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
 - No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no search, embedding or retrieval, no AI adapter, no UI
-- No secret detection and no redaction or reject policy. The sanitization boundary exists (P3-01) and every write goes through it, but the policy it ships keeps every string: nothing is detected, nothing is refused and nothing is redacted yet. Detection is P3-02 and the reject/redact policy is P3-03
+- No redaction. A confirmed credential is refused outright (P3-02), and nothing is masked, replaced or summarised — keeping the surrounding meaning while removing the value is P3-03's
+- No PII detector, no raw-conversation or raw-log classifier, no large-code threshold. P3-02 is secret detection only; an email address is kept, and that is a statement about secrets rather than a ruling on PII
+- No bare-secret detection. A credential with no context at all — pasted alone into a summary, nothing naming it — is not found, because the only way to find it would be to guess from shape (D-122)
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
 - No client SDK or codegen, and no authentication scheme. The document declares no security scheme because no client credential contract exists yet
 
 ## Immediate objective
 
-P3-02 — Secret detection.
+P3-03 — Redaction / reject policy.
 
 Not started.
 
 Notes for whoever picks this up:
-- The boundary already exists and does not need to move. P3-02 is a `SanitizationPolicy` implementation, passed as the fourth argument to `createRequestContextService`; nothing about where the check happens should change
-- The interface is `inspect(text, at: SanitizationSite)`. `at.kind` is `'key'` or `'value'`, because keys are inspected too — a snapshot key is caller-written text on its way into storage like any other. `at.path` is a structured `FieldPath` of segments, not a string
-- That path carries raw caller keys on purpose: the same string means different things in different places, and `createEnvironment[0].snapshot.auth.token` is what tells a detector how to read the value beneath it. A long opaque value in `evidenceRef` is a reference; in `symptoms` it is probably a leaked credential
-- The raw path is detection context and is **not** log-safe. Render it with `describeInspectionPath` only in-process; anything reaching an error or a log goes through `formatSafeLocator`, which drops every caller key. A policy keeping a string means it may be persisted, never that it may be logged (D-118)
-- A policy has no `name` and a refusal carries no reason. Both were removed after review because free text from a policy kept reaching the operational log (D-117, D-119). If P3-02 needs to say which detector fired, add a closed union of codes to the outcome deliberately — a fixed set of identifiers, never prose
-- The private breakdown names the targets: API key, token, password, cookie, session token, OAuth secret, private key, `.env` values. It also requires that false positives have a defined treatment, which is a real part of the task rather than a footnote
-- P3-02 detects. Whether a detection refuses the write or stores a redacted form is P3-03's, and the outcome type already has `reject` and `replace` waiting for it
-- Identifiers are inspected too, deliberately. A policy that cannot tell a UUID from a token is the policy's bug, and the path is what it needs to tell them apart
+- The decision point is one function: `createSecretDetectionPolicy` in `src/sanitization/secrets/policy.ts`, which today maps `confirmed` to reject and everything else to keep. Neither the detector nor the boundary needs to move
+- `SanitizationOutcome` already has `replace`, and the traversal already applies it at any depth. What does not exist is any rule about what to replace text with, or how to keep a summary's meaning once the credential is gone
+- `suspected` findings are the open question P3-02 deliberately left. A credential-named field holding an ordinary word is either a documentation example or a weak password, and P3-02 declined to guess
+- Replacing an object *key* is refused by the boundary as unsupported (D-116). If P3-03 wants key redaction it has to decide what happens on a collision first
+- The completion condition names response, log and ChangeLog. All three already hold for a refusal; what is new is holding them for a *stored* redaction, where the value survives in the record in some form
+- Do not add a category-to-action table without evidence for it. P3-02 kept the action keyed on certainty alone, and treating `JWT` differently from `PRIVATE_KEY` should follow from a real requirement rather than from the categories happening to exist
 
 ## Core MVP milestone
 

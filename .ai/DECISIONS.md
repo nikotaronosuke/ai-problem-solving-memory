@@ -1064,3 +1064,47 @@ Which policy is configured is a real operational question, and it is a deploymen
 `UnsupportedSanitizationOutcomeError` mattered more than the rejection path here, not less. Nothing catches it, so the generic handler logs the whole error — message and stack — and anything in its message is in the log by definition. Its `detail` is a literal from the boundary's own call sites, and it carries no policy text at all.
 
 The pattern across D-115, D-117 and D-119 is worth stating plainly, because it recurred twice: every time this design left a string that someone outside the boundary could choose, that string found its way into an error and then into a log. The rule that survives is that a refusal is described entirely by values the boundary itself produced.
+
+## D-120 — Detection and action are separate, and stay separate (P3-02)
+
+`detector.ts` decides what a string is. `policy.ts` decides what happens to it. They are different files with different tests and no shared state.
+
+The reason is that P3-03 owns the second question in full — refuse, redact irreversibly, keep a semantic summary — and it should arrive to find a question it can answer rather than an answer already baked into detection. A detector that returned "reject" instead of "this is a JWT" would have made the redaction phase a rewrite.
+
+It also makes each half testable on its own terms. Detection is a pure function over a string and a site, so its suite is a table of fixtures with no server in it. The action is one mapping from finding to outcome, so its suite is six lines and a fake detector. Neither needs the other to be interesting.
+
+The seam is `SecretFinding`, which is data rather than a decision: a category and a certainty. A later phase can key on either, both or neither.
+
+## D-121 — A finding carries no part of what it found (P3-02)
+
+`SecretFinding` is a category and a certainty, both from closed sets. There is no matched text, no excerpt, no prefix, no offset, no regex match object and no hash.
+
+A finding travels — into a policy, potentially into an error, and from there into an operational log. The entire reason for producing one is that the string it describes must not be copied anywhere, so a field holding "the bit that matched" would be the one place the secret is guaranteed to end up, written by the mechanism built to stop exactly that. P3-01 learned this twice, through a free-text `reason` and then through a policy `name`; this is the same lesson applied before it could happen a third time.
+
+No fingerprint or hash either. Those would be worth their risk only if something needed to recognise the same secret twice, and nothing does: there is no deduplication requirement, no rotation tracking and no cross-request correlation in this phase. A hash of a low-entropy secret is also not the one-way door it looks like.
+
+The category is not published outward. It is available to a later phase that may want to act on it, and it is not in the error, not in the response and not in the log — P3-02 has no need to say which rule fired, and every string that has ever escaped this boundary escaped through a field someone added because it seemed useful.
+
+## D-122 — A secret is recognised by meaning, never by shape (P3-02)
+
+There is no entropy score and no length threshold in the detector, and adding one would be a mistake rather than an improvement.
+
+"Long random-looking string" describes a UUID, a git commit SHA, a content hash, a database identifier, a base64 payload and most of the evidence references that make a Memory worth keeping. A detector built on that signal refuses the record's own content, and the response to a tool that cries wolf is to stop sending it things — which leaves the memory emptier than having no detector at all.
+
+So every rule requires a signal that means *credential*: a PEM private-key header, a JWT whose header actually base64-decodes to JSON naming an algorithm, an `Authorization` or `Cookie` header line, a credential-named variable in an assignment, or a credential-named field in the caller's own structure. Names are matched whole against a normalised form, with a short suffix list so `db_password` and `github_token` work without enumerating every prefix anyone might use.
+
+The cost is stated rather than hidden: a bare credential with no context at all — pasted alone into a summary, with nothing naming it — is not detected. Catching it would mean guessing from shape. The specification's design for this is defence in depth, with adapter-side sanitisation before sending and server-side re-checking after; this is the re-check, and it was never the only check.
+
+`PUBLIC KEY` is deliberately not matched. Publishing a public key is the point of having one.
+
+## D-123 — Confirmed is refused, suspected is kept, and neither is the final policy (P3-02)
+
+Two certainties. `confirmed` is a form that is a credential and is not plausibly anything else. `suspected` is a credential-named field holding something that reads like a word or a template — `{"password": "changeme"}`, `{"session": "morning"}` — where context says credential and content disagrees.
+
+P3-02 refuses `confirmed` and keeps `suspected`.
+
+The refusal is not the reject policy. P3-03 owns that, and this is fail-closed holding P3-02's own completion condition — a representative secret must not be stored in plaintext — by the least-invented means available. Nothing is redacted, replaced or summarised, because a half-designed redaction is harder to undo than a refusal and would prejudge the phase that is supposed to decide it.
+
+Keeping `suspected` is the deliberate half. Widening refusal to cover it would refuse configuration templates, documentation examples and the ordinary act of writing down that a credential was involved, and a caller who cannot record what happened is the failure this whole record exists to prevent. Nothing about a suspected finding is logged either: "we saw something that might be a secret at this path" only helps someone who already has the data, and it puts a claim about caller content into an operational log for nobody's benefit.
+
+The false-positive fixtures are treated as requirements rather than courtesy checks, and the detector was made the default policy so that every pre-existing test — roughly nineteen hundred of them, full of UUIDs, commit SHAs, snapshots and evidence references — runs as a false-positive corpus on every build.

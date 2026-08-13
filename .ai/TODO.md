@@ -229,16 +229,33 @@ Definition of Done verified by breaking it: unwrapping the transactional reposit
 
 Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 1880 tests across 63 files.
 
-### P3-02 — NEXT
+### P3-02 — DONE
 Secret detection.
 
-Depends on P3-01, satisfied. See the private task breakdown for the target list and the completion condition.
+`src/sanitization/secrets/`: a detector, a finding type and a policy adapter. No migration, no repository change, no route, no new dependency, and no change to the P3-01 boundary.
 
-It is a `SanitizationPolicy` implementation and nothing more: the boundary does not move, and `createRequestContextService` already takes the policy. `inspect(text, at: SanitizationSite)` receives a structured path and whether this is a key or a value, precisely so detection can distinguish a reference from a credential by where it sits. That path holds raw caller keys as detection context and is not log-safe; only `formatSafeLocator` output leaves the process (D-118).
+Detection and action are deliberately separate (D-120). The detector answers what a string is; the policy turns that into an outcome, and P3-03 changes the second without reopening the first.
 
-A policy has no `name` and a refusal carries no reason (D-117, D-119). If a detector needs to report which rule fired, add a closed union of codes deliberately — identifiers, never prose. The breakdown also requires a defined treatment for false positives, which is part of the task rather than a footnote.
+Nothing is judged by shape. Every rule needs a signal that means credential — a PEM private-key header, a JWT whose header actually decodes, an `Authorization` or `Cookie` line, a credential-named assignment, or a credential-named field in the caller's own structure. Entropy and length are not evidence, because they describe UUIDs, commit SHAs and evidence references at least as well as they describe secrets (D-122). The known cost is that a bare credential with no context is not found; the specification's answer to that is the adapter-side pass, and this is the server-side re-check.
 
-Detection only. Whether a finding refuses the write or stores a redacted form is P3-03's, and `reject` and `replace` already exist in the outcome type for it.
+Context comes from P3-01's structured path: `{"api_key": "..."}` is recognised by the nearest key, the association survives an array, and it does not carry past an unrelated field. Keys are inspected as content too, so a credential written into a key is found.
+
+A finding carries a category and a certainty and nothing else — no matched text, no excerpt, no offset, no hash (D-121). Confirmed findings are refused; suspected ones are kept and not logged, because refusing configuration templates and documentation examples would make the record unusable (D-123). The refusal is P3-01's: safe locator, key-or-value, no category, no policy name.
+
+Definition of Done verified against a real database, not just against a 400: every column of every table is scanned for each secret marker after the suite runs. Seven deliberate mutations — removing bearer, private-key, structured-context and `.env` detection, breaking the key connection, keeping confirmed findings, and loosening the guard to treat long hex as a token — each fail between 5 and 35 of the new tests.
+
+The detector is also the default policy, so all 1904 pre-existing tests ran through it unaltered as a false-positive corpus.
+
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2050 tests across 66 files.
+
+### P3-03 — NEXT
+Redaction / reject policy.
+
+Depends on P3-02, satisfied. See the private task breakdown for the completion condition.
+
+The decision point is `createSecretDetectionPolicy`, which today maps `confirmed` to reject. `SanitizationOutcome` already carries `replace` and the traversal already applies it, so what is missing is the rule, not the mechanism: what a redacted value becomes, and how much of a summary's meaning survives once the credential is gone.
+
+`suspected` findings are the question P3-02 left open on purpose. Key replacement is refused by the boundary as unsupported (D-116) and needs a collision rule before it can be allowed. And the completion condition names response, log and ChangeLog — all three hold for a refusal today; holding them for a *stored* redaction is the new work.
 
 ## BLOCKED
 
