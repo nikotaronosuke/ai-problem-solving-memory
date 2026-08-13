@@ -110,24 +110,25 @@ The Memory JSON API lives under `/v1`; `/health` sits outside it, because
 whether the process is serving is not part of the API contract. Everything
 under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 
-| Method | Path                                     |
-| ------ | ---------------------------------------- |
-| GET    | `/v1/me`                                 |
-| POST   | `/v1/projects`                           |
-| GET    | `/v1/projects`                           |
-| GET    | `/v1/projects/:project_id`               |
-| PATCH  | `/v1/projects/:project_id`               |
-| POST   | `/v1/projects/:project_id/environments`  |
-| GET    | `/v1/projects/:project_id/environments`  |
-| GET    | `/v1/environments/:environment_id`       |
-| POST   | `/v1/projects/:project_id/problems`      |
-| GET    | `/v1/projects/:project_id/problems`      |
-| GET    | `/v1/problems/:problem_id`               |
-| PATCH  | `/v1/problems/:problem_id`               |
-| POST   | `/v1/problems/:problem_id/events`        |
-| GET    | `/v1/problems/:problem_id/events`        |
-| POST   | `/v1/problems/:problem_id/verifications` |
-| GET    | `/v1/problems/:problem_id/verifications` |
+| Method | Path                                          |
+| ------ | --------------------------------------------- |
+| GET    | `/v1/me`                                      |
+| POST   | `/v1/projects`                                |
+| GET    | `/v1/projects`                                |
+| GET    | `/v1/projects/:project_id`                    |
+| PATCH  | `/v1/projects/:project_id`                    |
+| POST   | `/v1/projects/:project_id/environments`       |
+| GET    | `/v1/projects/:project_id/environments`       |
+| GET    | `/v1/environments/:environment_id`            |
+| POST   | `/v1/projects/:project_id/problems`           |
+| GET    | `/v1/projects/:project_id/problems`           |
+| GET    | `/v1/problems/:problem_id`                    |
+| PATCH  | `/v1/problems/:problem_id`                    |
+| POST   | `/v1/problems/:problem_id/events`             |
+| GET    | `/v1/problems/:problem_id/events`             |
+| POST   | `/v1/problems/:problem_id/verifications`      |
+| GET    | `/v1/problems/:problem_id/verifications`      |
+| POST   | `/v1/problems/:problem_id/status-transitions` |
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in
@@ -178,8 +179,41 @@ retry is the same write arriving again, not a second check. Recording a
 different finding means a new Verification with a new key.
 
 Recording a successful Verification does not move the Problem to `VERIFIED`
-and does not change its status at all. Concluding a problem is solved weighs
-the transition rules as well as the evidence, and no endpoint does it yet.
+and does not change its status at all. Concluding a problem is solved is a
+separate, deliberate step.
+
+That step is `POST /v1/problems/:problem_id/status-transitions`, with a body
+naming only where the Problem should end up:
+
+```json
+{ "target_status": "FIX_CANDIDATE" }
+```
+
+It is the only way a status changes — the Problem PATCH still refuses
+`status`, and no append moves it. The allowed moves are:
+
+| From                | To                                                         |
+| ------------------- | ---------------------------------------------------------- |
+| `INVESTIGATING`     | `FIX_CANDIDATE`, `PAUSED`, `CLOSED_UNRESOLVED`             |
+| `FIX_CANDIDATE`     | `INVESTIGATING`, `VERIFIED`, `PAUSED`, `CLOSED_UNRESOLVED` |
+| `PAUSED`            | `INVESTIGATING`, `FIX_CANDIDATE`, `CLOSED_UNRESOLVED`      |
+| `VERIFIED`          | —                                                          |
+| `CLOSED_UNRESOLVED` | —                                                          |
+
+`PAUSED` is resumable, which is the point of it. `VERIFIED` and
+`CLOSED_UNRESOLVED` are ends: reopening one raises questions about whether
+the old evidence still holds, and nothing answers those yet.
+
+`VERIFIED` is reachable only from `FIX_CANDIDATE`, and only when the Problem
+has at least one Verification of its own whose `result` is true. A FIX event,
+a confident summary, a high confidence level and another Problem's evidence
+all count for nothing. Anything the rule refuses is a 400, and the Problem is
+left exactly as it was — status, `updated_at` and all.
+
+A transition changes the status and nothing else. `fix_kind`, `confidence`,
+`freshness`, `importance` and the memory flags stay where they were, and
+`version` does not move: verifying a Problem says the fix holds, not that
+anyone is more confident in the record or that the fix addressed the cause.
 
 JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
 another owner answers exactly as one that does not exist.

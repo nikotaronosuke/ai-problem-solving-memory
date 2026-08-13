@@ -548,3 +548,61 @@ Nothing about the constraints changed. `(owner_id, client_event_id)` is still un
 Appending a Verification with `result = true` leaves the Problem's `status` exactly where it was, including `INVESTIGATING`. There is no transition service, no status write and no version increment in this task.
 
 D-033 settled this for storage; P2-05 is where an API could most easily have undone it, since this is the endpoint a client would call on being told a fix worked. Deciding a Problem is solved weighs the transition rules as well as the evidence, and P2-06 owns both. An integration test reads the status back through the API after a successful verification, so the guarantee is checked at the boundary a client actually sees.
+
+## D-066 — Status changes through a route of its own (P2-06)
+
+`POST /v1/problems/:problem_id/status-transitions`, with a body naming only `target_status`. The response is the whole updated Problem in the usual shape, at 200 — nothing was created.
+
+Not a field on the Problem PATCH. `status` is not an attribute a caller asserts; it is the outcome of a move that either is or is not allowed from where the Problem currently stands, and `VERIFIED` additionally has to be earned. Expressing that as `PATCH {"status": ...}` would make an ordinary field assignment out of a rule, which is exactly what D-055 refused to allow. The PATCH schema still rejects `status`, and a test checks that adding this route did not widen it.
+
+Posting a transition rather than putting a status, because what the caller is asking for is the move, and the move is the thing that can be refused.
+
+The current status is not accepted in the body. It comes from the record, since taking both would let them disagree. `expected_version` is refused too — see D-069.
+
+## D-067 — The transition matrix (P2-06)
+
+Ten moves, and no others:
+
+| From | To |
+| --- | --- |
+| `INVESTIGATING` | `FIX_CANDIDATE`, `PAUSED`, `CLOSED_UNRESOLVED` |
+| `FIX_CANDIDATE` | `INVESTIGATING`, `VERIFIED`, `PAUSED`, `CLOSED_UNRESOLVED` |
+| `PAUSED` | `INVESTIGATING`, `FIX_CANDIDATE`, `CLOSED_UNRESOLVED` |
+| `VERIFIED` | — |
+| `CLOSED_UNRESOLVED` | — |
+
+A status may not move to itself: it would advance `updated_at` and record a change that never happened, which is the reasoning D-049 already applies to an empty patch.
+
+`PAUSED` leads back to both working statuses, because setting work aside and picking it up again is the ordinary case rather than an exception.
+
+`VERIFIED` and `CLOSED_UNRESOLVED` are terminal *for now*. Reopening a resolved or abandoned Problem is a real requirement with real questions attached — does the old evidence still count, is it even the same Problem — and adding a path here would settle them by accident. Until something asks for it, a renewed investigation is a new Problem.
+
+The matrix lives in `src/domain/problem-status.ts` as data, with no knowledge of HTTP, storage or the repository. The architecture test now enforces that a problem status literal appears nowhere in `src/` outside the domain, so a route or service cannot decide part of the rule for itself and drift.
+
+## D-068 — VERIFIED requires this Problem's own successful Verification (P2-06)
+
+The rule D-025 deferred and the whole reason D-030 and D-031 exist. Moving to `VERIFIED` needs at least one Verification on this Problem whose boolean `result` is true.
+
+Nothing substitutes for it. Not a `FIX` Event, not a summary that reads conclusively, not a high `confidence`, not a `fix_kind`, not a failed Verification, and not an assistant's report that something works — the last being the invariant the entity was separated out to protect. `result` is a boolean precisely so this is a mechanical check rather than an inference over prose.
+
+Evidence is per Problem and per owner. The lookup goes through the owner-scoped repository keyed by problem id, so another Problem's or another owner's check is not reachable even by mistake. One case is worth naming because it looks like evidence and is not: a Verification retry aimed at a different Problem replays the original and returns 201 (D-063), while recording nothing against the Problem in the path. A test drives exactly that sequence and then asserts the transition is still refused.
+
+`VERIFIED` is reachable only from `FIX_CANDIDATE`, even with evidence in hand. "We think this is the fix" and "we checked, and it holds" are two steps, and a Problem nobody has proposed a fix for cannot be confirmed fixed.
+
+## D-069 — A transition moves the status and nothing else (P2-06)
+
+`fix_kind`, `confidence`, `freshness`, `importance`, the memory flags, the text fields and the identifiers are all untouched. Verifying a Problem says the fix holds; it does not say anyone is more confident in the record, and it does not say whether the fix addressed the cause or worked around it — that is `fix_kind`, a separate axis (D-024), and P2-12's. Deriving one from the other would record a judgement nobody made, the same objection D-056 raises about the flags.
+
+`version` does not move either. P2-07 owns what an increment means and introduces `expected_version`; incrementing here would imply a concurrency guarantee that does not exist, and accepting `expected_version` would imply one that is not enforced. Both are refused, and tests pin `version` across a successful transition.
+
+There is also no compare-and-swap. Two callers transitioning the same Problem at once can both read the same status, both pass the rule, and both write; the last one wins. That is P2-07's to detect, and doing half of it here would leave neither task owning the guarantee.
+
+A refused transition writes nothing at all — status, `updated_at` and every other field unchanged, checked by re-reading the whole record after the 400.
+
+## D-070 — Every refusal is INVALID_REQUEST (P2-06)
+
+A status not in the canonical set fails schema validation; a move outside the matrix, a move to the same status, a move out of a terminal status and a missing successful Verification are all refused by the rule. All of them answer 400 `INVALID_REQUEST`.
+
+No new error code and no 409. P2-07 introduces the vocabulary for concurrency conflicts, and borrowing part of it now would leave two tasks describing the same thing differently. The domain reports a specific refusal reason for the log; the client gets the shared envelope, as it does for every other application-level refusal.
+
+Unknown and cross-owner Problems answer 404 with an identical body, as everywhere else.

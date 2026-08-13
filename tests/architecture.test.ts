@@ -85,6 +85,42 @@ describe('domain layer', () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it('knows nothing about transport', async () => {
+    const modules = await readModules(join(SRC, 'domain'));
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // A domain rule that imported Fastify would be a rule about requests.
+        // The transition rule in particular has to stay answerable without
+        // one: it decides what is allowed, not what status code says so.
+        if (specifier === 'fastify' || specifier.startsWith('fastify/')) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('is the only place that names a problem status', async () => {
+    const modules = await readModules(SRC);
+
+    const namers = modules
+      .filter((module) =>
+        /(^|[^A-Z_])'(INVESTIGATING|FIX_CANDIDATE|VERIFIED|PAUSED|CLOSED_UNRESOLVED)'/m.test(
+          module.source,
+        ),
+      )
+      .map((module) => module.path)
+      .sort();
+
+    // The value set and the transition rule. A service or route comparing
+    // against a status literal would be deciding part of the matrix for
+    // itself, and the two copies would drift.
+    expect(namers).toEqual(['domain/enums.ts', 'domain/problem-status.ts']);
+  });
 });
 
 describe('repository layer', () => {

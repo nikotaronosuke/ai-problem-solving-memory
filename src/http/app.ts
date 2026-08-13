@@ -31,6 +31,7 @@ import type {
   EventService,
   HealthService,
   ProblemService,
+  ProblemStatusService,
   ProjectEnvironmentService,
   RequestContextService,
   VerificationService,
@@ -43,6 +44,7 @@ import {
 import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './errors.js';
 import { registerEventRoutes } from './event-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
+import { registerProblemStatusRoutes } from './problem-status-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerVerificationRoutes } from './verification-routes.js';
 
@@ -54,6 +56,7 @@ export interface MemoryHttpAppDependencies {
   readonly requestContextService: RequestContextService;
   readonly projectEnvironmentService: ProjectEnvironmentService;
   readonly problemService: ProblemService;
+  readonly problemStatusService: ProblemStatusService;
   readonly eventService: EventService;
   readonly verificationService: VerificationService;
   /**
@@ -251,6 +254,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
 
       registerProjectRoutes(scope, dependencies.projectEnvironmentService);
       registerProblemRoutes(scope, dependencies.problemService);
+      registerProblemStatusRoutes(scope, dependencies.problemStatusService);
       registerEventRoutes(scope, dependencies.eventService);
       registerVerificationRoutes(scope, dependencies.verificationService);
 

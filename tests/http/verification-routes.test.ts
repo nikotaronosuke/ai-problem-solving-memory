@@ -21,6 +21,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createEventService,
   createProblemService,
+  createProblemStatusService,
   createProjectEnvironmentService,
   RequestContextUnavailableError,
   type AppendVerificationCommand,
@@ -98,6 +99,7 @@ function buildApp(service: VerificationService, authenticated = true) {
       : { authenticate: () => Promise.reject(new RequestContextUnavailableError('unset')) },
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: createProblemService(),
+    problemStatusService: createProblemStatusService(),
     eventService: createEventService(),
     verificationService: service,
     logger: false,

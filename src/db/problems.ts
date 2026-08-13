@@ -368,3 +368,47 @@ export async function updateProblem(
   const row = result.rows[0];
   return row === undefined ? undefined : toRecord(row);
 }
+
+/**
+ * Moves one of the context owner's problems to a status.
+ *
+ * Separate from `updateProblem` on purpose, and `UpdateProblemInput` has no
+ * `status` field, so there is exactly one way status can change. A generic
+ * field assignment would step straight past the transition rules — including
+ * that `VERIFIED` needs a successful Verification — and this is the seam that
+ * makes stepping past them impossible rather than merely discouraged.
+ *
+ * Whether the move is allowed is decided above this, by the domain rule. This
+ * writes what it was told to write.
+ *
+ * Only `status` and `updated_at` change. `version` is untouched, following
+ * `updateProblem`: P2-07 owns what an increment means, and moving it here
+ * would imply a concurrency guarantee that does not exist yet. `fix_kind`,
+ * `confidence`, `freshness`, `importance`, the memory flags and the
+ * identifiers are all left alone — a Problem being verified says nothing
+ * about how confident anyone is in it, or whether the fix addressed the cause.
+ *
+ * There is no compare-and-swap here. Two callers transitioning the same
+ * Problem at once can both read the same current status and both write; the
+ * last one wins. Detecting that is optimistic locking, which is P2-07's.
+ *
+ * Returns undefined when the problem is unknown or another owner's, matching
+ * `getProblem`. Never inserts.
+ */
+export async function updateProblemStatus(
+  executor: DatabaseExecutor,
+  context: OwnerContext,
+  problemId: ProblemId,
+  status: ProblemStatus,
+): Promise<ProblemRecord | undefined> {
+  const result = await executor.query<ProblemRow>(
+    `update public.problems
+        set status = $3, updated_at = now()
+      where owner_id = $1 and problem_id = $2
+     returning ${PROBLEM_COLUMNS}`,
+    [context.ownerId, problemId, status],
+  );
+
+  const row = result.rows[0];
+  return row === undefined ? undefined : toRecord(row);
+}

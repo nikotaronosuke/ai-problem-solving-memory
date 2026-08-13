@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createProblemStatusService,
   createVerificationService,
   createEventService,
   createProjectEnvironmentService,
@@ -107,6 +108,7 @@ function buildApp(service: ProblemService, authenticated = true) {
       : { authenticate: () => Promise.reject(new RequestContextUnavailableError('unset')) },
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: service,
+    problemStatusService: createProblemStatusService(),
     eventService: createEventService(),
     verificationService: createVerificationService(),
     logger: false,

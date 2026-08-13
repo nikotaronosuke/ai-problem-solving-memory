@@ -16,6 +16,7 @@ export {
   type ProjectEnvironmentService,
   type UpdateProjectCommand,
 } from './project-environment-service.js';
+export { createProblemStatusService, type ProblemStatusService } from './problem-status-service.js';
 export {
   createProblemService,
   type CreateProblemCommand,
