@@ -14,10 +14,19 @@
  * well as values.
  *
  * Order is deliberate. A key is inspected before it is appended to the path,
- * and before its value is looked at. That is what makes a rendered path safe to
- * log: every key in one has already been approved, so a locator cannot carry
- * caller text the policy would have refused. A refused key never enters a path
- * at all.
+ * and before its value is looked at, so a key the policy refuses never enters a
+ * path at all and its value is never even reached.
+ *
+ * That ordering is not what makes anything safe to log, and an earlier version
+ * of this comment claimed it was. The path built here keeps raw caller keys,
+ * because detection needs them — `snapshot.auth.token` is what tells a policy
+ * how to read the value beneath it. A policy keeping a key means it may be
+ * persisted, which is a different question from whether it may be copied into
+ * an operational log: a secret detector keeps an email address for being
+ * not-a-secret, and that says nothing about log files. So the path assembled
+ * here is context for a decision and is not safe to render outward.
+ * `formatSafeLocator` is what errors and logs use, and it drops every caller
+ * key unconditionally, kept or refused.
  *
  * Two other properties matter.
  *
