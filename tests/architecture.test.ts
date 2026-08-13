@@ -335,6 +335,39 @@ describe('import detector', () => {
   });
 });
 
+describe('contract generation', () => {
+  it('is named in one transport module and nowhere else', async () => {
+    const modules = await readModules(SRC);
+
+    const users = modules
+      .filter((module) =>
+        importsOf(module.source).some(
+          (specifier) => specifier === '@fastify/swagger' || specifier.startsWith('@fastify/'),
+        ),
+      )
+      .map((module) => module.path)
+      .sort();
+
+    // Generation reads route schemas, so it belongs beside them and nowhere
+    // deeper. A domain rule or a repository that imported an OpenAPI library
+    // would mean the shape of a document had started influencing what the
+    // system does, which is the inversion this task exists to prevent.
+    expect(users).toEqual(['http/openapi.ts']);
+  });
+
+  it('leaves no OpenAPI vocabulary below the transport layer', async () => {
+    const modules = await readModules(SRC);
+
+    const offenders = modules
+      .filter((module) => !module.path.startsWith('http/'))
+      .filter((module) => /\bopenapi\b|\bswagger\b|operationId/i.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('database layer', () => {
   it('is the only place that names the driver', async () => {
     const modules = await readModules(SRC);

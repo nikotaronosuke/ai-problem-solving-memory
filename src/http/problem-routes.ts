@@ -81,6 +81,11 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
     '/projects/:project_id/problems',
     {
       schema: {
+        operationId: 'createProblem',
+        summary: 'Start a problem',
+        description:
+          'Starts INVESTIGATING at version 1 with no fix kind. The caller does not declare any of that.',
+        tags: ['Problems'],
         params: PROJECT_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',
@@ -122,6 +127,9 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
     '/projects/:project_id/problems',
     {
       schema: {
+        operationId: 'listProblems',
+        summary: 'List a project\u2019s problems',
+        tags: ['Problems'],
         params: PROJECT_ID_PARAMS_SCHEMA,
         response: {
           200: {
@@ -144,6 +152,9 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
     '/problems/:problem_id',
     {
       schema: {
+        operationId: 'getProblem',
+        summary: 'Read a problem',
+        tags: ['Problems'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         response: { 200: PROBLEM_RESOURCE_SCHEMA, ...COMMON_ERROR_RESPONSES },
       },
@@ -158,6 +169,11 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
     '/problems/:problem_id',
     {
       schema: {
+        operationId: 'updateProblem',
+        summary: 'Update a problem\u2019s content',
+        description:
+          'Requires `expected_version`. `status`, `fix_kind` and `version` are refused: they have their own paths, or none.',
+        tags: ['Problems'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',

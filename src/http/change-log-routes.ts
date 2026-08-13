@@ -47,6 +47,11 @@ export function registerChangeLogRoutes(scope: FastifyInstance, service: ChangeL
     '/problems/:problem_id/change-logs',
     {
       schema: {
+        operationId: 'listChangeLogs',
+        summary: 'Read a problem\u2019s change history',
+        description:
+          'Written by the service inside the same transaction as the change. There is no endpoint that creates one.',
+        tags: ['Change History'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         response: {
           200: {

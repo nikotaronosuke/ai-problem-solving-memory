@@ -157,12 +157,27 @@ Two things surfaced while doing it. `appendEvent` used to recover from a duplica
 
 Schema counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT. Repository grew from twenty-two operations to twenty-three: `updateProblemConclusion`.
 
-### P2-13 — NEXT
+### P2-13 — DONE
 API contract / schema documentation.
 
-Depends on every route existing, which it now does. See the private task breakdown for its Definition of Done.
+One route: `GET /openapi.json`, outside `/v1` and unauthenticated. One new runtime dependency, `@fastify/swagger` in dynamic mode. No migration, no new repository operation, no business behaviour changed.
 
-Every route already declares request and response schemas, so the material exists; what is undecided is whether a document is generated from them or written alongside them, and nothing generates one today. Whatever is produced must not become a second source of truth that can drift from the schemas the server actually enforces.
+The route schemas stay the only contract. Generation reads what Fastify already validates and serialises through, so the document cannot describe something the server does not enforce (D-103). Nothing generated is committed, so there is no second artefact to update (D-104). OpenAPI 3.1, because the runtime schemas are plain JSON Schema and 3.0 would have required rewriting live validation into its `nullable` dialect (D-105).
+
+Definition of Done verified against the generated document rather than the source: exactly 25 operations with unique stable operationIds (D-108), every enum set, required field, `minProperties` and `additionalProperties: false` intact, the five error codes, and `GET /openapi.json` byte-identical to `app.swagger()`. 70 tests, and a route schema loosened by accident fails them (D-111).
+
+One real finding while implementing it. `register` is deferred, so the generator's `onRoute` hook does not exist until `ready()` — a route added directly to the instance before then is silently absent from the document. `/health` was missing for exactly that reason. Every route now goes through a queued plugin, and the inventory test is what caught it (D-106).
+
+No security scheme is declared, because no client credential contract exists yet (D-110). No Swagger UI (D-109).
+
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations. Runtime dependencies 2 → 3.
+
+### P2-14 — NEXT
+Phase 2 E2E.
+
+Depends on P2-02 through P2-12, all satisfied. See the private task breakdown for the required flow and negative cases.
+
+Every step and every refusal is already covered per-endpoint, so the value is in the sequence: state carried from one step to the next against one database, which is where an ordering assumption or a leaked identifier would show. A suite that re-runs the existing assertions back to back would add coverage numbers and nothing else. `tests/integration/phase1.integration.test.ts` is the shape to follow, one layer up. Satisfying Phase 2's Definition of Done is what this closes out.
 
 ## BLOCKED
 

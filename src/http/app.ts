@@ -51,6 +51,7 @@ import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './error
 import { registerChangeLogRoutes } from './change-log-routes.js';
 import { registerEventRoutes } from './event-routes.js';
 import { registerMemoryControlRoutes } from './memory-control-routes.js';
+import { registerOpenApi } from './openapi.js';
 import { registerProblemCloseRoutes } from './problem-close-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
@@ -127,6 +128,13 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     },
   });
 
+  // ---- machine-readable contract ------------------------------------------
+
+  // First, and before any route. The generator collects routes as they are
+  // registered, so anything added earlier would be missing from the document
+  // without anything failing.
+  registerOpenApi(app);
+
   // ---- failure handling ---------------------------------------------------
 
   app.setNotFoundHandler((request, reply) => {
@@ -202,39 +210,52 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
 
   // Outside the version prefix: whether the process is serving is not part of
   // the Memory API contract and should not move when that contract does.
-  app.get(
-    '/health',
-    {
-      schema: {
-        response: {
-          200: {
-            type: 'object',
-            properties: { status: { type: 'string', enum: ['ok'] } },
-            required: ['status'],
-            additionalProperties: false,
-          },
-          503: {
-            type: 'object',
-            properties: { status: { type: 'string', enum: ['unavailable'] } },
-            required: ['status'],
-            additionalProperties: false,
+  //
+  // Registered through a plugin rather than directly on the instance so that
+  // it is queued behind the OpenAPI generator and appears in the document.
+  // Fastify defers plugins, so a route added straight to the instance here
+  // would be registered before the generator's hook exists and would be
+  // missing from the contract with nothing failing.
+  void app.register((scope, _options, done) => {
+    scope.get(
+      '/health',
+      {
+        schema: {
+          operationId: 'healthCheck',
+          summary: 'Report whether the service is serving',
+          tags: ['Operational'],
+          response: {
+            200: {
+              type: 'object',
+              properties: { status: { type: 'string', enum: ['ok'] } },
+              required: ['status'],
+              additionalProperties: false,
+            },
+            503: {
+              type: 'object',
+              properties: { status: { type: 'string', enum: ['unavailable'] } },
+              required: ['status'],
+              additionalProperties: false,
+            },
           },
         },
       },
-    },
-    async (request, reply) => {
-      const report = await dependencies.healthService.check();
+      async (request, reply) => {
+        const report = await dependencies.healthService.check();
 
-      if (report.status === 'ok') {
-        return reply.code(200).send({ status: 'ok' });
-      }
+        if (report.status === 'ok') {
+          return reply.code(200).send({ status: 'ok' });
+        }
 
-      // The reason stays in the log. A health probe that explains itself to
-      // the network describes the deployment to anyone who asks.
-      request.log.warn({ detail: report.detail }, 'health check reported unavailable');
-      return reply.code(503).send({ status: 'unavailable' });
-    },
-  );
+        // The reason stays in the log. A health probe that explains itself to
+        // the network describes the deployment to anyone who asks.
+        request.log.warn({ detail: report.detail }, 'health check reported unavailable');
+        return reply.code(503).send({ status: 'unavailable' });
+      },
+    );
+
+    done();
+  });
 
   // ---- owner-scoped API ---------------------------------------------------
 
@@ -253,6 +274,11 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
         '/me',
         {
           schema: {
+            operationId: 'getCurrentOwner',
+            summary: 'Return the owner this request is acting as',
+            description:
+              'The owner is established server-side. This reports which one, and is not a credential.',
+            tags: ['Owner'],
             response: {
               200: {
                 type: 'object',

@@ -79,6 +79,11 @@ export function registerProblemCloseRoutes(
     '/problems/:problem_id/close',
     {
       schema: {
+        operationId: 'closeProblem',
+        summary: 'Conclude a problem and record the review',
+        description:
+          'Applies the same transition rules as the status route. Status, fix kind, review events and history commit together.',
+        tags: ['Problems'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',

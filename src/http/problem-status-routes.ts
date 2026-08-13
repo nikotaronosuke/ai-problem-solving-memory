@@ -66,6 +66,11 @@ export function registerProblemStatusRoutes(
     '/problems/:problem_id/status-transitions',
     {
       schema: {
+        operationId: 'transitionProblemStatus',
+        summary: 'Move a problem to another status',
+        description:
+          'The only way a status changes. VERIFIED requires a successful Verification of this problem\u2019s own.',
+        tags: ['Problems'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',

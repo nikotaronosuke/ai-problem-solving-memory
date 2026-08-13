@@ -55,6 +55,9 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - Memory control（read / write / suppression / invalidate。4軸は互いに独立し、権限制御ではありません）
 - Problem の close / review（結論・`fix_kind`・振り返りを1リクエスト1 transaction で記録。遷移規則と検証の要件は変わりません）
 - リクエスト検証と、全エラー共通の JSON 形式
+- `GET /openapi.json` による OpenAPI 3.1 契約（runtime の route schema から生成。手書きの複製はありません）
+
+API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にあります。
 
 AI 連携はまだこれからです。
 

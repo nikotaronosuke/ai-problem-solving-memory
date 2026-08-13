@@ -882,3 +882,83 @@ Two things about Events came out of writing multiple ones in a single transactio
 `appendEvent` recovered from a duplicate `client_event_id` by catching the unique-violation and re-reading the original row (D-059). Inside a transaction that is wrong: the failed statement aborts the enclosing transaction, and the recovery read fails too. It now writes with `on conflict (owner_id, client_event_id) do nothing returning` and reads the original only when nothing was written, so no error is raised on the ordinary retry path. P2-04's idempotency and concurrency tests were re-run against the change, including confirming the concurrency test still discriminates.
 
 The second is unfixed and deliberate. `created_at` defaults to `now()`, the transaction's timestamp, so all four review Events share one, and the Event list breaks that tie on the identifier — a random UUID. They therefore come back in an arbitrary order. Changing the default to `clock_timestamp()` would give insertion order, but it would alter the meaning of `created_at` for every Event in the system to solve a presentation problem: the four statements genuinely were made at the same moment, and each carries its own type, so a reader never needs their order to tell them apart. Recorded here so that a later retrieval layer that does want narrative order knows this is where to start.
+
+## D-103 — The runtime route schemas are the contract (P2-13)
+
+Every route already declares JSON Schema for its parameters, body and each response. Fastify validates requests against those schemas and serialises responses through them, so they are not a description sitting beside the implementation — they are the implementation.
+
+The OpenAPI document is generated from exactly those objects, at startup, by `@fastify/swagger` in dynamic mode. The direction is one-way and there is no second place to edit.
+
+The alternative was a hand-written document, and its failure mode is what settled it: a document can claim `fix_kind` accepts three values while the server accepts two, and nothing anywhere fails. Every schema that appears in the contract is the same object the server enforces, so the two cannot disagree.
+
+This also fixes what P2-13 is for. It is not a place to design a contract; the contract already exists and has since P2-01. This task made it readable by a machine and put a test around it.
+
+## D-104 — Nothing generated is committed (P2-13)
+
+There is no `docs/openapi.json` in the repository, and the endpoint does not serve a file from disk.
+
+A checked-in artefact would have to be regenerated whenever a route schema changed, which makes every schema change two edits, one of which can be forgotten. The first time it is forgotten the repository contains a contract that is wrong and looks authoritative. Generating on startup removes the possibility rather than guarding against it.
+
+What is committed instead is the assertion: a test suite that reads the generated document and pins the inventory and the schemas. That catches a real drift — the route schema changing — rather than a bookkeeping one.
+
+If a build artefact is ever genuinely needed, for a client generator in CI or for publication, it should be produced from the running server rather than maintained.
+
+## D-105 — OpenAPI 3.1, because the schemas already are JSON Schema (P2-13)
+
+The runtime schemas use `type: ['string', 'null']`, enums containing `null`, `enum: [true]` for a flag that accepts only an affirmative, and `minProperties` for a patch that must actually change something.
+
+3.1 adopts JSON Schema wholesale, so all of that survives generation unaltered — confirmed against the generated output, including the `\S` non-blank pattern, which a naive transform could easily mangle.
+
+3.0 would have needed each of those rewritten into its own `nullable` dialect. The obvious way to do that is to change the runtime schemas to suit the document format, which is precisely the inversion this task exists to prevent: what the server accepts would be decided by what a document version can express. So the format moved instead of the validation.
+
+## D-106 — Every route goes through a queued plugin (P2-13)
+
+The generator collects routes through an `onRoute` hook. "Register the plugin before the routes" is therefore necessary but not sufficient, because Fastify defers plugins: `register` queues, and the hook does not exist until the queue runs at `ready()`. A route added directly to the instance in the meantime is registered first in real time and is silently missing from the document.
+
+This is not hypothetical. `/health` was registered straight onto the instance, immediately after the generator was registered, and was absent from a document that otherwise looked complete. The count test is what found it.
+
+`/health`, `/openapi.json` and the `/v1` scope are now all registered through queued plugins, so registration order and execution order are the same thing. The inventory test asserts all 25 operations rather than trusting that ordering stays correct, because the failure produces a plausible document rather than an error.
+
+## D-107 — The contract is public, and outside the owner scope (P2-13)
+
+`GET /openapi.json` sits beside `/health`, not under `/v1`, and requires no owner.
+
+The shape of the API is not anyone's memory: it contains no Problems, no owner identifiers and nothing derived from stored data. Requiring an owner to read it would also be circular — a client cannot learn how to establish one from a document it must already have an owner to fetch.
+
+The route is hidden from its own output. A document that describes the endpoint serving it adds a line no generator needs and invites the question of which version of itself it is describing. It is hidden by being queued behind the generator and marked `hide`, so the exclusion is deliberate rather than an accident of ordering.
+
+It also declares no response schema. An OpenAPI document is an arbitrary object by nature, and serialising it through a schema could only drop parts of it.
+
+## D-108 — operationIds are adapter-facing names, and are part of the contract (P2-13)
+
+Each of the 25 operations has a stable, unique `operationId`: `createProblem`, `appendEvent`, `closeProblem`, and so on. Uniqueness is asserted.
+
+These are not decoration. A generated client turns them into method names, so a duplicate is a collision in someone else's code and a rename is a breaking change to anything built on them. They are named after what the operation does rather than after its path, so that moving a route does not force a rename.
+
+The names are also what makes the document useful to the AI adapter this phase is preparing for: a stable vocabulary it can bind to without parsing paths.
+
+## D-109 — No UI in the Core API phase (P2-13)
+
+No Swagger UI, Scalar, Redoc or any rendered explorer, and no YAML variant.
+
+The Definition of Done is a machine-readable contract, and a JSON document at a known path is one. A UI adds dependencies, static assets, content-security questions and a second thing that has to be served correctly, none of which are needed to consume it. If a rendered view is wanted later it is a task of its own, with those costs stated.
+
+## D-110 — No authentication is described before one exists (P2-13)
+
+The document declares no `securitySchemes`, no global `security`, and no header parameter on any operation.
+
+The current MVP establishes the owner server-side. There is no client-supplied credential, so publishing `BearerAuth` or an API key scheme would describe an authentication method that does not exist — and a generated client would build a header nothing reads, which is worse than saying nothing.
+
+`owner_id` is not represented as a credential anywhere. It appears on resources because it is data. This matches how `changed_by` and `source_ai` already behave (D-091): descriptive, never authorising.
+
+What the document does say, in prose, is that `/v1` is owner-scoped, that owner context is established server-side, and that a client-provided owner id is not authentication. The real credential lifecycle belongs to the later AI-integration phase and nothing here anticipates its shape.
+
+## D-111 — Contract tests assert against the generated document, not the source (P2-13)
+
+The suite reads what generation produced and compares it to literal expected values: the exact operation inventory in both directions, unique operationIds, every enum set spelled out, required fields, `minProperties`, `additionalProperties: false`, the five error codes, and one error envelope shape across every failure response.
+
+Asserting against the constants the routes import would prove the constants equal themselves. The question worth answering is whether the strictness that goes into a route schema still comes out the other end of generation, and whether a schema was loosened by accident — both of which are only visible in the output.
+
+The inventory is exact in both directions, so an added, moved or removed route has to be stated in the test too. A test that discovers the routes it checks agrees with whatever it finds.
+
+The parity test pins that `GET /openapi.json` returns the same document `app.swagger()` reports, and the same one on a second request, so the endpoint cannot become a separately-rendered description.

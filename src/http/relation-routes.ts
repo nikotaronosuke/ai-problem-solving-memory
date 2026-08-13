@@ -63,6 +63,10 @@ export function registerRelationRoutes(scope: FastifyInstance, service: Relation
     '/problems/:problem_id/relations',
     {
       schema: {
+        operationId: 'createRelation',
+        summary: 'Link two of your problems',
+        description: 'Carries nothing across: neither problem is touched and no version moves.',
+        tags: ['Relations'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',
@@ -107,6 +111,10 @@ export function registerRelationRoutes(scope: FastifyInstance, service: Relation
     '/problems/:problem_id/relations',
     {
       schema: {
+        operationId: 'listRelations',
+        summary: 'List a problem\u2019s relations',
+        description: 'Links from both ends, reported as stored rather than flipped.',
+        tags: ['Relations'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         response: {
           200: {

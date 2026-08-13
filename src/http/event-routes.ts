@@ -67,6 +67,11 @@ export function registerEventRoutes(scope: FastifyInstance, service: EventServic
     '/problems/:problem_id/events',
     {
       schema: {
+        operationId: 'appendEvent',
+        summary: 'Record what happened',
+        description:
+          '`client_event_id` is an idempotency key. A retry returns the event the first attempt wrote.',
+        tags: ['Events'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',
@@ -120,6 +125,9 @@ export function registerEventRoutes(scope: FastifyInstance, service: EventServic
     '/problems/:problem_id/events',
     {
       schema: {
+        operationId: 'listEvents',
+        summary: 'List a problem\u2019s events',
+        tags: ['Events'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         response: {
           200: {
