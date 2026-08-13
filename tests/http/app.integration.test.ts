@@ -16,6 +16,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  createEventService,
   createHealthService,
   createProblemService,
   createProjectEnvironmentService,
@@ -46,6 +47,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
+      eventService: createEventService(),
       logger: false,
     });
 
@@ -114,6 +116,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       requestContextService: createRequestContextService(pool, source),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
+      eventService: createEventService(),
       logger: false,
     });
 
@@ -134,6 +137,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       requestContextService: createRequestContextService(pool, {}),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
+      eventService: createEventService(),
       logger: false,
     });
 
@@ -162,6 +166,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       }),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
+      eventService: createEventService(),
       logger: false,
     });
 

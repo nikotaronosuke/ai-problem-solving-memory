@@ -11,8 +11,14 @@
  * and send another.
  */
 
-import type { EnvironmentRecord, ProblemRecord, ProjectRecord } from '../app/index.js';
-import { CONFIDENCES, FIX_KINDS, FRESHNESSES, PROBLEM_STATUSES } from '../domain/enums.js';
+import type { EnvironmentRecord, EventRecord, ProblemRecord, ProjectRecord } from '../app/index.js';
+import {
+  CONFIDENCES,
+  EVENT_TYPES,
+  FIX_KINDS,
+  FRESHNESSES,
+  PROBLEM_STATUSES,
+} from '../domain/enums.js';
 
 export interface ProjectResource {
   readonly project_id: string;
@@ -196,6 +202,76 @@ export const PROBLEM_RESOURCE_SCHEMA = {
     'version',
     'created_at',
     'updated_at',
+  ],
+  additionalProperties: false,
+} as const;
+
+export interface EventResource {
+  readonly event_id: string;
+  readonly owner_id: string;
+  readonly problem_id: string;
+  readonly event_type: string;
+  readonly summary: string;
+  readonly result: string | null;
+  readonly reason: string | null;
+  readonly source_ai: string | null;
+  readonly evidence_ref: string | null;
+  readonly client_event_id: string;
+  readonly created_at: string;
+}
+
+/**
+ * Maps an Event for the wire.
+ *
+ * `client_event_id` is echoed back deliberately. A client that retried needs
+ * to see which of its writes it is holding, and the value was its own to begin
+ * with.
+ *
+ * There is no `updated_at`, because there is nothing to update.
+ */
+export function toEventResource(record: EventRecord): EventResource {
+  return {
+    event_id: record.eventId,
+    owner_id: record.ownerId,
+    problem_id: record.problemId,
+    event_type: record.eventType,
+    summary: record.summary,
+    result: record.result,
+    reason: record.reason,
+    source_ai: record.sourceAi,
+    evidence_ref: record.evidenceRef,
+    client_event_id: record.clientEventId,
+    created_at: record.createdAt.toISOString(),
+  };
+}
+
+export const EVENT_RESOURCE_SCHEMA = {
+  type: 'object',
+  properties: {
+    event_id: { type: 'string', format: 'uuid' },
+    owner_id: { type: 'string', format: 'uuid' },
+    problem_id: { type: 'string', format: 'uuid' },
+    event_type: { type: 'string', enum: [...EVENT_TYPES] },
+    summary: { type: 'string' },
+    result: { type: ['string', 'null'] },
+    reason: { type: ['string', 'null'] },
+    source_ai: { type: ['string', 'null'] },
+    evidence_ref: { type: ['string', 'null'] },
+    client_event_id: { type: 'string', format: 'uuid' },
+    created_at: { type: 'string', format: 'date-time' },
+  },
+  required: [
+    'event_id',
+    'owner_id',
+    'problem_id',
+    'event_type',
+    'summary',
+    'result',
+    'reason',
+    'source_ai',
+    'evidence_ref',
+    'client_event_id',
+    'created_at',
   ],
   additionalProperties: false,
 } as const;

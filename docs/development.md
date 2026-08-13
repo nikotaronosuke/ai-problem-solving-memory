@@ -124,6 +124,8 @@ under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 | GET    | `/v1/projects/:project_id/problems`     |
 | GET    | `/v1/problems/:problem_id`              |
 | PATCH  | `/v1/problems/:problem_id`              |
+| POST   | `/v1/problems/:problem_id/events`       |
+| GET    | `/v1/problems/:problem_id/events`       |
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in
@@ -141,6 +143,20 @@ becomes an optimistic lock later. Sending one is a validation failure rather
 than a silent no-op. `importance`, `confidence`, `freshness`, `suppressed`
 and the two memory flags are independent — setting any one of them never
 moves another.
+
+Events record what happened while a problem was being solved: a hypothesis,
+an attempt, a dead end, a discovery, a fix, a correction from the user. They
+are append-only — there is no update, delete or single-event read, and a
+later correction is a `USER_CORRECTION` event.
+
+Every append carries a `client_event_id`, a UUID the caller mints before its
+first attempt and reuses if that attempt has to be retried. A retry returns
+the event the first attempt wrote, with the same 201 and the same body, so a
+client that never learned whether its request arrived can simply send it
+again. The key belongs to the owner rather than to a problem: sending it at a
+different problem replays the original rather than recording a second event,
+which is how a client finds out it reused a key. If the retry's payload
+differs, the first write still wins.
 
 JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
 another owner answers exactly as one that does not exist.

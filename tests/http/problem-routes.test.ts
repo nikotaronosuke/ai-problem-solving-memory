@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createEventService,
   createProjectEnvironmentService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
@@ -105,6 +106,7 @@ function buildApp(service: ProblemService, authenticated = true) {
       : { authenticate: () => Promise.reject(new RequestContextUnavailableError('unset')) },
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: service,
+    eventService: createEventService(),
     logger: false,
   });
 }
@@ -505,7 +507,7 @@ describe('routes that do not exist', () => {
   });
 
   it.each([
-    `/v1/problems/${PROBLEM_ID}/events`,
+    // Events arrived in P2-04. Verifications are still P2-05.
     `/v1/problems/${PROBLEM_ID}/verifications`,
     '/problems',
     `/v2/problems/${PROBLEM_ID}`,
@@ -514,7 +516,6 @@ describe('routes that do not exist', () => {
 
     const response = await app.inject({ method: 'GET', url });
 
-    // Event and Verification endpoints are P2-04 and P2-05.
     expect(response.statusCode).toBe(404);
 
     await app.close();

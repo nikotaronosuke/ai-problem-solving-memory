@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createEventService,
   createProblemService,
   createProjectEnvironmentService,
   RequestContextUnavailableError,
@@ -57,6 +58,7 @@ function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> =
     // contract, and the routes it serves are covered in their own suite.
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: createProblemService(),
+    eventService: createEventService(),
     logger: false,
     ...overrides,
   });

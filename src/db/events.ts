@@ -7,9 +7,13 @@
  * As elsewhere, every function takes an `OwnerContext`, the owner comes from
  * the context rather than caller input, and reads are scoped by `owner_id`.
  *
- * This is the minimum P1-09 needs. The append/list API, including turning a
- * duplicate `client_event_id` into a replay of the original result, is P2-04;
- * the general repository layer is P1-12.
+ * Since P2-04, appending is idempotent on `client_event_id`: a retry returns
+ * the event the first attempt wrote rather than failing. The race handling
+ * that makes that safe is confined to this module — nothing above it sees a
+ * PostgreSQL error code or knows that a retry happened.
+ *
+ * Verifications still refuse a duplicate. Their replay is P2-05, and the two
+ * are deliberately not changed together.
  */
 
 import type { ClientEventId } from '../domain/client-event-id.js';
@@ -19,7 +23,6 @@ import type { OwnerContext, OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 import { normaliseOptionalText } from '../domain/text.js';
 import {
-  DuplicateClientEventIdError,
   FOREIGN_KEY_VIOLATION,
   ProblemNotAvailableError,
   UNIQUE_VIOLATION,
@@ -96,10 +99,55 @@ const EVENT_COLUMNS = `event_id, owner_id, problem_id, event_type, summary, resu
   source_ai, evidence_ref, client_event_id, created_at`;
 
 /**
+ * Reads back the event this owner already recorded under a client event id.
+ *
+ * Scoped by owner, like every read here, so one owner's key cannot reach
+ * another's event even though the values may coincide.
+ *
+ * Not exported: it exists to answer "what did the first attempt write?" after
+ * a unique violation, and it is not a lookup the API offers.
+ */
+async function findEventByClientEventId(
+  executor: DatabaseExecutor,
+  context: OwnerContext,
+  clientEventId: ClientEventId,
+): Promise<EventRecord | undefined> {
+  const result = await executor.query<EventRow>(
+    `select ${EVENT_COLUMNS}
+       from public.events
+      where owner_id = $1 and client_event_id = $2`,
+    [context.ownerId, clientEventId],
+  );
+
+  const row = result.rows[0];
+  return row === undefined ? undefined : toRecord(row);
+}
+
+/**
  * Appends an event to one of the context owner's problems.
  *
- * Fails if this owner has already used the same `clientEventId`, so a retried
- * write cannot land twice.
+ * Idempotent on `clientEventId`. The first attempt writes the event; any
+ * later attempt carrying the same id returns that same event, unchanged. The
+ * retry's payload is not applied — the first write is the write, and a client
+ * that reused a key by mistake should see the event it actually created
+ * rather than have the mistake hidden behind a second row.
+ *
+ * The insert is attempted first and the unique index on
+ * `(owner_id, client_event_id)` is what decides. Reading before writing would
+ * leave a window in which two concurrent attempts both find nothing and both
+ * insert; here one of them loses to the constraint and reads back the winner,
+ * so concurrent retries still produce exactly one event.
+ *
+ * One consequence of that shape: the failed insert aborts its transaction. It
+ * works because each `executor.query` is its own implicit transaction. If this
+ * is ever called inside an explicit one, the insert will need a savepoint —
+ * the constraint stays the arbiter either way.
+ *
+ * Whether the problem exists is checked above this, before the append. The
+ * unique index is evaluated before the foreign key, so an unknown problem plus
+ * a reused key would otherwise replay an event the caller never had a right to
+ * see. Owner scope is settled first, and this is the second line, not the
+ * first.
  */
 export async function appendEvent(
   executor: DatabaseExecutor,
@@ -141,7 +189,15 @@ export async function appendEvent(
       throw new ProblemNotAvailableError();
     }
     if (violatesConstraint(error, UNIQUE_VIOLATION, CLIENT_EVENT_ID_KEY)) {
-      throw new DuplicateClientEventIdError();
+      // The same write, sent again. Return what it produced the first time.
+      const original = await findEventByClientEventId(executor, context, input.clientEventId);
+      if (original === undefined) {
+        // The constraint fired, so the row was there a moment ago. Events have
+        // no delete path, so this should be unreachable; saying so beats
+        // returning something invented.
+        throw new Error('Event conflicted on client_event_id but could not be read back.');
+      }
+      return original;
     }
     throw error;
   }

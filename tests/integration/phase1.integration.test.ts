@@ -319,19 +319,46 @@ describe.skipIf(databaseUrl === undefined)('Phase 1 scenario', () => {
 
     it('replaying a client event id', async () => {
       const before = await owner.listEvents(problemId);
+      const original = before.find((event) => event.clientEventId === usedClientEventId);
+
+      const retry = await owner.appendEvent({
+        problemId,
+        eventType: 'HYPOTHESIS',
+        summary: 'The same write, sent again',
+        clientEventId: usedClientEventId,
+      });
+
+      // Since P2-04 this returns the original rather than failing, and the
+      // retry's payload is not applied. Nothing new was written either way.
+      expect(retry).toEqual(original);
+      expect(retry.summary).toBe('Fixture hypothesis');
+      expect(await owner.listEvents(problemId)).toHaveLength(before.length);
+    });
+
+    it('replaying a verification client event id', async () => {
+      const clientEventId = generateClientEventId();
+      await owner.appendVerification({
+        problemId,
+        verificationType: 'TEST',
+        result: true,
+        summary: 'Checked once',
+        clientEventId,
+      });
+      const before = await owner.listVerifications(problemId);
 
       await expect(
-        owner.appendEvent({
+        owner.appendVerification({
           problemId,
-          eventType: 'HYPOTHESIS',
+          verificationType: 'TEST',
+          result: true,
           summary: 'The same write, sent again',
-          clientEventId: usedClientEventId,
+          clientEventId,
         }),
       ).rejects.toThrow(DuplicateClientEventIdError);
 
-      // Refused, and nothing was written. Returning the original instead of
-      // failing is P2-04; refusing is correct here.
-      expect(await owner.listEvents(problemId)).toHaveLength(before.length);
+      // Verifications still refuse; their replay is P2-05. Events and
+      // Verifications behaving differently is deliberate, not a gap.
+      expect(await owner.listVerifications(problemId)).toHaveLength(before.length);
     });
 
     it('storing an event type outside the shared value set', async () => {

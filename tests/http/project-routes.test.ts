@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createEventService,
   createProblemService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
@@ -121,6 +122,7 @@ function buildApp(service: ProjectEnvironmentService, authenticated = true) {
       : { authenticate: () => Promise.reject(new RequestContextUnavailableError('unset')) },
     projectEnvironmentService: service,
     problemService: createProblemService(),
+    eventService: createEventService(),
     logger: false,
   });
 }
