@@ -16,6 +16,7 @@ import type { FastifyInstance } from 'fastify';
 
 import {
   createHealthService,
+  createProblemService,
   createProjectEnvironmentService,
   createRequestContextService,
 } from '../../src/app/index.js';
@@ -51,6 +52,7 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
       projectEnvironmentService: createProjectEnvironmentService(),
+      problemService: createProblemService(),
       logger: false,
     });
     appsCreated.push(app);

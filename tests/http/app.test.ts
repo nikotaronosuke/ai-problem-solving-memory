@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createProblemService,
   createProjectEnvironmentService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
@@ -55,6 +56,7 @@ function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> =
     // Real service, stubbed repository: these tests are about the transport
     // contract, and the routes it serves are covered in their own suite.
     projectEnvironmentService: createProjectEnvironmentService(),
+    problemService: createProblemService(),
     logger: false,
     ...overrides,
   });

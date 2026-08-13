@@ -11,7 +11,8 @@
  * and send another.
  */
 
-import type { EnvironmentRecord, ProjectRecord } from '../app/index.js';
+import type { EnvironmentRecord, ProblemRecord, ProjectRecord } from '../app/index.js';
+import { CONFIDENCES, FIX_KINDS, FRESHNESSES, PROBLEM_STATUSES } from '../domain/enums.js';
 
 export interface ProjectResource {
   readonly project_id: string;
@@ -89,6 +90,121 @@ export const ENVIRONMENT_RESOURCE_SCHEMA = {
     created_at: { type: 'string', format: 'date-time' },
   },
   required: ['environment_id', 'owner_id', 'project_id', 'snapshot', 'created_at'],
+  additionalProperties: false,
+} as const;
+
+export interface ProblemResource {
+  readonly problem_id: string;
+  readonly owner_id: string;
+  readonly project_id: string;
+  readonly environment_id: string;
+  readonly title: string;
+  readonly symptoms: string;
+  readonly problem_domain: string | null;
+  readonly suspected_boundary: string | null;
+  readonly source_ai: string | null;
+  readonly status: string;
+  readonly fix_kind: string | null;
+  readonly importance: boolean;
+  readonly confidence: string;
+  readonly freshness: string;
+  readonly memory_read_enabled: boolean;
+  readonly memory_write_enabled: boolean;
+  readonly suppressed: boolean;
+  readonly version: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+/**
+ * Maps a Problem for the wire.
+ *
+ * Every field is listed, including the ones a caller cannot set. `status`,
+ * `fix_kind` and `version` are readable precisely because they are not
+ * writable here: a client needs to see the state without being able to assert
+ * it.
+ */
+export function toProblemResource(record: ProblemRecord): ProblemResource {
+  return {
+    problem_id: record.problemId,
+    owner_id: record.ownerId,
+    project_id: record.projectId,
+    environment_id: record.environmentId,
+    title: record.title,
+    symptoms: record.symptoms,
+    problem_domain: record.problemDomain,
+    suspected_boundary: record.suspectedBoundary,
+    source_ai: record.sourceAi,
+    status: record.status,
+    fix_kind: record.fixKind,
+    importance: record.importance,
+    confidence: record.confidence,
+    freshness: record.freshness,
+    memory_read_enabled: record.memoryReadEnabled,
+    memory_write_enabled: record.memoryWriteEnabled,
+    suppressed: record.suppressed,
+    version: record.version,
+    created_at: record.createdAt.toISOString(),
+    updated_at: record.updatedAt.toISOString(),
+  };
+}
+
+export const PROBLEM_RESOURCE_SCHEMA = {
+  type: 'object',
+  properties: {
+    problem_id: { type: 'string', format: 'uuid' },
+    owner_id: { type: 'string', format: 'uuid' },
+    project_id: { type: 'string', format: 'uuid' },
+    environment_id: { type: 'string', format: 'uuid' },
+    title: { type: 'string' },
+    symptoms: { type: 'string' },
+    problem_domain: { type: ['string', 'null'] },
+    suspected_boundary: { type: ['string', 'null'] },
+    source_ai: { type: ['string', 'null'] },
+    // The canonical value sets, pinned on the way out as well as the way in,
+    // so a response cannot carry a value the contract does not name.
+    status: { type: 'string', enum: [...PROBLEM_STATUSES] },
+    fix_kind: { type: ['string', 'null'], enum: [...FIX_KINDS, null] },
+    importance: { type: 'boolean' },
+    confidence: { type: 'string', enum: [...CONFIDENCES] },
+    freshness: { type: 'string', enum: [...FRESHNESSES] },
+    memory_read_enabled: { type: 'boolean' },
+    memory_write_enabled: { type: 'boolean' },
+    suppressed: { type: 'boolean' },
+    version: { type: 'integer', minimum: 1 },
+    created_at: { type: 'string', format: 'date-time' },
+    updated_at: { type: 'string', format: 'date-time' },
+  },
+  required: [
+    'problem_id',
+    'owner_id',
+    'project_id',
+    'environment_id',
+    'title',
+    'symptoms',
+    'problem_domain',
+    'suspected_boundary',
+    'source_ai',
+    'status',
+    'fix_kind',
+    'importance',
+    'confidence',
+    'freshness',
+    'memory_read_enabled',
+    'memory_write_enabled',
+    'suppressed',
+    'version',
+    'created_at',
+    'updated_at',
+  ],
+  additionalProperties: false,
+} as const;
+
+/** Path parameter shape for a problem id. */
+export const PROBLEM_ID_PARAMS_SCHEMA = {
+  type: 'object',
+  properties: { problem_id: { type: 'string', format: 'uuid' } },
+  required: ['problem_id'],
   additionalProperties: false,
 } as const;
 

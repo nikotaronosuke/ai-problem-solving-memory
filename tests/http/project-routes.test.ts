@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createProblemService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type CreateEnvironmentCommand,
@@ -119,6 +120,7 @@ function buildApp(service: ProjectEnvironmentService, authenticated = true) {
       ? contextService()
       : { authenticate: () => Promise.reject(new RequestContextUnavailableError('unset')) },
     projectEnvironmentService: service,
+    problemService: createProblemService(),
     logger: false,
   });
 }
@@ -561,7 +563,8 @@ describe('routes that do not exist', () => {
   it.each([
     '/projects',
     '/v2/projects',
-    `/v1/projects/${PROJECT_ID}/problems`,
+    // Problems live under a project; there is no unscoped collection.
+    '/v1/problems',
     `/v1/environments/${ENVIRONMENT_ID}/events`,
   ])('%s is not served', async (url) => {
     const app = buildApp(serviceRecording({}));

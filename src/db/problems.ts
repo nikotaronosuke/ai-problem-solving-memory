@@ -225,3 +225,146 @@ export async function getProblem(
   const row = result.rows[0];
   return row === undefined ? undefined : toRecord(row);
 }
+
+/**
+ * Lists a project's problems, oldest first.
+ *
+ * `problem_id` breaks ties so repeated reads agree when rows share a
+ * timestamp. The `(owner_id, project_id, created_at, problem_id)` index from
+ * P1-11 covers this filter and sort together.
+ *
+ * An empty list means this owner has no problems under that project id. It
+ * does not distinguish a project with none from one that is not the owner's;
+ * the application layer checks the project first so the two stay separate.
+ */
+export async function listProblems(
+  executor: DatabaseExecutor,
+  context: OwnerContext,
+  projectId: ProjectId,
+): Promise<ProblemRecord[]> {
+  const result = await executor.query<ProblemRow>(
+    `select ${PROBLEM_COLUMNS}
+       from public.problems
+      where owner_id = $1 and project_id = $2
+      order by created_at asc, problem_id asc`,
+    [context.ownerId, projectId],
+  );
+
+  return result.rows.map(toRecord);
+}
+
+/**
+ * What a caller may change about a problem.
+ *
+ * Absent leaves a column alone; an explicit null clears a nullable one. The
+ * two must stay distinguishable, which is why this is not a partial record.
+ *
+ * Deliberately absent: `status`, `fix_kind` and `version`. Status transitions
+ * are P2-06 and must not be reachable through a generic update — `VERIFIED`
+ * requires a successful Verification, and a field assignment would sidestep
+ * that. `version` is P2-07's, and `fix_kind` belongs with close/review in
+ * P2-12. Identity, ownership and timestamps are never a caller's to set.
+ */
+export interface UpdateProblemInput {
+  readonly title?: string;
+  readonly symptoms?: string;
+  readonly problemDomain?: string | null;
+  readonly suspectedBoundary?: string | null;
+  readonly sourceAi?: string | null;
+  readonly importance?: boolean;
+  readonly confidence?: Confidence;
+  readonly freshness?: Freshness;
+  readonly memoryReadEnabled?: boolean;
+  readonly memoryWriteEnabled?: boolean;
+  readonly suppressed?: boolean;
+}
+
+/** Raised when an update would change nothing. */
+export class EmptyProblemUpdateError extends Error {
+  constructor() {
+    super('A problem update must change at least one field.');
+    this.name = 'EmptyProblemUpdateError';
+  }
+}
+
+/**
+ * Updates one of the context owner's problems.
+ *
+ * Only the fields present are written. Each is independent: setting one never
+ * adjusts another. Marking a problem important does not raise its confidence,
+ * and suppressing it does not disable reads — importance, confidence,
+ * freshness and the three flags are separate axes, and quietly coupling them
+ * would record a judgement nobody made.
+ *
+ * `updated_at` is set explicitly. `version` is deliberately left alone: P2-07
+ * makes it an optimistic lock, and incrementing it now would imply a
+ * concurrency guarantee that does not yet exist.
+ *
+ * Returns undefined when the problem is unknown or another owner's, matching
+ * `getProblem`. Never inserts, so a mistyped id cannot create a record.
+ */
+export async function updateProblem(
+  executor: DatabaseExecutor,
+  context: OwnerContext,
+  problemId: ProblemId,
+  input: UpdateProblemInput,
+): Promise<ProblemRecord | undefined> {
+  const assignments: string[] = [];
+  // Column names are written here and nowhere else. Only values are
+  // parameterised; no caller input ever becomes a SQL identifier.
+  const values: unknown[] = [context.ownerId, problemId];
+
+  function assign(column: string, value: unknown): void {
+    values.push(value);
+    assignments.push(`${column} = $${values.length}`);
+  }
+
+  if (input.title !== undefined) {
+    assign('title', toProblemTitle(input.title));
+  }
+  if (input.symptoms !== undefined) {
+    assign('symptoms', toProblemSymptoms(input.symptoms));
+  }
+  if (input.problemDomain !== undefined) {
+    assign('problem_domain', normaliseOptionalText(input.problemDomain));
+  }
+  if (input.suspectedBoundary !== undefined) {
+    assign('suspected_boundary', normaliseOptionalText(input.suspectedBoundary));
+  }
+  if (input.sourceAi !== undefined) {
+    assign('source_ai', normaliseOptionalText(input.sourceAi));
+  }
+  if (input.importance !== undefined) {
+    assign('importance', input.importance);
+  }
+  if (input.confidence !== undefined) {
+    assign('confidence', input.confidence);
+  }
+  if (input.freshness !== undefined) {
+    assign('freshness', input.freshness);
+  }
+  if (input.memoryReadEnabled !== undefined) {
+    assign('memory_read_enabled', input.memoryReadEnabled);
+  }
+  if (input.memoryWriteEnabled !== undefined) {
+    assign('memory_write_enabled', input.memoryWriteEnabled);
+  }
+  if (input.suppressed !== undefined) {
+    assign('suppressed', input.suppressed);
+  }
+
+  if (assignments.length === 0) {
+    throw new EmptyProblemUpdateError();
+  }
+
+  const result = await executor.query<ProblemRow>(
+    `update public.problems
+        set ${assignments.join(', ')}, updated_at = now()
+      where owner_id = $1 and problem_id = $2
+     returning ${PROBLEM_COLUMNS}`,
+    values,
+  );
+
+  const row = result.rows[0];
+  return row === undefined ? undefined : toRecord(row);
+}

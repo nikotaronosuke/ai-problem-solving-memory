@@ -446,3 +446,33 @@ Transport maps application errors by type and never names a database error class
 `snapshot` is accepted only as a JSON object at the top level, with unconstrained keys inside. An array, string, number, boolean or null is a 400 before the request reaches the domain.
 
 The domain converter is unchanged. It accepts any non-array object, which is correct for its own layer, and the HTTP boundary is where the narrower rule belongs: what arrives there is parsed JSON, so the shapes the converter cannot describe cannot appear.
+
+## D-053 — Problem route shape (P2-03)
+
+Problems are created and listed under their project — `POST|GET /v1/projects/:project_id/problems` — for the same reason Environments are (D-048): the project id has one source and cannot disagree with itself. A single Problem is read and patched by its own id, `GET|PATCH /v1/problems/:problem_id`, which already identifies one record.
+
+There is no unscoped `/v1/problems` collection and no delete, matching the rest of the phase.
+
+Creation names an environment in the body. That environment must exist, belong to the caller, and belong to the project in the path. All three failures, plus an unknown or another owner's project, produce one 404 with one body — five reasons, one answer, so the endpoint cannot be used to discover which ids exist.
+
+## D-054 — A new Problem's starting state is the database's, not the caller's (P2-03)
+
+D-024 settled this for storage; this is the HTTP boundary keeping it true. `status`, `fix_kind`, `importance`, `confidence`, `freshness`, the two memory flags and `version` are not accepted on create. They come from the column defaults established in P1-08: `INVESTIGATING`, no fix kind, low confidence, current, readable and writable, not suppressed, version 1.
+
+A caller that could declare these could file a Problem that arrives already `VERIFIED` and trusted, which is exactly the claim the verification rules exist to make earnable. Sending one is a validation failure rather than a silently ignored field.
+
+## D-055 — What a Problem patch may change (P2-03)
+
+Eleven fields: `title`, `symptoms`, `problem_domain`, `suspected_boundary`, `source_ai`, `importance`, `confidence`, `freshness`, `memory_read_enabled`, `memory_write_enabled`, `suppressed`. Partial semantics follow D-049 — absent leaves alone, `null` clears a nullable field, blank normalises to null, an empty patch is refused twice, and it never upserts.
+
+`status` is absent because state transitions are P2-06's and `VERIFIED` requires a successful Verification (D-025, D-033). A generic field assignment would walk straight past that rule, and a rule that a later task is meant to enforce would already have been given away.
+
+`fix_kind` is absent because it belongs with close and review in P2-12, and `version` because P2-07 turns it into an optimistic lock — until then it is response-only, and there is no `expected_version`.
+
+The identifiers and timestamps are refused as before. None of the three exclusions is an oversight, so adding one here would be removing a guarantee.
+
+## D-056 — The Problem flags are independent of each other (P2-03)
+
+`importance`, `confidence`, `freshness`, `memory_read_enabled`, `memory_write_enabled` and `suppressed` are stored and changed one at a time. Setting one never moves another, and every combination is representable.
+
+The tempting couplings are all wrong. Important does not mean correct, so marking a Problem important must not raise confidence (D-024). Suppressing means "surface this less", not "do not read this", so it must not disable reads. Going stale is a fact about the memory, not an instruction to hide it. Deriving any of these from another would replace the user's judgement with a guess, and the guess would be unrecoverable — there would be no way to say "important but still unproven".

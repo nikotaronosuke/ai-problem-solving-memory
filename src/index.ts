@@ -14,6 +14,7 @@
 import { loadEnv } from './config/env.js';
 import {
   createHealthService,
+  createProblemService,
   createProjectEnvironmentService,
   createRequestContextService,
 } from './app/index.js';
@@ -29,6 +30,7 @@ const app = buildMemoryHttpApp({
   healthService: createHealthService(pool),
   requestContextService: createRequestContextService(pool),
   projectEnvironmentService: createProjectEnvironmentService(),
+  problemService: createProblemService(),
   logger: {
     level: env.logLevel,
     // Credentials must not survive into a log file, and the failure is silent

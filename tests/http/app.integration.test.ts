@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   createHealthService,
+  createProblemService,
   createProjectEnvironmentService,
   createRequestContextService,
 } from '../../src/app/index.js';
@@ -44,6 +45,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(pool, { [MEMORY_OWNER_ID_VAR]: ownerId }),
       projectEnvironmentService: createProjectEnvironmentService(),
+      problemService: createProblemService(),
       logger: false,
     });
 
@@ -111,6 +113,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(pool, source),
       projectEnvironmentService: createProjectEnvironmentService(),
+      problemService: createProblemService(),
       logger: false,
     });
 
@@ -130,6 +133,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(pool, {}),
       projectEnvironmentService: createProjectEnvironmentService(),
+      problemService: createProblemService(),
       logger: false,
     });
 
@@ -157,6 +161,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
         [MEMORY_OWNER_ID_VAR]: ownerId,
       }),
       projectEnvironmentService: createProjectEnvironmentService(),
+      problemService: createProblemService(),
       logger: false,
     });
 
