@@ -16,6 +16,7 @@ import {
   createEventService,
   createHealthService,
   createProblemService,
+  createProblemStatusService,
   createProjectEnvironmentService,
   createRequestContextService,
   createVerificationService,
@@ -33,6 +34,7 @@ const app = buildMemoryHttpApp({
   requestContextService: createRequestContextService(pool),
   projectEnvironmentService: createProjectEnvironmentService(),
   problemService: createProblemService(),
+  problemStatusService: createProblemStatusService(),
   eventService: createEventService(),
   verificationService: createVerificationService(),
   logger: {

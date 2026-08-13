@@ -17,6 +17,7 @@ import {
   createVerificationService,
   createEventService,
   createProblemService,
+  createProblemStatusService,
   createProjectEnvironmentService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
@@ -59,6 +60,7 @@ function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> =
     // contract, and the routes it serves are covered in their own suite.
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: createProblemService(),
+    problemStatusService: createProblemStatusService(),
     eventService: createEventService(),
     verificationService: createVerificationService(),
     logger: false,
