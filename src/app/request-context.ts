@@ -29,6 +29,11 @@ import type { DatabaseExecutor } from '../db/executor.js';
 import type { DatabaseTransactionRunner } from '../db/transaction.js';
 import { resolveOwnerContext } from '../owner/context.js';
 import { createMemoryRepository, type MemoryRepository } from '../repository/index.js';
+import {
+  createPermissivePolicy,
+  withSanitization,
+  type SanitizationPolicy,
+} from '../sanitization/index.js';
 
 /**
  * A request that has an established owner.
@@ -82,11 +87,18 @@ export interface RequestContextService {
  * The owner is resolved once and closed over, so the transactional repository
  * is the same scope as the ordinary one by construction rather than by a
  * caller remembering to pass the same context twice.
+ *
+ * `policy` is the sanitization policy every write is checked against. It
+ * defaults to the permissive one, which decides nothing: P3-01 installs the
+ * boundary, P3-02 supplies detection and P3-03 the refusal and redaction rules,
+ * and each arrives by passing a different policy here rather than by moving
+ * where the check happens.
  */
 export function createRequestContextService(
   executor: DatabaseExecutor,
   transactionRunner: DatabaseTransactionRunner,
   source: EnvSource = process.env,
+  policy: SanitizationPolicy = createPermissivePolicy(),
 ): RequestContextService {
   return {
     async authenticate(): Promise<AuthenticatedRequestContext> {
@@ -100,11 +112,16 @@ export function createRequestContextService(
         throw new RequestContextUnavailableError(internalReason);
       }
 
+      // Both repositories are wrapped, and this is the only place either is
+      // built. A service receives a repository and never constructs one, so
+      // the boundary is on the path of every write there is — including the
+      // transactional path, where forgetting it would leave exactly the writes
+      // that matter most unchecked.
       return {
-        repository: createMemoryRepository(executor, ownerContext),
+        repository: withSanitization(createMemoryRepository(executor, ownerContext), policy),
         runInTransaction: (work) =>
           transactionRunner.run((transactional) =>
-            work(createMemoryRepository(transactional, ownerContext)),
+            work(withSanitization(createMemoryRepository(transactional, ownerContext), policy)),
           ),
       };
     },

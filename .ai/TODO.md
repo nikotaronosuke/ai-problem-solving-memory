@@ -206,16 +206,29 @@ Every item of the Definition of Done is satisfied and verified against a real da
 Follow the private Phase 3 breakdown:
 `nikotaronosuke/ai-problem-solving-memory-spec/docs/implementation/phase3-task-breakdown.md`
 
-### P3-01 — NEXT
+### P3-01 — DONE
 Sanitization boundary.
 
-A common sanitizer that every write passes through before anything is stored, so secret and PII checks happen at the outer edge rather than inside the domain, and raw conversations, raw logs and large code blocks do not get stored directly.
+`src/sanitization/`: a policy interface, a structure-preserving traversal, and a `Proxy` that wraps the repository. No migration, no new repository operation, no new dependency, no new route, no API change.
 
-The completion condition is that *every* storage path goes through it, and there are now many: Problem create and update, memory control, close and its review events, Event and Verification appends, Relation reasons, UsageLog reasons and results. One uncovered path makes the boundary decorative.
+Every write path goes through it because a service never constructs a repository — it is handed one, and `app/request-context.ts` is the only place either the ordinary or the transactional repository is built. Both are wrapped, so an adapter added later inherits the same checkpoint rather than needing to remember one (D-112).
 
-ChangeLog already declines to copy free text (D-090). That is a related instinct, not the same guarantee — it keeps text out of history, not out of the record.
+Nothing is checked by field name. The traversal reaches every string at any depth, including inside an Environment snapshot, whose shape is whatever the caller composed (D-113). It rebuilds rather than mutates and preserves key order, array length, `null`, and keys whose value is `undefined` — so installing it changed no behaviour, and all 1793 Phase 1/2 tests pass unaltered.
 
-Do not begin P3-02 or later before this one's Definition of Done is met.
+The shipped policy decides nothing, deliberately. Detection is P3-02 and refusal or redaction is P3-03; a provisional secret check shipped as production logic would be worse than an honest absence (D-114). A refusal names the field and reason and never the value, and maps to the existing `INVALID_REQUEST` rather than adding an error code (D-115).
+
+Definition of Done verified by breaking it: unwrapping the transactional repository, making the traversal shallow, and misclassifying one write as a read each fail multiple guards — including the architecture test that every handout is wrapped, and the integration test that a refused close leaves nothing behind.
+
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 1880 tests across 63 files.
+
+### P3-02 — NEXT
+Secret detection.
+
+Depends on P3-01, satisfied. See the private task breakdown for the target list and the completion condition.
+
+It is a `SanitizationPolicy` implementation and nothing more: the boundary does not move, and `createRequestContextService` already takes the policy. `inspect(value, field)` receives the field path precisely so detection can distinguish a reference from a credential by where it sits. The breakdown also requires a defined treatment for false positives, which is part of the task rather than a footnote.
+
+Detection only. Whether a finding refuses the write or stores a redacted form is P3-03's, and `reject` and `replace` already exist in the outcome type for it.
 
 ## BLOCKED
 

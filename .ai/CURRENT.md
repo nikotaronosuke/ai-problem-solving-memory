@@ -8,7 +8,7 @@ Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
 Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
-Implementation Phase 3 — Privacy / Security / Reliability: **NOT STARTED** (P3-01 next)
+Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 done; P3-02 next)
 
 ## Source of truth
 
@@ -298,7 +298,7 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1793 tests across 60 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1880 tests across 63 files.
 
 ## What exists now — Phase 2 end to end (P2-14)
 
@@ -316,6 +316,24 @@ Read this to know what you are building on.
 
 **Confirmed to discriminate.** Removing the Verification step makes VERIFIED unreachable in the real sequence and everything downstream fails — the scenario depends on the state it builds, not on assertions that would pass either way.
 
+## What exists now — The sanitization boundary (P3-01)
+
+`src/sanitization/`. No route, no table, no repository operation: this phase installs a checkpoint, not a feature.
+
+**Where it is.** A service never builds a repository — it is handed one, and `app/request-context.ts` is the only place either the ordinary or the transactional repository is constructed. Both are wrapped there, so the boundary is on the path of every write that exists and every write that will exist. An adapter written later gets its context by the same route and inherits the same checkpoint; there is no second way in.
+
+**Why a Proxy.** A hand-written wrapper listing twelve write methods goes stale the moment a thirteenth is added — it still compiles, still delegates, and silently stops covering it. Intercepting every call means a new operation is covered because nothing had to be updated for it to be. Reads are named; anything unnamed is treated as a write, so forgetting costs a redundant inspection rather than an unchecked write (D-112).
+
+**Nested input.** Nothing is checked by field name. The traversal descends through objects and arrays to every string, with the path it was found at — which is the only way an Environment snapshot, whose shape is whatever the caller composed, gets looked at at all (D-113).
+
+**It changes nothing.** The traversal rebuilds rather than mutates and preserves shape exactly: key order, array length, `null` as `null`, and keys whose value is `undefined` still present — absent and null are different instructions on a partial update. With the policy this phase ships, what goes in is what comes out, and all 1793 Phase 1/2 tests pass untouched.
+
+**The policy decides nothing.** `createPermissivePolicy()` keeps every string. There is no pattern list, no threshold and no guess: detection is P3-02 and refusal or redaction is P3-03, and a provisional secret check shipped as production logic would be worse than an honest absence (D-114).
+
+**A refusal carries no value.** `SanitizationRejectedError` names the field and the reason only. An error travels into logs and reports, and the one mechanism built to keep a secret out of storage must not be what copies it somewhere nobody checks. Transport maps it to the existing `INVALID_REQUEST`; no new error code, and unreachable with the current policy (D-115).
+
+**Tested by breaking it.** Unwrapping the transactional repository, making the traversal shallow, and misclassifying one write as a read each fail multiple guards, including the architecture test that asserts every handout is wrapped and the one that asserts a refused close leaves nothing behind.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -329,15 +347,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-Implementation Phase 3 — P3-01, Sanitization boundary.
+P3-02 — Secret detection.
 
-Not started. Phase 2's Definition of Done is satisfied in full: the Core JSON API works as one flow, transitions follow the matrix, Relation, UsageLog and ChangeLog exist, optimistic locking holds, the owner boundary holds, the API contract is fixed and published, and the Phase 2 E2E passes automatically.
+Not started.
 
 Notes for whoever picks this up:
-- The private Phase 3 breakdown is the source. P3-01 is a common sanitizer that every write passes through before anything is stored, so that secrets and PII are checked at the outer edge rather than in the domain
-- The completion condition is that *all* storage paths go through it. There are now many: Problem create and update, memory control, close and its review events, Event and Verification appends, Relation reasons, UsageLog reasons and results. A sanitizer that covers most of them covers none of them
-- ChangeLog already refuses to copy free text (D-090), which is a related instinct but not the same guarantee — that keeps text out of history, not out of the record
-- Do not start P3-02 onward before P3-01's Definition of Done is met
+- The boundary already exists and does not need to move. P3-02 is a `SanitizationPolicy` implementation, passed as the fourth argument to `createRequestContextService`; nothing about where the check happens should change
+- `inspect(value, field)` is given the path — `createEnvironment.0.snapshot.auth.token`, `appendEvent.0.summary` — because the same string means different things in different places. A long opaque value in `evidenceRef` is a reference; in `symptoms` it is probably a leaked credential
+- The private breakdown names the targets: API key, token, password, cookie, session token, OAuth secret, private key, `.env` values. It also requires that false positives have a defined treatment, which is a real part of the task rather than a footnote
+- P3-02 detects. Whether a detection refuses the write or stores a redacted form is P3-03's, and the outcome type already has `reject` and `replace` waiting for it
+- Identifiers are inspected too, deliberately. A policy that cannot tell a UUID from a token is the policy's bug, and the path is what it needs to tell them apart
 
 ## Core MVP milestone
 
