@@ -6,7 +6,9 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-13 done; P2-14 next)
+Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
+
+Implementation Phase 3 — Privacy / Security / Reliability: **NOT STARTED** (P3-01 next)
 
 ## Source of truth
 
@@ -296,7 +298,23 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1774 tests across 59 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1793 tests across 60 files.
+
+## What exists now — Phase 2 end to end (P2-14)
+
+`tests/e2e/phase2.e2e.test.ts`. 19 tests: 14 ordered steps of one scenario, then five refusals.
+
+**Real all the way down.** HTTP through `inject()`, Fastify validation, the real application services, an owner-scoped repository, PostgreSQL. Nothing substituted — the app is composed exactly as `src/index.ts` composes it, and the only thing the test controls is where the owner comes from. Raw SQL appears in owner setup and teardown and nowhere in the story.
+
+**Self-contained.** Two owners generated per run, never the developer's. Cleanup deletes only what those owners created, children first. It does not assume an empty database, and skips without `DATABASE_URL`.
+
+**What it adds over the endpoint suites.** Continuity, which is the one thing they cannot check: the id one call returns is the id the next accepts, the version handed back is the version the next write must present, and state written early is still there, unchanged, twelve steps later. Nothing is hard-coded between steps.
+
+**The scenario.** A sign-in callback failing only after deployment: project and environment, the problem started at INVESTIGATING/version 1, the five investigation events, FIX_CANDIDATE, a successful Verification that deliberately does not conclude anything, then VERIFIED with `ROOT_FIX` through the close route. Then a second project with a structurally similar problem, a cross-project `SIMILAR_TO` relation, a usage log recording the first as memory used, a memory control change, an ordinary edit, and a final re-read of everything from the database rather than from any earlier response.
+
+**The refusals.** VERIFIED without a check of its own (a FIX event and a persuasive summary are not evidence), a write from a stale version, one owner reaching another's problem by read, by write and sideways through a relation, a resent append with a different payload, and a self-relation.
+
+**Confirmed to discriminate.** Removing the Verification step makes VERIFIED unreachable in the real sequence and everything downstream fails — the scenario depends on the state it builds, not on assertions that would pass either way.
 
 ## What is deliberately absent
 
@@ -311,16 +329,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P2-14 — Phase 2 E2E.
+Implementation Phase 3 — P3-01, Sanitization boundary.
 
-Not started.
+Not started. Phase 2's Definition of Done is satisfied in full: the Core JSON API works as one flow, transitions follow the matrix, Relation, UsageLog and ChangeLog exist, optimistic locking holds, the owner boundary holds, the API contract is fixed and published, and the Phase 2 E2E passes automatically.
 
 Notes for whoever picks this up:
-- The required flow is in the private task breakdown: project and environment, problem, the event sequence, FIX_CANDIDATE, a successful verification, VERIFIED, a relation, a usage log, an edit and its change log
-- The negative cases are the point as much as the flow: VERIFIED without evidence, a stale version, a cross-owner reach, a duplicate `client_event_id`, an invalid relation
-- Every one of those is already covered per-endpoint. What E2E adds is that they hold *in sequence*, against one database, with state carried between steps — so a test that just re-runs the unit assertions in a row adds nothing
-- Phase 1 already has `tests/integration/phase1.integration.test.ts`, which runs one problem end to end through the repository. This is the same idea one layer up, through HTTP
-- Satisfying Phase 2's Definition of Done is what this closes out; do not start Phase 3
+- The private Phase 3 breakdown is the source. P3-01 is a common sanitizer that every write passes through before anything is stored, so that secrets and PII are checked at the outer edge rather than in the domain
+- The completion condition is that *all* storage paths go through it. There are now many: Problem create and update, memory control, close and its review events, Event and Verification appends, Relation reasons, UsageLog reasons and results. A sanitizer that covers most of them covers none of them
+- ChangeLog already refuses to copy free text (D-090), which is a related instinct but not the same guarantee — that keeps text out of history, not out of the record
+- Do not start P3-02 onward before P3-01's Definition of Done is met
 
 ## Core MVP milestone
 
