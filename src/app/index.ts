@@ -23,6 +23,11 @@ export {
   type UsageLogService,
 } from './usage-log-service.js';
 export { createChangeLogService, type ChangeLogService } from './change-log-service.js';
+export {
+  createMemoryControlService,
+  type MemoryControlCommand,
+  type MemoryControlService,
+} from './memory-control-service.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
 export {
   createProjectEnvironmentService,

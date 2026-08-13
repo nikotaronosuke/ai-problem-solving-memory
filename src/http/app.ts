@@ -29,6 +29,7 @@ import Fastify, {
 import type {
   AuthenticatedRequestContext,
   ChangeLogService,
+  MemoryControlService,
   EventService,
   HealthService,
   ProblemService,
@@ -48,6 +49,7 @@ import {
 import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './errors.js';
 import { registerChangeLogRoutes } from './change-log-routes.js';
 import { registerEventRoutes } from './event-routes.js';
+import { registerMemoryControlRoutes } from './memory-control-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
@@ -69,6 +71,7 @@ export interface MemoryHttpAppDependencies {
   readonly relationService: RelationService;
   readonly usageLogService: UsageLogService;
   readonly changeLogService: ChangeLogService;
+  readonly memoryControlService: MemoryControlService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -280,6 +283,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       registerRelationRoutes(scope, dependencies.relationService);
       registerUsageLogRoutes(scope, dependencies.usageLogService);
       registerChangeLogRoutes(scope, dependencies.changeLogService);
+      registerMemoryControlRoutes(scope, dependencies.memoryControlService);
 
       done();
     },

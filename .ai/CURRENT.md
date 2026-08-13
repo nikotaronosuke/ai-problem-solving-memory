@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-10 done; P2-11 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-11 done; P2-12 next)
 
 ## Source of truth
 
@@ -97,6 +97,22 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 **Ownership first.** Both routes confirm the problem is the caller's before anything else. The unique index is evaluated before the foreign key, so an unchecked append could otherwise replay an event to someone with no right to it — idempotency is never a way past owner scope. Listing another owner's problem is a 404, not an empty list.
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
+
+## What exists now — Memory controls (P2-11)
+
+| Method | Path |
+| --- | --- |
+| PATCH | `/v1/problems/:problem_id/memory-control` |
+
+**What it is for.** Deciding how a Problem should be *used* as memory, rather than editing what it says. Basic modification is still `PATCH /v1/problems/:problem_id`, which continues to accept these fields and `freshness` — nothing was taken away to make room.
+
+**Four independent axes.** `memory_read_enabled` (drawn on when memory is consulted automatically), `memory_write_enabled` (an assistant may add to it), `suppressed` (surface it less), and `freshness` via `invalidate`. No control implies another: turning off reads does not suppress, suppressing does not invalidate, invalidating disables nothing. Every integration test that sets one asserts the other three did not move.
+
+**`invalidate: true` only.** Sets `freshness` to `INVALID` and nothing else — not status, not `fix_kind`, not confidence. `invalidate: false` is refused, because a Problem that became `INVALID` may have been `CURRENT`, `STALE_UNKNOWN` or `SUPERSEDED` before, and restoring a guess would overwrite a real distinction. The route refuses `freshness` directly for the same reason; revalidating goes through the ordinary update.
+
+**Not authorisation.** Turning everything off leaves every read of the Problem working and the controls reachable, so nothing can be locked away by accident. Not enforced either: nothing retrieves memory automatically yet, and nothing can tell an owner's write from an assistant's, so no endpoint refuses on the strength of a flag.
+
+**One mutation path.** `applyProblemMutation` is shared with the ordinary update: same version column, same compare-and-swap, same transaction, one change log entry however many controls moved. No migration, no new column, no new repository operation.
 
 ## What exists now — ChangeLog (P2-10)
 
@@ -238,7 +254,7 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1497 tests across 54 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1588 tests across 56 files.
 
 ## What is deliberately absent
 
@@ -252,16 +268,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P2-11 — Memory control API.
+P2-12 — Problem close/review API.
 
 Not started.
 
 Notes for whoever picks this up:
-- Most of the storage already exists. `memory_read_enabled`, `memory_write_enabled` and `suppressed` are patchable today, independent of one another (D-056), and every change to them is now logged (D-087)
-- So the first question is what a dedicated surface adds over the generic patch. If the answer is "nothing", saying so is a legitimate outcome; if it is "a control has meanings the flags do not carry", name them before adding a route
-- Invalidation is the open one. `freshness` already has `INVALID` and `SUPERSEDED`, and `suppressed` is a separate axis. Whether "invalidate this memory" means one of those, both, or something new is a decision rather than a lookup
-- Complete deletion is in the specification but is not this task unless the breakdown says so. Note that P2-10 was built so it would not obstruct one: free text is described in the history, never copied (D-090)
-- Whatever is added, controls are per Problem and per owner, and the not-found unification applies as everywhere else
+- This is the task that finally writes `fix_kind`. Nothing sets it today, it is refused by every current surface, and P2-10 already decided how it appears in history if it moves (D-090)
+- `CLOSED_UNRESOLVED` and `VERIFIED` are already reachable through the transition route (D-067). So the first decision is whether closing is a separate surface or metadata recorded alongside that move — and the matrix and the VERIFIED gate should not be re-litigated either way
+- ROOT_FIX and WORKAROUND are a separate axis from status (D-024). Closing a Problem as verified says nothing about which of those the fix was, and the two should not start implying each other
+- Whatever is added is a Problem write, so it goes through `applyProblemMutation` (D-093) unless it needs a rule applied first, in which case the status transition service is the closer model
+- Review, if it means anything distinct from close, needs its own justification. Do not build both because the task title names both
 
 ## Core MVP milestone
 

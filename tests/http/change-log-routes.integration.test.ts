@@ -23,6 +23,7 @@ import type { FastifyInstance } from 'fastify';
 
 import {
   createChangeLogService,
+  createMemoryControlService,
   createEventService,
   createHealthService,
   createProblemService,
@@ -79,6 +80,7 @@ describe.skipIf(databaseUrl === undefined)('Problem change logging', () => {
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
       changeLogService: createChangeLogService(),
+      memoryControlService: createMemoryControlService(),
       logger: false,
     });
     appsCreated.push(app);

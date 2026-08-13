@@ -21,6 +21,7 @@ import {
   createRelationService,
   createUsageLogService,
   createChangeLogService,
+  createMemoryControlService,
   createRequestContextService,
   createVerificationService,
 } from './app/index.js';
@@ -44,6 +45,7 @@ const app = buildMemoryHttpApp({
   relationService: createRelationService(),
   usageLogService: createUsageLogService(),
   changeLogService: createChangeLogService(),
+  memoryControlService: createMemoryControlService(),
   logger: {
     level: env.logLevel,
     // Credentials must not survive into a log file, and the failure is silent

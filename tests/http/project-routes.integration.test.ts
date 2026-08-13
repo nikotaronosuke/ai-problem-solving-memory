@@ -23,6 +23,7 @@ import {
   createRelationService,
   createUsageLogService,
   createChangeLogService,
+  createMemoryControlService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -68,6 +69,7 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
       changeLogService: createChangeLogService(),
+      memoryControlService: createMemoryControlService(),
       logger: false,
     });
     appsCreated.push(app);

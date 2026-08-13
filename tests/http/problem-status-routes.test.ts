@@ -23,6 +23,7 @@ import {
   createRelationService,
   createUsageLogService,
   createChangeLogService,
+  createMemoryControlService,
   createVerificationService,
   InvalidApplicationInputError,
   RequestContextUnavailableError,
@@ -113,6 +114,7 @@ function buildApp(service: ProblemStatusService, authenticated = true) {
     relationService: createRelationService(),
     usageLogService: createUsageLogService(),
     changeLogService: createChangeLogService(),
+    memoryControlService: createMemoryControlService(),
     logger: false,
   });
 }

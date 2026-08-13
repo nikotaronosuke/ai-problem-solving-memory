@@ -129,6 +129,7 @@ under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 | GET    | `/v1/problems/:problem_id/events`             |
 | POST   | `/v1/problems/:problem_id/verifications`      |
 | GET    | `/v1/problems/:problem_id/verifications`      |
+| PATCH  | `/v1/problems/:problem_id/memory-control`     |
 | POST   | `/v1/problems/:problem_id/status-transitions` |
 | POST   | `/v1/problems/:problem_id/relations`          |
 | GET    | `/v1/problems/:problem_id/relations`          |
@@ -459,3 +460,51 @@ mutations are tracked: creating a Problem, appending an event or verification,
 linking a relation and recording usage all leave the history untouched.
 
 There is no update or delete for an entry, and no way to write one directly.
+
+Memory controls decide how a Problem should be used as memory, rather than
+what it says. `PATCH /v1/problems/:problem_id/memory-control` carries the same
+`expected_version` and `changed_by` as any other Problem write, plus at least
+one control:
+
+```json
+{
+  "expected_version": 4,
+  "changed_by": "claude-code",
+  "memory_read_enabled": false,
+  "suppressed": true,
+  "invalidate": true
+}
+```
+
+Three independent axes, and they stay independent. `memory_read_enabled` is
+whether this Problem should be drawn on when memory is consulted
+automatically; `memory_write_enabled` whether an assistant should add to it on
+its own; `suppressed` means surface it less, saying nothing about whether it
+still holds. `invalidate: true` sets `freshness` to `INVALID` — the record no
+longer holds as a basis for judgement — and nothing else. Turning off reads
+does not suppress, suppressing does not invalidate, and invalidating disables
+nothing: a retrieval layer will want to treat "do not read this" and "this
+turned out to be wrong" differently.
+
+`invalidate` accepts only `true`. There is no un-invalidate, because it could
+not know what to restore: a Problem that became `INVALID` may have been
+`CURRENT` before it, or `STALE_UNKNOWN`, or `SUPERSEDED`. Saying a memory
+holds again means saying which of those it is, through the ordinary update —
+which is also why this route refuses `freshness` directly.
+
+These controls are not authorisation. Turning everything off leaves every read
+of your own Problem working, and leaves the controls reachable, so nothing can
+be locked away by accident. They are not enforced yet either: nothing
+retrieves memory automatically, and nothing can tell your own write from an
+assistant's, so no endpoint starts refusing on the strength of a flag.
+Recording the intent is what lets the layer that can tell the difference
+honour it later.
+
+Modifying a Problem's content is still `PATCH /v1/problems/:problem_id`, which
+also continues to accept these fields and `freshness`. The control route is a
+surface for deliberate decisions about use; it took nothing away from the
+ordinary update.
+
+A control change is a Problem write like any other: same version column, same
+compare-and-swap, same transaction, and one change log entry however many
+controls moved at once.
