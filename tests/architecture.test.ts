@@ -191,7 +191,7 @@ describe('transport layer', () => {
     // here would make PostgreSQL part of the HTTP contract.
     const offenders = modules
       .filter((module) =>
-        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|DuplicateClientEventIdError|EmptyProjectUpdateError)\b/.test(
+        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|DuplicateClientEventIdError|EmptyProjectUpdateError|EmptyProblemUpdateError)\b/.test(
           module.source,
         ),
       )

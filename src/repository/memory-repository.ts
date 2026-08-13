@@ -34,8 +34,11 @@ import { appendEvent, listEvents, type AppendEventInput, type EventRecord } from
 import {
   createProblem,
   getProblem,
+  listProblems,
+  updateProblem,
   type CreateProblemInput,
   type ProblemRecord,
+  type UpdateProblemInput,
 } from '../db/problems.js';
 import {
   createProject,
@@ -83,6 +86,12 @@ export interface MemoryRepository {
 
   createProblem(input: CreateProblemInput): Promise<ProblemRecord>;
   getProblem(problemId: ProblemId): Promise<ProblemRecord | undefined>;
+  listProblems(projectId: ProjectId): Promise<ProblemRecord[]>;
+  /** Undefined when the problem is not this owner's, as with `getProblem`. */
+  updateProblem(
+    problemId: ProblemId,
+    input: UpdateProblemInput,
+  ): Promise<ProblemRecord | undefined>;
 
   appendEvent(input: AppendEventInput): Promise<EventRecord>;
   listEvents(problemId: ProblemId): Promise<EventRecord[]>;
@@ -120,6 +129,8 @@ export function createMemoryRepository(
 
     createProblem: (input) => createProblem(executor, context, input),
     getProblem: (problemId) => getProblem(executor, context, problemId),
+    listProblems: (projectId) => listProblems(executor, context, projectId),
+    updateProblem: (problemId, input) => updateProblem(executor, context, problemId, input),
 
     appendEvent: (input) => appendEvent(executor, context, input),
     listEvents: (problemId) => listEvents(executor, context, problemId),
