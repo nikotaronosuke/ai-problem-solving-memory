@@ -47,7 +47,7 @@ import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
 import {
-  formatFieldPath,
+  describeInspectionPath,
   type SanitizationPolicy,
   type SanitizationSite,
 } from '../../src/sanitization/index.js';
@@ -86,10 +86,9 @@ interface Recorder extends SanitizationPolicy {
 function recorder(): Recorder {
   const seen: Sighting[] = [];
   return {
-    name: 'recording',
     seen,
     inspect(text: string, at: SanitizationSite) {
-      seen.push({ text, at: formatFieldPath(at.path), kind: at.kind });
+      seen.push({ text, at: describeInspectionPath(at.path), kind: at.kind });
       return { kind: 'keep' };
     },
     saw(marker) {
@@ -365,9 +364,53 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
     /** Refuses any string containing the marker, keeps everything else. */
     function refusing(marker: string): SanitizationPolicy {
       return {
-        name: 'refusing',
         inspect: (text) => (text.includes(marker) ? { kind: 'reject' } : { kind: 'keep' }),
       };
+    }
+
+    /**
+     * An app whose real logger is captured.
+     *
+     * A refusal is written by pino exactly as it would be in production, so
+     * what these tests read is the log line an operator would actually get.
+     */
+    async function loggingApp(
+      policy: SanitizationPolicy,
+      lines: string[],
+    ): Promise<FastifyInstance> {
+      const ownerId = generateOwnerId();
+      await insertOwnerIfAbsent(pool, ownerId);
+      ownersCreated.push(ownerId);
+
+      const app = buildMemoryHttpApp({
+        healthService: createHealthService(pool),
+        requestContextService: createRequestContextService(
+          pool,
+          createTransactionRunner(pool),
+          { [MEMORY_OWNER_ID_VAR]: ownerId },
+          policy,
+        ),
+        projectEnvironmentService: createProjectEnvironmentService(),
+        problemService: createProblemService(),
+        problemStatusService: createProblemStatusService(),
+        eventService: createEventService(),
+        verificationService: createVerificationService(),
+        relationService: createRelationService(),
+        usageLogService: createUsageLogService(),
+        changeLogService: createChangeLogService(),
+        memoryControlService: createMemoryControlService(),
+        problemCloseService: createProblemCloseService(),
+        logger: {
+          level: 'trace',
+          stream: {
+            write(line: string) {
+              lines.push(line);
+            },
+          },
+        },
+      });
+      appsCreated.push(app);
+      return app;
     }
 
     async function fixture(policy: SanitizationPolicy) {
@@ -538,40 +581,9 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
       const marker = 'refuse-me-Gz7';
       const lines: string[] = [];
 
-      const ownerId = generateOwnerId();
-      await insertOwnerIfAbsent(pool, ownerId);
-      ownersCreated.push(ownerId);
-
       // A real logger, captured. This is where a locator built from raw
       // caller keys would deposit the secret it had just refused to store.
-      const app = buildMemoryHttpApp({
-        healthService: createHealthService(pool),
-        requestContextService: createRequestContextService(
-          pool,
-          createTransactionRunner(pool),
-          { [MEMORY_OWNER_ID_VAR]: ownerId },
-          refusing(marker),
-        ),
-        projectEnvironmentService: createProjectEnvironmentService(),
-        problemService: createProblemService(),
-        problemStatusService: createProblemStatusService(),
-        eventService: createEventService(),
-        verificationService: createVerificationService(),
-        relationService: createRelationService(),
-        usageLogService: createUsageLogService(),
-        changeLogService: createChangeLogService(),
-        memoryControlService: createMemoryControlService(),
-        problemCloseService: createProblemCloseService(),
-        logger: {
-          level: 'trace',
-          stream: {
-            write(line: string) {
-              lines.push(line);
-            },
-          },
-        },
-      });
-      appsCreated.push(app);
+      const app = await loggingApp(refusing(marker), lines);
 
       const project = (
         await app.inject({ method: 'POST', url: '/v1/projects', payload: { project_name: 'ok' } })
@@ -589,54 +601,25 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
       expect(logged).toContain('sanitization boundary');
       // And it must not have logged the thing it refused.
       expect(logged).not.toContain(marker);
-      // What it may say instead: where, which kind, and which policy.
+      // What it may say instead: the shape of where it happened, and nothing
+      // else. No key names, and no policy-supplied text of any kind.
       expect(logged).toContain('<redacted>');
-      expect(logged).toContain('refusing');
     });
 
     it('keeps a refused value out of the operational log', async () => {
       const marker = 'refuse-me-Hz8';
       const lines: string[] = [];
 
-      const ownerId = generateOwnerId();
-      await insertOwnerIfAbsent(pool, ownerId);
-      ownersCreated.push(ownerId);
-
-      const app = buildMemoryHttpApp({
-        healthService: createHealthService(pool),
-        requestContextService: createRequestContextService(
-          pool,
-          createTransactionRunner(pool),
-          { [MEMORY_OWNER_ID_VAR]: ownerId },
-          // A policy that would hand back the value if it could. It cannot:
-          // a refusal has no field to put it in, and the boundary reads
-          // nothing from an outcome but its kind.
-          {
-            name: 'refusing',
-            inspect: (text: string) =>
-              text.includes(marker) ? { kind: 'reject', reason: text } : { kind: 'keep' },
-          } as unknown as SanitizationPolicy,
-        ),
-        projectEnvironmentService: createProjectEnvironmentService(),
-        problemService: createProblemService(),
-        problemStatusService: createProblemStatusService(),
-        eventService: createEventService(),
-        verificationService: createVerificationService(),
-        relationService: createRelationService(),
-        usageLogService: createUsageLogService(),
-        changeLogService: createChangeLogService(),
-        memoryControlService: createMemoryControlService(),
-        problemCloseService: createProblemCloseService(),
-        logger: {
-          level: 'trace',
-          stream: {
-            write(line: string) {
-              lines.push(line);
-            },
-          },
-        },
-      });
-      appsCreated.push(app);
+      // A policy that would hand back the value if it could. It cannot: a
+      // refusal has no field to put it in, and the boundary reads nothing
+      // from an outcome but its kind.
+      const app = await loggingApp(
+        {
+          inspect: (text: string) =>
+            text.includes(marker) ? { kind: 'reject', reason: text } : { kind: 'keep' },
+        } as unknown as SanitizationPolicy,
+        lines,
+      );
 
       const refused = await app.inject({
         method: 'POST',
@@ -647,6 +630,92 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
 
       const logged = lines.join('\n');
       expect(logged).toContain('sanitization boundary');
+      expect(logged).not.toContain(marker);
+    });
+
+    it('keeps a kept ancestor key out of the log when a secret beneath it is refused', async () => {
+      // The case the second review found. A secret detector keeps an email
+      // address, correctly — and "may be stored" is not "may be written to a
+      // log file". An earlier version rendered approved keys into the locator
+      // on exactly that mistaken equivalence.
+      const pii = 'ancestor-key-Jk9Y@example.com';
+      const secret = 'refuse-me-Kl0Z';
+      const lines: string[] = [];
+      const app = await loggingApp(refusing(secret), lines);
+
+      const project = (
+        await app.inject({ method: 'POST', url: '/v1/projects', payload: { project_name: 'ok' } })
+      ).json<{ project_id: string }>();
+
+      const refused = await app.inject({
+        method: 'POST',
+        url: `/v1/projects/${project.project_id}/environments`,
+        payload: { snapshot: { [pii]: { api_key: secret } } },
+      });
+
+      expect(refused.statusCode).toBe(400);
+      expect(refused.body).not.toContain(pii);
+      expect(refused.body).not.toContain(secret);
+
+      const logged = lines.join('\n');
+      expect(logged).toContain('sanitization boundary');
+      expect(logged).not.toContain(secret);
+      // The ancestor key the policy kept. It is caller-written text, and the
+      // policy keeping it said nothing about logging it.
+      expect(logged).not.toContain(pii);
+      expect(logged).not.toContain('example.com');
+    });
+
+    it('keeps a policy’s own name out of the log', async () => {
+      const marker = 'policy-name-Mn1A-secret';
+      const lines: string[] = [];
+      // A policy has no name field; this is one forced past the type, which is
+      // all a plain JavaScript adapter would have to do.
+      const named = {
+        name: marker,
+        inspect: (text: string) =>
+          text.includes('refuse-me-Op2B') ? { kind: 'reject' } : { kind: 'keep' },
+      } as unknown as SanitizationPolicy;
+      const app = await loggingApp(named, lines);
+
+      const refused = await app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'a project named refuse-me-Op2B' },
+      });
+
+      expect(refused.statusCode).toBe(400);
+      const logged = lines.join('\n');
+      expect(logged).toContain('sanitization boundary');
+      expect(logged).not.toContain(marker);
+    });
+
+    it('keeps a policy’s own name out of the log on an unsupported outcome', async () => {
+      // Not caught anywhere, so the generic handler logs the whole error,
+      // message and stack included. That makes it the more dangerous of the
+      // two paths, not the less.
+      const marker = 'policy-name-Qr3C-secret';
+      const lines: string[] = [];
+      const renaming = {
+        name: marker,
+        inspect: (_text: string, at: { kind: string }) =>
+          at.kind === 'key' ? { kind: 'replace', value: 'renamed' } : { kind: 'keep' },
+      } as unknown as SanitizationPolicy;
+      const app = await loggingApp(renaming, lines);
+
+      const failed = await app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'anything' },
+      });
+
+      // A programming error, reported as one, with nothing revealed.
+      expect(failed.statusCode).toBe(500);
+      expect(failed.json<{ error: { code: string } }>().error.code).toBe('INTERNAL_ERROR');
+      expect(failed.body).not.toContain(marker);
+
+      const logged = lines.join('\n');
+      expect(logged).toContain('unhandled error');
       expect(logged).not.toContain(marker);
     });
 

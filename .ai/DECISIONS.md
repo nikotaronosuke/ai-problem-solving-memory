@@ -1017,7 +1017,7 @@ That was a real way around it. An Environment snapshot is `additionalProperties:
 
 The second half of the problem was subtler and is the reason the path type changed. A raw caller key was being used as a path segment, and the path became `SanitizationRejectedError.field`, which transport logged. So a secret in a key would have been refused and then written to the operational log by the mechanism that refused it — the boundary leaking precisely what it existed to stop.
 
-Rendering the whole path as `<redacted>` would have fixed that and made every log line useless. What is done instead is ordering: a key is inspected *before* it is appended to the path and before its value is descended into. Every `key` segment in any path has therefore already been approved by the policy, so naming it reveals nothing the policy would have refused, and a refused key never enters a path at all — it is reported as a redacted step against its parent. The locator is safe by construction rather than by anyone remembering to check, which is the only kind of safe worth relying on here.
+The first attempt at this kept the ordering — a key is inspected before it is appended to the path and before its value is descended into, so a refused key never enters a path at all — and then rendered the *approved* keys, reasoning that the policy had cleared them. **That reasoning was wrong and is superseded by D-118.** The ordering is still there and still worth having; what changed is that no key is rendered outward, approved or not.
 
 Renaming a key is refused outright. Replacing a key is not the same act as replacing a value: the replacement can collide with a key already present and silently merge two fields into one. What should happen then is a genuine design question and belongs with P3-03's redaction rules, so the boundary raises `UnsupportedSanitizationOutcomeError` rather than picking whichever behaviour was easiest to implement.
 
@@ -1029,6 +1029,34 @@ The failure mode is obvious once stated: the person writing a detector has the o
 
 `reject` now carries nothing. TypeScript refuses the version written with an explicit return type, and — the part that does not depend on how someone happened to write their function — the boundary reads `kind` and `value` from an outcome and nothing else, so anything a policy attaches regardless goes nowhere. A test drives a policy that deliberately returns the secret as a reason and asserts it appears in no message, property, serialisation, stack, response or log line.
 
-What an operator gets instead is the locator, whether it was a key or a value, and the policy's name — fixed when the policy is built rather than chosen per value, so it cannot carry one. That is enough to find the request and the rule that stopped it without reproducing what was stopped.
+What an operator gets instead is the locator and whether it was a key or a value. This decision also claimed the policy's *name* was safe to log because it was fixed at construction rather than chosen per value; **that was wrong for the same reason and is superseded by D-119.**
 
 When P3-02 has defined its detection categories, a closed union of codes can be added here deliberately. A fixed set of identifiers is safe in a way that free text is not, and the difference is exactly that nobody can write a value into an enum.
+
+## D-118 — Persistence-safe is not log-safe (P3-01, after second review)
+
+D-116 made the boundary inspect object keys, and then rendered the approved ones into the locator that goes into errors and the operational log. The reasoning was that a key the policy kept is a key the policy cleared. That reasoning was wrong, and the second review found it.
+
+A policy is a *secret detector*. It keeps an email address, a customer name, a file path, an internal hostname — every one of those correctly, because none of them is a secret. What it has decided is that they may be **persisted**, into a record the owner controls, can list, can invalidate and will be able to delete. It has decided nothing about whether they may be **copied into an operational log**, which is a different store with a different lifetime, different access and no delete path yet.
+
+Concretely, `{"customer@example.com": {"api_key": "<secret>"}}` refused at the value would have logged the address of a real customer, from the mechanism whose entire job is to keep sensitive data out of places it should not be.
+
+So there are now two renderings and they are named for what they are. `describeInspectionPath` keeps the raw keys and is documented as not safe to log; it exists because detection genuinely needs the context — `snapshot.auth.token` is what tells P3-02 how to read the value beneath it. `formatSafeLocator` drops every key name and is the only form that reaches an error or a log.
+
+Keys are dropped unconditionally rather than by any rule about which ones look safe. Any rule would be a classifier, classifiers are wrong sometimes, and the failure is silent and permanent. The boundary can distinguish what it chose itself — the operation, the argument position, array indices — from what arrived in a request, and that is the only distinction it makes.
+
+The cost is accepted, not waved away. `createEnvironment[0].<key>.<key>.<redacted>` tells an operator the operation, the depth, the array positions and whether a key or a value was refused, and not which field. Finding the rest means the request id and a local reproduction. That is a worse debugging experience than a field name would be, and there is no version of this that is both maximally helpful and safe.
+
+## D-119 — A policy has no name, because a name is free text too (P3-01, after second review)
+
+D-117 removed the free-text `reason` from a refusal, on the grounds that free text written by someone holding the offending value tends to contain the offending value. It then left `SanitizationPolicy.name` in place and put it into every refusal and every log line, arguing that a name fixed at construction is not per-value and therefore safe.
+
+That distinction does not hold. Fixed-at-construction free text is still free text: it comes from policy configuration, a place where a credential can end up by exactly the same kinds of mistake, and `{ name: process.env.SOMETHING }` is a plausible line of code. The route into the log was the one D-117 had just closed, reopened one field along.
+
+`SanitizationPolicy` now has a single member, `inspect`. There is no name, and nothing else the boundary reads. A test asserts the shipped policy has exactly one key, so adding a field is a decision someone has to make on purpose.
+
+Which policy is configured is a real operational question, and it is a deployment fact rather than a property of any failure. If it needs to be visible it belongs in a line the composition root writes at startup, where it is logged once, by our code, with a value our code chose.
+
+`UnsupportedSanitizationOutcomeError` mattered more than the rejection path here, not less. Nothing catches it, so the generic handler logs the whole error — message and stack — and anything in its message is in the log by definition. Its `detail` is a literal from the boundary's own call sites, and it carries no policy text at all.
+
+The pattern across D-115, D-117 and D-119 is worth stating plainly, because it recurred twice: every time this design left a string that someone outside the boundary could choose, that string found its way into an error and then into a log. The rule that survives is that a refusal is described entirely by values the boundary itself produced.
