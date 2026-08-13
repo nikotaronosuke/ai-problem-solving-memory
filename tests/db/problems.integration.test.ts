@@ -173,7 +173,8 @@ describe.skipIf(databaseUrl === undefined)('problems', () => {
           where t.typtype = 'd' and n.nspname = 'public'`,
       );
 
-      expect(domains.rows[0]?.count).toBe('6');
+      // Seven since P2-08 added `relation_type`.
+      expect(domains.rows[0]?.count).toBe('7');
     });
   });
 

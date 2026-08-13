@@ -64,6 +64,14 @@ export { ProblemNotAvailableError } from './errors.js';
 // is offered.
 export { appendEvent, listEvents, type AppendEventInput, type EventRecord } from './events.js';
 
+// Create and list only. There is no update or delete path for a link.
+export {
+  createRelation,
+  listRelations,
+  type CreateRelationInput,
+  type RelationRecord,
+} from './relations.js';
+
 // Verifications attach to a Problem, not to an Event, and are append-only too.
 export {
   appendVerification,

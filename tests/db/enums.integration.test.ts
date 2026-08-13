@@ -66,17 +66,26 @@ describe.skipIf(databaseUrl === undefined)('domain enums in the database', () =>
     expect(domains.sort()).toEqual(ENUM_DOMAIN_BINDINGS.map((b) => b.domainName).sort());
   });
 
-  it('introduces no table of its own, since it defines value sets only', async () => {
+  it('holds exactly the tables the migrations create, and no others', async () => {
     const result = await pool.query<{ table_name: string }>(
       'select table_name from information_schema.tables where table_schema = $1',
       [ENUM_DOMAIN_SCHEMA],
     );
 
-    const tables = result.rows.map((row) => row.table_name);
-
-    // Tables the value sets will eventually be used by. `problems`, `events`
-    // and `verifications` already do, as of P1-08 through P1-10.
-    expect(tables).not.toContain('relations');
+    // The value sets are defined by their own migration and belong to no
+    // table; these are the tables that use them. Listed exhaustively so a
+    // table appearing by accident is visible — which is the check this
+    // replaces, from when `relations` was the example of one that did not
+    // exist yet.
+    expect(result.rows.map((row) => row.table_name).sort()).toEqual([
+      'environments',
+      'events',
+      'owners',
+      'problems',
+      'projects',
+      'relations',
+      'verifications',
+    ]);
   });
 
   describe.each(ENUM_DOMAIN_BINDINGS)('$domainName', (binding) => {
