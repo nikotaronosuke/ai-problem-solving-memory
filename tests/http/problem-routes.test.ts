@@ -21,6 +21,7 @@ import {
   createUsageLogService,
   createChangeLogService,
   createMemoryControlService,
+  createProblemCloseService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type CreateProblemCommand,
@@ -119,6 +120,7 @@ function buildApp(service: ProblemService, authenticated = true) {
     usageLogService: createUsageLogService(),
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
+    problemCloseService: createProblemCloseService(),
     logger: false,
   });
 }

@@ -59,6 +59,29 @@ export const TERMINAL_PROBLEM_STATUSES: readonly ProblemStatus[] = [
 ];
 
 /**
+ * The statuses a Problem is concluded or set aside in.
+ *
+ * The three a close records: confirmed, stopped without resolution, or put
+ * down for now. `INVESTIGATING` and `FIX_CANDIDATE` are working states, and
+ * moving between them is the ordinary transition rather than a conclusion —
+ * so the close surface accepts these and nothing else.
+ *
+ * This is which endings exist, not which are reachable. Whether a particular
+ * Problem may reach one is still `decideTransition`'s to say, and closing
+ * does not bypass it.
+ */
+export const CONCLUSION_PROBLEM_STATUSES: readonly ProblemStatus[] = [
+  'VERIFIED',
+  'PAUSED',
+  'CLOSED_UNRESOLVED',
+];
+
+/** Whether this status is one a Problem is concluded or set aside in. */
+export function isConclusionProblemStatus(status: ProblemStatus): boolean {
+  return CONCLUSION_PROBLEM_STATUSES.includes(status);
+}
+
+/**
  * The status that has to be earned with evidence.
  *
  * Asked rather than assumed, so a caller knows whether to go looking for a

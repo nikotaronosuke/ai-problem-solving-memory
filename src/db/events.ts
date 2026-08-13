@@ -22,16 +22,10 @@ import { generateEventId, toEventSummary, type EventId } from '../domain/event.j
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 import { normaliseOptionalText } from '../domain/text.js';
-import {
-  FOREIGN_KEY_VIOLATION,
-  ProblemNotAvailableError,
-  UNIQUE_VIOLATION,
-  violatesConstraint,
-} from './errors.js';
+import { FOREIGN_KEY_VIOLATION, ProblemNotAvailableError, violatesConstraint } from './errors.js';
 import type { DatabaseExecutor } from './executor.js';
 
 const OWNER_PROBLEM_FK = 'events_owner_id_problem_id_fkey';
-const CLIENT_EVENT_ID_KEY = 'events_owner_id_client_event_id_key';
 
 export interface EventRecord {
   readonly eventId: EventId;
@@ -135,13 +129,15 @@ async function findEventByClientEventId(
  * The insert is attempted first and the unique index on
  * `(owner_id, client_event_id)` is what decides. Reading before writing would
  * leave a window in which two concurrent attempts both find nothing and both
- * insert; here one of them loses to the constraint and reads back the winner,
- * so concurrent retries still produce exactly one event.
+ * insert; here the loser's insert simply writes nothing and reads back the
+ * winner, so concurrent retries still produce exactly one event.
  *
- * One consequence of that shape: the failed insert aborts its transaction. It
- * works because each `executor.query` is its own implicit transaction. If this
- * is ever called inside an explicit one, the insert will need a savepoint —
- * the constraint stays the arbiter either way.
+ * `on conflict do nothing` rather than catching the violation, so that a
+ * retry does not abort an enclosing transaction — the close path appends
+ * several events inside one, and an aborted transaction would take the whole
+ * conclusion down with it. Under read committed, a conflicting insert waits
+ * for the other writer to finish and the following select then takes a fresh
+ * snapshot, so the original is visible by the time it is read.
  *
  * Whether the problem exists is checked above this, before the append. The
  * unique index is evaluated before the foreign key, so an unknown problem plus
@@ -168,6 +164,7 @@ export async function appendEvent(
               (event_id, owner_id, problem_id, event_type, summary, result, reason,
                source_ai, evidence_ref, client_event_id)
             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       on conflict (owner_id, client_event_id) do nothing
          returning ${EVENT_COLUMNS}`,
       [
         eventId,
@@ -185,29 +182,28 @@ export async function appendEvent(
   } catch (error) {
     if (violatesConstraint(error, FOREIGN_KEY_VIOLATION, OWNER_PROBLEM_FK)) {
       // The (owner, problem) pair does not exist. Whether the problem is
-      // unknown or someone else's is not distinguished, by design.
+      // unknown or someone else's is not distinguished, by design. The
+      // conflict clause names one index, so this still raises.
       throw new ProblemNotAvailableError();
-    }
-    if (violatesConstraint(error, UNIQUE_VIOLATION, CLIENT_EVENT_ID_KEY)) {
-      // The same write, sent again. Return what it produced the first time.
-      const original = await findEventByClientEventId(executor, context, input.clientEventId);
-      if (original === undefined) {
-        // The constraint fired, so the row was there a moment ago. Events have
-        // no delete path, so this should be unreachable; saying so beats
-        // returning something invented.
-        throw new Error('Event conflicted on client_event_id but could not be read back.');
-      }
-      return original;
     }
     throw error;
   }
 
   const row = inserted.rows[0];
-  if (row === undefined) {
-    throw new Error('Event insert returned no row.');
+  if (row !== undefined) {
+    return toRecord(row);
   }
 
-  return toRecord(row);
+  // Nothing was written, so this key was already used: the same write, sent
+  // again. Return what it produced the first time.
+  const original = await findEventByClientEventId(executor, context, input.clientEventId);
+  if (original === undefined) {
+    // The conflict fired, so the row was there a moment ago. Events have no
+    // delete path, so this should be unreachable; saying so beats returning
+    // something invented.
+    throw new Error('Event conflicted on client_event_id but could not be read back.');
+  }
+  return original;
 }
 
 /**

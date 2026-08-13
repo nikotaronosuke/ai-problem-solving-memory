@@ -144,12 +144,25 @@ The controls are not authorisation and are not enforced yet: turning everything 
 
 Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 22 repository operations.
 
-### P2-12 — NEXT
+### P2-12 — DONE
 Problem close/review API.
 
-Depends on P2-04, P2-05 and P2-06, all satisfied. See the private task breakdown for its Definition of Done.
+One route: `POST /v1/problems/:problem_id/close`, taking `expected_version`, `changed_by`, a `target_status` limited to the three conclusions, an optional `fix_kind` and four optional review summaries. No migration and no new column.
 
-`fix_kind` is the field it finally writes — nothing sets it today, and P2-10 already decided how it appears in history if it moves (D-090). Note that the transition matrix and the VERIFIED gate are P2-06's and should not be re-litigated here; closing is about what a caller records *about* an ending, not about which endings are reachable. `CLOSED_UNRESOLVED` is already reachable through the transition route, so decide deliberately whether close is a separate surface or metadata attached to that move.
+It was made a separate surface rather than metadata on a transition (D-097). The transition matrix and the `VERIFIED` gate were not re-litigated: close calls the same domain decision and the same evidence check, so a high-level surface cannot become a way around either (D-098). Working statuses are refused here.
+
+`fix_kind` is finally written, here and nowhere else in this phase — absent leaves it, `null` clears it, and it stays a separate axis from status in both directions (D-099). The review summaries become ordinary Events in the existing vocabulary rather than a Review resource or new event types (D-100). Status, fix kind, the Events and the change log entry commit together in one transaction and one version step, verified by breaking each write in turn (D-101).
+
+Two things surfaced while doing it. `appendEvent` used to recover from a duplicate `client_event_id` by catching the error and re-reading, which aborts an enclosing transaction; it now uses `on conflict … do nothing returning`, with P2-04's idempotency and concurrency tests re-run against the change. And Events written in one transaction share a `created_at`, so the four review Events have no order among themselves — accepted rather than fixed, since each carries its own type (D-102).
+
+Schema counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT. Repository grew from twenty-two operations to twenty-three: `updateProblemConclusion`.
+
+### P2-13 — NEXT
+API contract / schema documentation.
+
+Depends on every route existing, which it now does. See the private task breakdown for its Definition of Done.
+
+Every route already declares request and response schemas, so the material exists; what is undecided is whether a document is generated from them or written alongside them, and nothing generates one today. Whatever is produced must not become a second source of truth that can drift from the schemas the server actually enforces.
 
 ## BLOCKED
 

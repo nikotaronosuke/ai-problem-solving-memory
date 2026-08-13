@@ -28,6 +28,11 @@ export {
   type MemoryControlCommand,
   type MemoryControlService,
 } from './memory-control-service.js';
+export {
+  createProblemCloseService,
+  type CloseProblemCommand,
+  type ProblemCloseService,
+} from './problem-close-service.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
 export {
   createProjectEnvironmentService,
