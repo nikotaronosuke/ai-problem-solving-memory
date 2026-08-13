@@ -344,7 +344,8 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
-- No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
+- No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no search, embedding or retrieval, no AI adapter, no UI
+- No secret detection and no redaction or reject policy. The sanitization boundary exists (P3-01) and every write goes through it, but the policy it ships keeps every string: nothing is detected, nothing is refused and nothing is redacted yet. Detection is P3-02 and the reject/redact policy is P3-03
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
 - No client SDK or codegen, and no authentication scheme. The document declares no security scheme because no client credential contract exists yet
@@ -357,7 +358,10 @@ Not started.
 
 Notes for whoever picks this up:
 - The boundary already exists and does not need to move. P3-02 is a `SanitizationPolicy` implementation, passed as the fourth argument to `createRequestContextService`; nothing about where the check happens should change
-- `inspect(value, field)` is given the path — `createEnvironment.0.snapshot.auth.token`, `appendEvent.0.summary` — because the same string means different things in different places. A long opaque value in `evidenceRef` is a reference; in `symptoms` it is probably a leaked credential
+- The interface is `inspect(text, at: SanitizationSite)`. `at.kind` is `'key'` or `'value'`, because keys are inspected too — a snapshot key is caller-written text on its way into storage like any other. `at.path` is a structured `FieldPath` of segments, not a string
+- That path carries raw caller keys on purpose: the same string means different things in different places, and `createEnvironment[0].snapshot.auth.token` is what tells a detector how to read the value beneath it. A long opaque value in `evidenceRef` is a reference; in `symptoms` it is probably a leaked credential
+- The raw path is detection context and is **not** log-safe. Render it with `describeInspectionPath` only in-process; anything reaching an error or a log goes through `formatSafeLocator`, which drops every caller key. A policy keeping a string means it may be persisted, never that it may be logged (D-118)
+- A policy has no `name` and a refusal carries no reason. Both were removed after review because free text from a policy kept reaching the operational log (D-117, D-119). If P3-02 needs to say which detector fired, add a closed union of codes to the outcome deliberately — a fixed set of identifiers, never prose
 - The private breakdown names the targets: API key, token, password, cookie, session token, OAuth secret, private key, `.env` values. It also requires that false positives have a defined treatment, which is a real part of the task rather than a footnote
 - P3-02 detects. Whether a detection refuses the write or stores a redacted form is P3-03's, and the outcome type already has `reject` and `replace` waiting for it
 - Identifiers are inspected too, deliberately. A policy that cannot tell a UUID from a token is the policy's bug, and the path is what it needs to tell them apart

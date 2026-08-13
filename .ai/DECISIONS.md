@@ -997,7 +997,9 @@ P3-01 is the checkpoint; P3-02 decides what a secret is and P3-03 decides what t
 
 It also makes the installation verifiable. With a policy that changes nothing, every Phase 1 and Phase 2 test passing unaltered is the evidence that a mandatory checkpoint was placed in front of every write without altering any of them.
 
-The interface is deliberately narrow. A policy is shown one string and its path, and answers keep, replace or reject. It is not given the record, cannot reach the database, and cannot decide whether a write happens. Keeping it that small is what lets the boundary guarantee the policy was consulted for every value — there is nothing else it could have needed.
+The interface is deliberately narrow. A policy is shown one string and where it sits — `inspect(text, at)`, where `at` is a `SanitizationSite` carrying a structured path and whether this is a key or a value — and answers keep, replace or reject. It is not given the record, cannot reach the database, and cannot decide whether a write happens. Keeping it that small is what lets the boundary guarantee the policy was consulted for everything it could have needed to see.
+
+*As first written this said "one string and its path" and spoke only of values; keys were added in D-116 and the site structure in D-118. The narrowness argument is unchanged — the interface got more precise, not wider.*
 
 ## D-115 — A refusal carries the field, never the value (P3-01)
 
@@ -1005,7 +1007,9 @@ The interface is deliberately narrow. A policy is shown one string and its path,
 
 **Corrected by D-116 and D-117.** As first written it held the policy's free-text reason and a path built from raw caller keys, so a policy could put the secret in the reason and a secret in a key became the locator. Both now carry only text the boundary itself produced.
 
-An error travels: into a log line, possibly into a report, through several layers on its way out. Putting the refused value in it would mean the one mechanism built to keep secrets out of storage is also the mechanism that copies them somewhere nobody thinks to check. The field and the reason are what an operator needs, and neither is the secret.
+An error travels: into a log line, possibly into a report, through several layers on its way out. Putting the refused value in it would mean the one mechanism built to keep secrets out of storage is also the mechanism that copies them somewhere nobody thinks to check.
+
+What an operator gets is a boundary-generated safe locator and whether a key or a value was refused. Nothing else. This entry originally said "the field and the reason", but the reason was free text a policy supplied and was removed in D-117, and the field was a path built from raw caller keys and was removed in D-118. No caller-supplied and no policy-supplied text reaches an error or a log.
 
 Transport maps it to the existing `INVALID_REQUEST`. The request carried something that may not be stored, which is a bad request rather than a server fault, and adding an error code now would fix an answer P3-03 has not yet decided. With the current policy the path is unreachable, so no client-visible contract changed.
 
