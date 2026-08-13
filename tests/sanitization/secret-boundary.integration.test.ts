@@ -82,11 +82,18 @@ const SECRET = {
  * These are the ones an earlier version stored, because it asked whether the
  * value looked random before believing an explicit credential name. Weak
  * passwords are still passwords, and they are the ones most worth catching.
+ *
+ * Every one is lowercase letters only and under twenty characters, with no
+ * digit, no punctuation and no mixed case — so the discarded shape gate would
+ * have called all three ordinary words. That is the whole point: a fixture
+ * carrying a digit or a hyphen passes whether or not the fix is present, and a
+ * test that cannot fail is not evidence of anything. The markers below are
+ * lowercase too, for the same reason.
  */
 const WEAK = {
-  password: 'letmein-Ll2Kx9',
-  apiKey: 'opensesame-Mm3Ny8',
-  passphrase: 'correct horse battery Nn4Oz7',
+  password: 'letmeinzorbak',
+  apiKey: 'opensesameplimth',
+  passphrase: 'correct horse battery vandrel',
 } as const;
 
 /** Every marker, for the final sweep of the database. */
@@ -102,9 +109,9 @@ const MARKERS = [
   'Ii9Pu2N',
   'Jj0Sx8V',
   'Kk1Jq5T',
-  'Ll2Kx9',
-  'Mm3Ny8',
-  'Nn4Oz7',
+  'zorbak',
+  'plimth',
+  'vandrel',
 ] as const;
 
 /** Text with no credential in it, used where a request must succeed. */
