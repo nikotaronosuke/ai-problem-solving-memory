@@ -36,6 +36,7 @@ import {
   createRequestContextService,
   createUsageLogService,
   createChangeLogService,
+  createMemoryControlService,
   createVerificationService,
 } from '../../src/app/index.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
@@ -80,6 +81,7 @@ describe.skipIf(databaseUrl === undefined)('UsageLog API', () => {
       relationService: createRelationService(),
       usageLogService: createUsageLogService(),
       changeLogService: createChangeLogService(),
+      memoryControlService: createMemoryControlService(),
       logger: false,
     });
     appsCreated.push(app);

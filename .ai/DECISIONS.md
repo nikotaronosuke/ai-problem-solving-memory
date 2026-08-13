@@ -786,3 +786,41 @@ Free-form for the reasons `source_ai` is (D-026, D-085): assistant and tool name
 It is never consulted for authorisation. A test writes another assistant's name, `manual`, another owner's id and `root` into the field and asserts each reaches exactly the same data — a 404 for the other owner's Problem in every case. It is also not a Problem field: it lives in the history and nowhere else.
 
 `expected_version` plus `changed_by` alone is refused, as an empty patch was before (D-071): a token and a signature are not a change.
+
+## D-092 — Basic modification stays the ordinary Problem update (P2-11)
+
+P2-11 lists "basic modify" among its work, and `PATCH /v1/problems/:problem_id` already is it. No `/modify` or `/basic-modify` route was added, and nothing was removed from the generic patch to make room for the control surface — it still accepts the memory flags and `freshness`, so anything written against it keeps working.
+
+The controls got a surface of their own because they are decisions about how a memory should be *used*, not edits to what it says. That is worth naming at the API rather than leaving as three booleans among eleven fields. Both surfaces edit the same record and go through the same path.
+
+## D-093 — Memory controls run through the existing mutation path (P2-11)
+
+`applyProblemMutation` in `src/app/problem-mutation.ts` now holds what a Problem field change means: existence before version, compare-and-swap on the version the caller named, change and history in one transaction. The ordinary update and the control route both call it.
+
+Extracted rather than copied. Two surfaces with their own locking is how one of them ends up subtly weaker, or quietly not recording history, and the difference would not show until something was lost. Status transitions keep their own flow — they apply a rule first and write a different column — but follow the same guarantees.
+
+Nothing new below the application layer: no migration, no column, no domain, and the repository stays at twenty-two operations. A dedicated `updateMemoryControl` would have been a second write path to the same fields with nothing to justify it.
+
+## D-094 — The four control axes are independent (P2-11)
+
+`memory_read_enabled`, `memory_write_enabled`, `suppressed` and `freshness` are set only when named, and no control implies another. Turning off reads does not suppress; suppressing does not invalidate; invalidating disables nothing.
+
+The specification names keeping suppression and `INVALID` apart as a completion condition, and the reason generalises: "surface this less", "do not read this automatically" and "this turned out to be wrong" are different facts. A retrieval layer will want to act on them differently — an invalid memory might be worth surfacing as a warning, while a read-disabled one is simply absent — and a coupling introduced now would foreclose that. Collapsing them into one `disabled` state, or adding a field that means several at once, would lose distinctions that already exist.
+
+Every integration test that sets one control asserts the other three did not move. The failure mode here is not an error but a plausible-looking coupling, which is exactly the kind that survives review.
+
+## D-095 — invalidate maps to INVALID only, and has no inverse (P2-11)
+
+`invalidate: true` sets `freshness` to `INVALID`. It does not touch status, `fix_kind`, confidence, or any flag: `INVALID` is a statement about whether the memory still holds, not about where the Problem stands in its lifecycle — that is P2-12's, and D-067's matrix is unaffected.
+
+`invalidate: false` is refused rather than read as "make it current again". A Problem that became `INVALID` may have been `CURRENT` before it, or `STALE_UNKNOWN`, or `SUPERSEDED`, and restoring a guess would overwrite a real distinction. The control route also refuses `freshness` directly, so invalidating and editing freshness in general stay distinguishable; saying a memory holds again means saying which kind of freshness it has, through the ordinary update.
+
+The history records `freshness`, not `invalidate`. The verb is what a caller asked for; the field is what changed, and a reader following the record needs the latter.
+
+## D-096 — Controls are not authorisation, and are not enforced yet (P2-11)
+
+Turning off reads does not hide a Problem from its owner. Every read endpoint keeps answering, and the control route itself stays reachable — otherwise a Problem could be locked away by accident with no way back. A test turns every control off and then reads the Problem, its Events, Verifications, Relations, usage and history, expecting 200 from each.
+
+Nor does any endpoint start refusing writes when `memory_write_enabled` is false. Nothing in this phase can distinguish a person's own write from an assistant's automatic one, so enforcing the flag would mean guessing, and guessing would block the owner from their own record. What these controls govern is automatic retrieval and automatic writing, which belong to the retrieval layer and the AI adapter; recording the intent correctly now is what lets those honour it later.
+
+`changed_by` remains descriptive here as everywhere (D-091): a test writes `root`, `admin` and another owner's id into it and asserts each still reaches nothing.

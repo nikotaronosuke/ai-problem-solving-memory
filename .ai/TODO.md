@@ -129,12 +129,27 @@ Schema counts moved as expected: migrations 11 → 12, tables 8 → 9, foreign k
 
 Repository grew from twenty operations to twenty-two: `createChangeLog`, `listChangeLogs`.
 
-### P2-11 — NEXT
+### P2-11 — DONE
 Memory control API.
 
-Depends on P2-03 and P2-10, both satisfied. See the private task breakdown for its Definition of Done.
+One route: `PATCH /v1/problems/:problem_id/memory-control`, taking `expected_version`, `changed_by` and at least one control. No migration, no new column, no new repository operation.
 
-Note what already exists: `memory_read_enabled`, `memory_write_enabled` and `suppressed` are patchable today and independent of one another (D-056), and every change to them is now logged. So the question is not how to store the controls but what a dedicated surface adds over the generic patch — and whether invalidation means a flag, a freshness value, or something else again.
+Definition of Done verified against a real database: `memory_read_enabled=false` and `memory_write_enabled=false` are settable through the API, and suppression is not confused with `INVALID` — every test that sets one control asserts the other three did not move (D-094).
+
+`invalidate: true` sets `freshness` to `INVALID` and nothing else; `invalidate: false` and `freshness` are both refused, because restoring a guessed freshness would overwrite a real distinction (D-095).
+
+Basic modification remains the ordinary Problem update, which still accepts these fields (D-092). Both surfaces go through one extracted mutation path, so the locking, transaction and history cannot drift (D-093).
+
+The controls are not authorisation and are not enforced yet: turning everything off leaves every read working and the controls reachable, and no endpoint starts refusing writes on the strength of a flag (D-096).
+
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 22 repository operations.
+
+### P2-12 — NEXT
+Problem close/review API.
+
+Depends on P2-04, P2-05 and P2-06, all satisfied. See the private task breakdown for its Definition of Done.
+
+`fix_kind` is the field it finally writes — nothing sets it today, and P2-10 already decided how it appears in history if it moves (D-090). Note that the transition matrix and the VERIFIED gate are P2-06's and should not be re-litigated here; closing is about what a caller records *about* an ending, not about which endings are reachable. `CLOSED_UNRESOLVED` is already reachable through the transition route, so decide deliberately whether close is a separate surface or metadata attached to that move.
 
 ## BLOCKED
 
