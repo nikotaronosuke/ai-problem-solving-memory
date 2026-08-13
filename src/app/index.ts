@@ -7,6 +7,7 @@
  */
 
 export { InvalidApplicationInputError, ResourceNotFoundError } from './errors.js';
+export { createEventService, type AppendEventCommand, type EventService } from './event-service.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
 export {
   createProjectEnvironmentService,
@@ -21,7 +22,12 @@ export {
   type ProblemService,
   type UpdateProblemCommand,
 } from './problem-service.js';
-export type { EnvironmentRecord, ProblemRecord, ProjectRecord } from '../repository/index.js';
+export type {
+  EnvironmentRecord,
+  EventRecord,
+  ProblemRecord,
+  ProjectRecord,
+} from '../repository/index.js';
 export {
   createRequestContextService,
   RequestContextUnavailableError,
