@@ -4,12 +4,12 @@ Updated: 2026-08-13
 
 This is the working list, not a history. What was done in Phase 1 lives in git history, `.ai/DECISIONS.md` and the summary in `.ai/CURRENT.md`.
 
-## NOW — Implementation Phase 2
+## DONE — Implementation Phase 2
 
-Follow the private task breakdown:
+Followed the private task breakdown:
 `nikotaronosuke/ai-problem-solving-memory-spec/docs/implementation/phase2-task-breakdown.md`
 
-Implementation Phase 1 is complete. All fourteen tasks are done and its Definition of Done was verified item by item.
+Implementation Phase 1 is complete. All fourteen tasks are done and its Definition of Done was verified item by item. Implementation Phase 2 is now complete too; its fourteen tasks and Definition of Done are below.
 
 ### P2-01 — DONE
 API application foundation.
@@ -172,12 +172,50 @@ No security scheme is declared, because no client credential contract exists yet
 
 Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations. Runtime dependencies 2 → 3.
 
-### P2-14 — NEXT
+### P2-14 — DONE
 Phase 2 E2E.
 
-Depends on P2-02 through P2-12, all satisfied. See the private task breakdown for the required flow and negative cases.
+`tests/e2e/phase2.e2e.test.ts`. 19 tests: one scenario in 14 ordered steps, then five refusals. No migration, no repository change, no production change of any kind.
 
-Every step and every refusal is already covered per-endpoint, so the value is in the sequence: state carried from one step to the next against one database, which is where an ordering assumption or a leaked identifier would show. A suite that re-runs the existing assertions back to back would add coverage numbers and nothing else. `tests/integration/phase1.integration.test.ts` is the shape to follow, one layer up. Satisfying Phase 2's Definition of Done is what this closes out.
+The required flow runs over real HTTP against real PostgreSQL: project and environment, a Problem started at INVESTIGATING/version 1, `HYPOTHESIS → ATTEMPT → DEAD_END → DISCOVERY → FIX`, FIX_CANDIDATE, a successful Verification that deliberately concludes nothing on its own, then VERIFIED with `ROOT_FIX` through the close route. Then a second project, a cross-project `SIMILAR_TO` relation, a UsageLog naming the first Problem as memory used, a memory control change, an ordinary edit, and a final re-read of everything from the database rather than from any earlier response.
+
+All five negative categories: VERIFIED refused without a check of the Problem's own, a stale version refused with 409, the owner boundary held by read, by write and sideways through a relation, a resent `client_event_id` returning the original write, and a self-relation refused.
+
+What it adds over the endpoint suites is continuity — the id one call returns is the id the next accepts, and the version handed back is the version the next write must present. Nothing is hard-coded between steps. Confirmed to discriminate: removing the Verification step makes VERIFIED unreachable in the real sequence and everything downstream fails.
+
+The fixture generates its own owners, never the developer's, cleans up only what it created, and does not assume an empty database.
+
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations.
+
+## PHASE 2 — COMPLETE
+
+Every item of the Definition of Done is satisfied and verified against a real database:
+
+- Core JSON API works as one flow, not only per endpoint
+- State transitions follow the matrix, and `VERIFIED` cannot be reached without evidence
+- Relation, UsageLog and ChangeLog all exist and are exercised in sequence
+- Optimistic locking holds across every Problem write path
+- The owner boundary holds, and reveals nothing it was protecting
+- The API contract is fixed and published as OpenAPI 3.1, generated from the runtime schemas
+- The Phase 2 E2E passes automatically
+
+1793 tests across 60 files.
+
+## NEXT — Implementation Phase 3
+
+Follow the private Phase 3 breakdown:
+`nikotaronosuke/ai-problem-solving-memory-spec/docs/implementation/phase3-task-breakdown.md`
+
+### P3-01 — NEXT
+Sanitization boundary.
+
+A common sanitizer that every write passes through before anything is stored, so secret and PII checks happen at the outer edge rather than inside the domain, and raw conversations, raw logs and large code blocks do not get stored directly.
+
+The completion condition is that *every* storage path goes through it, and there are now many: Problem create and update, memory control, close and its review events, Event and Verification appends, Relation reasons, UsageLog reasons and results. One uncovered path makes the boundary decorative.
+
+ChangeLog already declines to copy free text (D-090). That is a related instinct, not the same guarantee — it keeps text out of history, not out of the record.
+
+Do not begin P3-02 or later before this one's Definition of Done is met.
 
 ## BLOCKED
 
@@ -191,4 +229,4 @@ Decided: not a blocker. The Docker daemon configuration is left unchanged, and t
 
 ## LATER
 
-P2-02 onward follow the private Phase 2 breakdown. Phases 3–9 follow the roadmap in the private specification repository. Do not begin a later phase before the current one's Definition of Done is satisfied unless the specification is deliberately revised.
+P3-02 onward follow the private Phase 3 breakdown. Phases 4–9 follow the roadmap in the private specification repository. Do not begin a later phase before the current one's Definition of Done is satisfied unless the specification is deliberately revised.
