@@ -12,6 +12,11 @@ export {
   ResourceNotFoundError,
 } from './errors.js';
 export { createEventService, type AppendEventCommand, type EventService } from './event-service.js';
+export {
+  createRelationService,
+  type CreateRelationCommand,
+  type RelationService,
+} from './relation-service.js';
 export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
 export {
   createProjectEnvironmentService,
@@ -36,6 +41,7 @@ export type {
   EventRecord,
   ProblemRecord,
   ProjectRecord,
+  RelationRecord,
   VerificationRecord,
 } from '../repository/index.js';
 export {

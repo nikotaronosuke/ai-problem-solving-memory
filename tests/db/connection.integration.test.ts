@@ -56,14 +56,15 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
     );
 
     // P1-05 adds `owners`, P1-06 `projects`, P1-07 `environments`, P1-08
-    // `problems`, P1-09 `events`, P1-10 `verifications`. Relation, UsageLog
-    // and ChangeLog are Phase 2.
+    // `problems`, P1-09 `events`, P1-10 `verifications`, P2-08 `relations`.
+    // UsageLog and ChangeLog are still to come.
     expect(result.rows.map((row) => row.table_name).sort()).toEqual([
       'environments',
       'events',
       'owners',
       'problems',
       'projects',
+      'relations',
       'verifications',
     ]);
   });

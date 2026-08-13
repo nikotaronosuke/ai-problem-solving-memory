@@ -20,6 +20,7 @@ import {
   createProblemService,
   createProblemStatusService,
   createProjectEnvironmentService,
+  createRelationService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -59,6 +60,7 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
       problemStatusService: createProblemStatusService(),
       eventService: createEventService(),
       verificationService: createVerificationService(),
+      relationService: createRelationService(),
       logger: false,
     });
     appsCreated.push(app);

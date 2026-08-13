@@ -59,6 +59,24 @@ export const VERIFICATION_TYPES = [
 ] as const;
 export type VerificationType = (typeof VERIFICATION_TYPES)[number];
 
+/**
+ * What a link between two Problems means.
+ *
+ * Three of these carry direction — `from` was caused by, supersedes, or
+ * derives from `to`. The other three read the same both ways, and only one row
+ * is stored either way: a mirror row would have to be kept in step by
+ * something, and nothing would keep it in step.
+ */
+export const RELATION_TYPES = [
+  'SIMILAR_TO',
+  'RELATED_TO',
+  'CAUSED_BY',
+  'SUPERSEDES',
+  'CONTRADICTS',
+  'DERIVED_FROM',
+] as const;
+export type RelationType = (typeof RELATION_TYPES)[number];
+
 /** How much the recorded conclusion can be relied on. */
 export const CONFIDENCES = ['HIGH', 'MEDIUM', 'LOW', 'CONFLICTED'] as const;
 export type Confidence = (typeof CONFIDENCES)[number];

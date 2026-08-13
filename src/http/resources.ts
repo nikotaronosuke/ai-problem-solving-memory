@@ -16,6 +16,7 @@ import type {
   EventRecord,
   ProblemRecord,
   ProjectRecord,
+  RelationRecord,
   VerificationRecord,
 } from '../app/index.js';
 import {
@@ -24,6 +25,7 @@ import {
   FIX_KINDS,
   FRESHNESSES,
   PROBLEM_STATUSES,
+  RELATION_TYPES,
   VERIFICATION_TYPES,
 } from '../domain/enums.js';
 
@@ -347,6 +349,61 @@ export const VERIFICATION_RESOURCE_SCHEMA = {
     'evidence_ref',
     'verified_by',
     'client_event_id',
+    'created_at',
+  ],
+  additionalProperties: false,
+} as const;
+
+export interface RelationResource {
+  readonly relation_id: string;
+  readonly owner_id: string;
+  readonly from_id: string;
+  readonly to_id: string;
+  readonly relation_type: string;
+  readonly reason: string;
+  readonly created_at: string;
+}
+
+/**
+ * Maps a Relation for the wire.
+ *
+ * `from_id` and `to_id` are reported as stored, never flipped to suit whose
+ * list is being read. A link recorded as A supersedes B reads that way from
+ * B's relations too — reversing it would state the opposite of what someone
+ * recorded.
+ *
+ * There is no `updated_at` and no `version`, because there is no update path.
+ */
+export function toRelationResource(record: RelationRecord): RelationResource {
+  return {
+    relation_id: record.relationId,
+    owner_id: record.ownerId,
+    from_id: record.fromId,
+    to_id: record.toId,
+    relation_type: record.relationType,
+    reason: record.reason,
+    created_at: record.createdAt.toISOString(),
+  };
+}
+
+export const RELATION_RESOURCE_SCHEMA = {
+  type: 'object',
+  properties: {
+    relation_id: { type: 'string', format: 'uuid' },
+    owner_id: { type: 'string', format: 'uuid' },
+    from_id: { type: 'string', format: 'uuid' },
+    to_id: { type: 'string', format: 'uuid' },
+    relation_type: { type: 'string', enum: [...RELATION_TYPES] },
+    reason: { type: 'string' },
+    created_at: { type: 'string', format: 'date-time' },
+  },
+  required: [
+    'relation_id',
+    'owner_id',
+    'from_id',
+    'to_id',
+    'relation_type',
+    'reason',
     'created_at',
   ],
   additionalProperties: false,

@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-07 done; P2-08 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-08 done; P2-09 next)
 
 ## Source of truth
 
@@ -98,6 +98,24 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
 
+## What exists now — Relation API (P2-08)
+
+| Method | Path |
+| --- | --- |
+| POST / GET | `/v1/problems/:problem_id/relations` |
+
+**What a Relation is.** A link between two of one owner's Problems, with a meaning and a stated reason: `SIMILAR_TO`, `RELATED_TO`, `CAUSED_BY`, `SUPERSEDES`, `CONTRADICTS`, `DERIVED_FROM`. `reason` is required and non-blank, in the domain and in a CHECK.
+
+**Cross-project, never cross-owner.** Two Problems in different projects may be linked — that is the point of it. Two owners' Problems may not, and refusing it reveals nothing: another owner's Problem answers exactly as one that does not exist. Both ends are checked in the application *and* by a foreign key.
+
+**No self-links.** Refused in the application and by a CHECK, for any relation type.
+
+**One row per link.** No mirror row for the three symmetric meanings. Listing a Problem's relations returns both ends — `from_id = ? or to_id = ?`, one index per side — and rows come back as stored, never flipped to suit whose list is being read.
+
+**Not an inheritance.** Creating a link changes neither Problem: no status, no version, no `updated_at`, and nothing copied across. Evidence in particular does not travel — a Problem linked to a `VERIFIED` one still needs its own successful Verification, and a test drives exactly that. Because it is not a Problem write, there is no `expected_version`.
+
+**Create and list only.** No single-relation read, update or delete, and no `updated_at` or `version` on the table. How a mistaken link is withdrawn is deliberately undecided.
+
 ## What exists now — Optimistic locking (P2-07)
 
 **Every Problem write names a version.** `expected_version` is required on `PATCH /v1/problems/:problem_id` and on the status transition. An integer from 1, never coerced: `"4"`, `4.5`, `0`, `true` and null are 400. It is a token, not a field — `version` itself stays unwritable, and a body carrying only the token is refused because it changes nothing.
@@ -158,9 +176,9 @@ Read this to know what you are building on.
 
 **Runtime.** TypeScript in strict mode, ESM with `NodeNext`, npm with a committed lockfile. `npm run check` runs typecheck, lint, format check and tests; `npm run build` compiles to `dist/`. See `docs/development.md` for commands.
 
-**Database.** PostgreSQL, with Supabase CLI + Docker as the local environment. Nine migrations under `supabase/migrations/`, replayable onto a clean database with `npm run db:reset`. Six public tables: `owners`, `projects`, `environments`, `problems`, `events`, `verifications`.
+**Database.** PostgreSQL, with Supabase CLI + Docker as the local environment. Ten migrations under `supabase/migrations/`, replayable onto a clean database with `npm run db:reset`. Seven public tables: `owners`, `projects`, `environments`, `problems`, `events`, `verifications`, `relations`.
 
-**Value sets.** Six closed sets — ProblemStatus, FixKind, EventType, VerificationType, Confidence, Freshness — declared once in `src/domain/enums.ts` and enforced by text-backed PostgreSQL DOMAINs with CHECK constraints. No native enum types. A test drives every application value through the database and compares the constraint back, so the two cannot drift.
+**Value sets.** Seven closed sets — ProblemStatus, FixKind, EventType, VerificationType, RelationType, Confidence, Freshness — declared once in `src/domain/enums.ts` and enforced by text-backed PostgreSQL DOMAINs with CHECK constraints. No native enum types. A test drives every application value through the database and compares the constraint back, so the two cannot drift.
 
 **Ownership.** `owner_id` is a UUID the Memory Server issues, never a vendor account id. Every table carries it, so owner scope needs no join. An `OwnerContext` comes only from `resolveOwnerContext`, which fails closed when the owner is missing, malformed or absent from the database.
 
@@ -168,17 +186,17 @@ Read this to know what you are building on.
 
 **Events and Verifications.** Both are append-only: no update path, no `updated_at`, no trigger. A Verification attaches to the Problem directly, never to an Event, and carries a boolean `result` so a successful verification can be found mechanically. `client_event_id` is required and unique per `(owner_id, client_event_id)` within each table, so a retried write cannot land twice.
 
-**Deletes.** Every foreign key is `ON DELETE RESTRICT`, schema-wide. A parent with children cannot be removed. Deliberate removal still works from the leaves up; only implicit removal is prevented.
+**Deletes.** All seven foreign keys are `ON DELETE RESTRICT`, schema-wide. A parent with children cannot be removed. Deliberate removal still works from the leaves up; only implicit removal is prevented.
 
 **Indexes.** One ordered index per list path — events and verifications by `(owner_id, problem_id, created_at, id)`, problems by `(owner_id, project_id, created_at, problem_id)` — plus the environment foreign key index. No index is a left prefix of another. Vector and full-text indexes belong to the retrieval phase.
 
-**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Sixteen operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, transition Problem status, append/list Event, append/list Verification. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
+**Storage boundary.** `MemoryRepository` in `src/repository/` is owner-scoped: the `OwnerContext` is fixed at creation and no method takes an owner argument. Eighteen operations — create/get/list/update Project, create/get/list Environment, create/get/list/update Problem, transition Problem status, append/list Event, append/list Verification, create/list Relation. It is a thin facade over `src/db/`, writes no SQL, and does not reinterpret error codes.
 
 **Executor.** `DatabaseExecutor` is `query` and nothing else. A pool satisfies it, and so will a client checked out for a transaction, so Phase 2 can add transactions without changing anything below. The repository does not own a transaction.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1064 tests across 41 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 1209 tests across 45 files.
 
 ## What is deliberately absent
 
@@ -186,23 +204,22 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - Nothing changes a Problem's `fix_kind`. The Problem PATCH refuses it and a transition never sets it. Close and review are P2-12
-- No delete anywhere, no Environment update, no MCP, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
+- No delete anywhere, no Environment update, no Relation update or delete, no MCP, no UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
 - No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-08 — Relation entity / API.
+P2-09 — UsageLog.
 
 Not started.
 
 Notes for whoever picks this up:
-- Unlike P2-04 through P2-07 this one starts at the schema. There is no relations table, no migration, no domain type and no repository operation — the first decision is what a Relation actually holds
-- Relations cross Problems, and every rule so far has been careful to keep Problems apart: evidence is per Problem (D-068), and one Problem's Verification cannot support another. A Relation is the first thing that deliberately links two, so what it may and may not carry across is the substance
-- The owner check is what makes that safe. A Relation to another owner's Problem must not be creatable, and refusing it must not reveal that the other Problem exists — same 404 as everywhere else
-- Both endpoints of a Relation need the same treatment. Checking only the source would let someone probe for target ids
-- Whether a Relation is versioned, append-only or updatable is open. Events and Verifications are append-only; Problems are versioned (D-071). Do not assume it inherits either — decide from what a Relation is for
-
+- Starts at the schema, like P2-08 did. No table, no migration, no domain type
+- This is the first entity whose creation is a side effect of a read rather than of a caller's explicit intent. Nothing in the model writes on a read today, so where that write is triggered from — and whether a failure to log may fail the read — is the first decision
+- Retention is its own question. Every other entity is kept indefinitely because it is the record; a usage log is about the record, and may not deserve the same treatment. Do not assume it inherits the append-only stance or the RESTRICT policy without deciding
+- The owner boundary and the not-found unification apply as everywhere else. A usage log must not become a way to learn that someone else's Problem exists
+- The spec's boundary addendum matters here: this repository owns Problem-Solving Memory only, and an OS-wide audit warehouse is explicitly not part of it
 
 ## Core MVP milestone
 

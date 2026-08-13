@@ -650,3 +650,51 @@ D-070 said P2-06 introduced no conflict vocabulary so that this task could own i
 An unknown Problem and another owner's are still one 404, and that check comes first. A 409 for a Problem someone does not own would confirm it exists, and would let them search for its version — the existence oracle every other decision here avoids. Tests send both a right and a wrong version at another owner's Problem and expect 404 either way.
 
 Within the caller's own Problems the version is checked before the transition rule is applied. A caller working from a stale read has a stale idea of the current status too, so judging its request against a status it has not seen would answer a question it did not ask — and could allow a move it would not have requested had it known. The useful answer is "read it again". Schema validation still comes before both, so a malformed request is a 400 regardless.
+
+## D-076 — A Relation links two Problems, and only two Problems (P2-08)
+
+`relations` holds `relation_id`, `owner_id`, `from_id`, `to_id`, `relation_type`, `reason`, `created_at`. Both ends reference `problems (owner_id, problem_id)`, so a link is between two Problems of one owner and nothing else.
+
+No `from_type` / `to_type` and no polymorphic target. Patterns and Skills do not exist, and a schema built for entities nobody has defined would fix their shape before anyone knows it — the same reasoning that kept `evidence_ref` free-form text in D-028.
+
+No `updated_at`, no `version` and no `client_event_id`. There is no update path, so nothing records a change or guards one; and whether a retried link needs an idempotency key — including what "the same link" means when the reason differs — is a real question this task does not answer. Copying `client_event_id` across from the append paths would have answered it by reflex.
+
+`reason` is required and non-blank, in the domain and in a CHECK. A link nobody can account for later is a link nobody can act on, and "these two look alike" is exactly the judgement that needs its reasoning attached. Free text rather than a taxonomy, for D-023's reason.
+
+The CHECK names the whitespace characters explicitly — one-argument `btrim` strips spaces only, so a tab-only value would pass a check written the way the earlier tables' are. Those are left as they are; the application trims all whitespace before writing, so the gap is not reachable through the API.
+
+## D-077 — Six relation types, one row per link (P2-08)
+
+`SIMILAR_TO`, `RELATED_TO`, `CAUSED_BY`, `SUPERSEDES`, `DERIVED_FROM`, `CONTRADICTS` — the set the specification names, as a text-backed DOMAIN like the six before it (D-012), registered in `ENUM_DOMAIN_BINDINGS` so the drift test covers it.
+
+Three carry direction: `from` was caused by, supersedes, or derives from `to`. Three read the same both ways. Either way exactly one row is written — no mirror row for the symmetric types. Two rows would have to be kept in step by something, and nothing would keep them in step.
+
+Rows are reported as stored, never flipped to suit whose list is being read. A link recorded as A supersedes B reads that way from B's list too; reversing it would state the opposite of what someone recorded.
+
+Listing a Problem's relations returns both ends — `from_id = ? or to_id = ?` — with an index per side. Otherwise "what does this relate to?" would answer differently depending on which end someone happened to record the link from, which is not a difference a reader should have to know about.
+
+## D-078 — Links cross projects, never owners, and never join a Problem to itself (P2-08)
+
+Cross-project is the point. A problem solved in `checkout-web` informing an investigation in `admin-console` is what makes this memory worth keeping across projects at all, and confining links to one project would rule it out.
+
+Cross-owner is refused twice: the application checks both ends against the owner-scoped repository, and both foreign keys check the `(owner, problem)` pair. The application check is not redundant — the answer a client gets should be a decision made at that layer rather than a consequence of which constraint fired, and both ends must fail identically. Another owner's Problem and one that does not exist produce the same 404, so the endpoint cannot be used to ask whether an id is real.
+
+Self-links are refused in the application and by a CHECK. A Problem is not similar to, caused by or a replacement for itself under any of the six meanings, and the self-loop would be something every later traversal had to special-case. The rule takes no relation type, because it does not depend on one.
+
+## D-079 — A Relation is a link, not an inheritance (P2-08)
+
+Creating one changes neither Problem. No status moves, no version increments, no `updated_at` advances, and nothing — confidence, freshness, importance, the flags, Events, Verifications — is copied across.
+
+Most of all, evidence does not travel. Relating a Problem to a `VERIFIED` one does not let it become `VERIFIED`: it still needs a successful Verification of its own, per D-068. Being similar to something that was checked is not the same as having been checked, and a link is exactly the kind of claim someone could otherwise use to launder one into the other. An integration test drives that whole sequence and asserts the second Problem is still refused.
+
+Because it is not a write to either Problem, there is no `expected_version` (D-071 applies to Problem writes, and this is not one). Sending one is a 400.
+
+## D-080 — Create and list, and nothing else yet (P2-08)
+
+`POST` and `GET /v1/problems/:problem_id/relations`. No single-relation read, no update, no delete, and no unscoped `/v1/relations`.
+
+The source Problem comes from the path only, so it has one source and cannot disagree with a body field — the reasoning D-048 applies to nesting generally.
+
+How a mistaken link is corrected or withdrawn is deliberately undecided. Events and Verifications are append-only because a later correction is another record; Problems are updatable and versioned. A Relation is neither obviously one nor the other, and adding a route now would settle it by accident rather than by decision.
+
+No graph traversal, no automatic similarity detection, no deduplication and no pagination. Retrieval is a later phase, and building for it now would fix shapes that phase has not justified.
