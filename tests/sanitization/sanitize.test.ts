@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createPermissivePolicy,
-  formatFieldPath,
+  describeInspectionPath,
   sanitizeValue,
   SanitizationRejectedError,
   UnsupportedSanitizationOutcomeError,
@@ -46,10 +46,9 @@ interface Sighting {
 function recordingPolicy(): SanitizationPolicy & { seen: Sighting[] } {
   const seen: Sighting[] = [];
   return {
-    name: 'recording',
     seen,
     inspect(text: string, at: SanitizationSite) {
-      seen.push({ text, at: formatFieldPath(at.path), kind: at.kind });
+      seen.push({ text, at: describeInspectionPath(at.path), kind: at.kind });
       return { kind: 'keep' };
     },
   };
@@ -58,7 +57,6 @@ function recordingPolicy(): SanitizationPolicy & { seen: Sighting[] } {
 /** Rewrites every value it sees, and leaves keys alone. */
 function replacingPolicy(replacement: string): SanitizationPolicy {
   return {
-    name: 'replacing',
     inspect: (_text, at) =>
       at.kind === 'value' ? { kind: 'replace', value: replacement } : { kind: 'keep' },
   };
@@ -67,7 +65,6 @@ function replacingPolicy(replacement: string): SanitizationPolicy {
 /** Refuses any string equal to `secret`, key or value. */
 function refusingPolicy(secret: string): SanitizationPolicy {
   return {
-    name: 'refusing',
     inspect: (text) => (text === secret ? { kind: 'reject' } : { kind: 'keep' }),
   };
 }
@@ -315,11 +312,11 @@ describe('a refused value', () => {
       expect(error).toBeInstanceOf(SanitizationRejectedError);
       const rejected = error as SanitizationRejectedError;
 
-      // Every key in the locator was shown to the policy and kept, so naming
-      // them reveals nothing the policy would have refused.
-      expect(rejected.locator).toBe('operation[0].snapshot.api_key');
+      // The locator keeps the shape of the descent and none of the keys —
+      // not even `snapshot` and `api_key`, which the policy kept. Keeping a
+      // string is a statement about storing it, not about logging it.
+      expect(rejected.locator).toBe('operation[0].<key>.<key>');
       expect(rejected.kind).toBe('value');
-      expect(rejected.policy).toBe('refusing');
       expectNoTraceOf(rejected, secret);
     }
   });
@@ -359,7 +356,7 @@ describe('a refused key', () => {
       // The refused key is exactly the string that must not escape, and it is
       // also what a locator built from raw keys would have been made of. It is
       // reported as a redacted step against its parent instead.
-      expect(rejected.locator).toBe('operation[0].snapshot.<redacted>');
+      expect(rejected.locator).toBe('operation[0].<key>.<redacted>');
       expect(rejected.kind).toBe('key');
       expectNoTraceOf(rejected, secret);
     }
@@ -368,7 +365,6 @@ describe('a refused key', () => {
   it('stops the write before the value it names is even looked at', () => {
     const seen: string[] = [];
     const policy: SanitizationPolicy = {
-      name: 'refusing',
       inspect: (text) => {
         seen.push(text);
         return text === secret ? { kind: 'reject' } : { kind: 'keep' };
@@ -385,7 +381,6 @@ describe('a refused key', () => {
 describe('what a policy is not allowed to ask for', () => {
   it('cannot rename a key', () => {
     const renaming: SanitizationPolicy = {
-      name: 'renaming',
       inspect: (_text, at) =>
         at.kind === 'key' ? { kind: 'replace', value: 'renamed' } : { kind: 'keep' },
     };
@@ -401,7 +396,6 @@ describe('what a policy is not allowed to ask for', () => {
   it('does not name the key it declined to rename', () => {
     const secret = 'sk-live-key-name';
     const renaming: SanitizationPolicy = {
-      name: 'renaming',
       inspect: (_text, at) =>
         at.kind === 'key' ? { kind: 'replace', value: 'renamed' } : { kind: 'keep' },
     };
@@ -432,7 +426,6 @@ describe('what a policy is not allowed to ask for', () => {
     // the annotated form above, but the boundary reads `kind` and `value` and
     // nothing else, so anything else a policy returns goes nowhere at all.
     const dangerous = {
-      name: 'dangerous',
       inspect: (text: string) =>
         text === secret ? { kind: 'reject', reason: text, detail: text } : { kind: 'keep' },
     } as unknown as SanitizationPolicy;
@@ -448,7 +441,6 @@ describe('what a policy is not allowed to ask for', () => {
   it('ignores prose forced into a refused key as well', () => {
     const secret = 'sk-live-key-with-smuggled-reason';
     const dangerous = {
-      name: 'dangerous',
       inspect: (text: string) =>
         text === secret ? { kind: 'reject', reason: text } : { kind: 'keep' },
     } as unknown as SanitizationPolicy;
@@ -479,6 +471,120 @@ describe('what a policy is not allowed to ask for', () => {
   });
 });
 
+describe('an ancestor key the policy kept', () => {
+  // The distinction this suite exists for. A secret detector keeps an email
+  // address, because an email address is not a secret — and that is a
+  // statement about whether it may be stored, not about whether it may be
+  // copied into a log file. The two questions have different answers and only
+  // one of them is the policy's.
+  const pii = 'customer@example.com';
+  const secret = 'sk-live-under-a-kept-key';
+
+  const secretDetector: SanitizationPolicy = {
+    inspect: (text) => (text.includes('sk-live') ? { kind: 'reject' } : { kind: 'keep' }),
+  };
+
+  it('is shown to the policy in full, because detection needs the context', () => {
+    const policy = recordingPolicy();
+
+    sanitizeValue({ snapshot: { [pii]: { api_key: 'ok' } } }, policy, AT_ROOT);
+
+    // The internal path keeps the raw keys: `snapshot.<something>.api_key` is
+    // exactly what tells a detector how to read the value underneath.
+    expect(policy.seen.some((sighting) => sighting.at.includes(pii))).toBe(true);
+  });
+
+  it('is not in the error raised for a secret beneath it', () => {
+    try {
+      sanitizeValue({ snapshot: { [pii]: { api_key: secret } } }, secretDetector, AT_ROOT);
+      expect.unreachable('the policy should have refused the value');
+    } catch (error) {
+      const rejected = error as SanitizationRejectedError;
+
+      expect(rejected.locator).toBe('operation[0].<key>.<key>.<key>');
+      // Neither the secret that was refused, nor the caller text on the way
+      // down to it that the policy was perfectly right to keep.
+      expectNoTraceOf(rejected, secret);
+      expectNoTraceOf(rejected, pii);
+    }
+  });
+
+  it('is not in an error raised for a refused sibling key either', () => {
+    try {
+      sanitizeValue({ snapshot: { [pii]: { [secret]: 'v' } } }, secretDetector, AT_ROOT);
+      expect.unreachable('the policy should have refused the key');
+    } catch (error) {
+      expectNoTraceOf(error as Error, pii);
+      expectNoTraceOf(error as Error, secret);
+    }
+  });
+});
+
+describe('a policy cannot name itself into a log line', () => {
+  const marker = 'sk-live-policy-name-secret';
+
+  it('has nowhere to put a name', () => {
+    const named = {
+      // @ts-expect-error A policy has no name field. This directive fails if
+      // one is ever added back, which is the point: free text fixed at
+      // construction is still free text, and a configuration mistake can put
+      // a credential in it.
+      name: marker,
+      inspect: () => ({ kind: 'reject' }),
+    } satisfies SanitizationPolicy;
+
+    expect(named.inspect()).toEqual({ kind: 'reject' });
+  });
+
+  it('leaves no trace of one forced in, on a refusal', () => {
+    const named = {
+      name: marker,
+      inspect: () => ({ kind: 'reject' }),
+    } as unknown as SanitizationPolicy;
+
+    try {
+      sanitizeValue({ title: 'anything' }, named, AT_ROOT);
+      expect.unreachable('the policy should have refused');
+    } catch (error) {
+      expectNoTraceOf(error as Error, marker);
+    }
+  });
+
+  it('leaves no trace of one on an unsupported outcome either', () => {
+    // This one matters more, not less: it is not caught anywhere, so the
+    // generic handler logs the whole error including its message and stack.
+    const named = {
+      name: marker,
+      inspect: (_text: string, at: SanitizationSite) =>
+        at.kind === 'key' ? { kind: 'replace', value: 'renamed' } : { kind: 'keep' },
+    } as unknown as SanitizationPolicy;
+
+    try {
+      sanitizeValue({ title: 'anything' }, named, AT_ROOT);
+      expect.unreachable('renaming a key is not supported');
+    } catch (error) {
+      expect(error).toBeInstanceOf(UnsupportedSanitizationOutcomeError);
+      expectNoTraceOf(error as Error, marker);
+    }
+  });
+
+  it('leaves no trace of one on a cycle', () => {
+    const named = {
+      name: marker,
+      inspect: () => ({ kind: 'keep' }),
+    } as unknown as SanitizationPolicy;
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    try {
+      sanitizeValue(cyclic, named, AT_ROOT);
+      expect.unreachable('a cycle cannot be stored');
+    } catch (error) {
+      expectNoTraceOf(error as Error, marker);
+    }
+  });
+});
+
 describe('the policy this phase ships', () => {
   it('decides nothing', () => {
     // P3-01 installs the boundary. Detection is P3-02 and refusal is P3-03,
@@ -496,8 +602,10 @@ describe('the policy this phase ships', () => {
     }
   });
 
-  it('says what it is', () => {
-    expect(permissive.name).toContain('p3-01');
+  it('has nothing on it but the one method', () => {
+    // No name, and nothing else a configuration mistake could fill with a
+    // credential that then reaches a log line.
+    expect(Object.keys(permissive)).toEqual(['inspect']);
   });
 });
 

@@ -24,7 +24,7 @@ import { generateOwnerId } from '../../src/domain/owner.js';
 import type { OwnerContext } from '../../src/domain/owner.js';
 import { createMemoryRepository, type MemoryRepository } from '../../src/repository/index.js';
 import {
-  formatFieldPath,
+  describeInspectionPath,
   isSanitizedOperation,
   withSanitization,
   type SanitizationPolicy,
@@ -126,11 +126,10 @@ function recordingPolicy(): SanitizationPolicy & { seen: string[]; keys: string[
   const seen: string[] = [];
   const keys: string[] = [];
   return {
-    name: 'recording',
     seen,
     keys,
     inspect(text: string, at: SanitizationSite) {
-      seen.push(formatFieldPath(at.path));
+      seen.push(describeInspectionPath(at.path));
       if (at.kind === 'key') {
         keys.push(text);
       }
@@ -308,10 +307,7 @@ describe('what the wrapper leaves alone', () => {
       evidenceRef: null,
       clientEventId: UUID,
     };
-    await withSanitization(spy, {
-      name: 'keep',
-      inspect: () => ({ kind: 'keep' }),
-    }).appendEvent(input as never);
+    await withSanitization(spy, { inspect: () => ({ kind: 'keep' }) }).appendEvent(input as never);
 
     // Installing the boundary must not change what a service asked for.
     expect(received[0]).toEqual(input);
@@ -328,7 +324,6 @@ describe('what the wrapper leaves alone', () => {
     } as unknown as MemoryRepository;
 
     await withSanitization(spy, {
-      name: 'replacing',
       inspect: (value) =>
         value === 'sk-live-do-not-store'
           ? { kind: 'replace', value: '[removed]' }
@@ -351,7 +346,6 @@ describe('what the wrapper leaves alone', () => {
 
     await expect(
       withSanitization(spy, {
-        name: 'refusing',
         inspect: () => ({ kind: 'reject', reason: 'not storable' }),
       }).appendEvent({ summary: 'anything', clientEventId: UUID } as never),
     ).rejects.toThrow('cannot be stored');

@@ -84,7 +84,6 @@ function walk(
     // is both the honest answer and the one that avoids recursing forever.
     throw new UnsupportedSanitizationOutcomeError(
       { path, kind: 'value' },
-      policy.name,
       'A value refers to itself and cannot be stored',
     );
   }
@@ -125,9 +124,10 @@ function decide(text: string, policy: SanitizationPolicy, at: SanitizationSite):
     case 'replace':
       return outcome.value;
     case 'reject':
-      // Built from the site and the policy name only. The policy had no way to
-      // contribute prose, so there is nothing here that could be the value.
-      throw new SanitizationRejectedError(at, policy.name);
+      // Built from the site alone, with the caller's keys already stripped out
+      // of it. A policy has no way to contribute text, so there is nothing here
+      // that could be the value or anything else it was shown.
+      throw new SanitizationRejectedError(at);
   }
 }
 
@@ -152,11 +152,10 @@ function decideKey(key: string, policy: SanitizationPolicy, at: SanitizationSite
     case 'replace':
       throw new UnsupportedSanitizationOutcomeError(
         redacted(at),
-        policy.name,
         'A policy asked to rename an object key, which is not supported',
       );
     case 'reject':
-      throw new SanitizationRejectedError(redacted(at), policy.name);
+      throw new SanitizationRejectedError(redacted(at));
   }
 }
 

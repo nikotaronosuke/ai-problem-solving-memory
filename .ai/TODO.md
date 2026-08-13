@@ -217,7 +217,13 @@ Nothing is checked by field name. The traversal reaches every string at any dept
 
 The shipped policy decides nothing, deliberately. Detection is P3-02 and refusal or redaction is P3-03; a provisional secret check shipped as production logic would be worse than an honest absence (D-114). A refusal carries the locator, the kind and the policy name — nothing a policy wrote and nothing a caller sent — and maps to the existing `INVALID_REQUEST` rather than adding an error code (D-115).
 
-An external review of the first commit found two holes, both closed here without weakening any existing guard. Object keys were never inspected, and were used raw as locator segments, so a secret in a snapshot key both bypassed the boundary and could be logged by it (D-116). And a `reject` outcome carried free text that reached the operational log, making "a refusal never carries the value" a matter of policy-author discipline rather than structure (D-117). Both were reproduced first and confirmed to fail the new tests before the fix.
+Two rounds of external review found four holes, all closed without weakening any existing guard, and each reproduced first so the new tests were confirmed to fail against the old behaviour.
+
+First round: object keys were never inspected, and were used raw as locator segments, so a secret in a snapshot key both bypassed the boundary and could be logged by it (D-116). And a `reject` outcome carried free text that reached the operational log, making "a refusal never carries the value" a matter of policy-author discipline rather than structure (D-117).
+
+Second round, on the fix itself: rendering *approved* keys into the locator was still wrong, because a secret detector keeps an email address for being not-a-secret, which says nothing about whether it may be copied into a log — persistence-safe and log-safe are different questions (D-118). And `policy.name` was still free text flowing into every refusal and log line, the same leak one field along (D-119).
+
+The pattern, stated once because it recurred: every string someone outside the boundary could choose eventually reached a log. A refusal is now described entirely by values the boundary itself produced.
 
 Definition of Done verified by breaking it: unwrapping the transactional repository, making the traversal shallow, and misclassifying one write as a read each fail multiple guards — including the architecture test that every handout is wrapped, and the integration test that a refused close leaves nothing behind.
 
