@@ -72,6 +72,15 @@ export {
   type RelationRecord,
 } from './relations.js';
 
+// Memory-specific usage history. Create and list only, and not a global audit
+// log: tool calls, deploys and approvals belong to a layer above this one.
+export {
+  createUsageLog,
+  listUsageLogs,
+  type CreateUsageLogInput,
+  type UsageLogRecord,
+} from './usage-logs.js';
+
 // Verifications attach to a Problem, not to an Event, and are append-only too.
 export {
   appendVerification,

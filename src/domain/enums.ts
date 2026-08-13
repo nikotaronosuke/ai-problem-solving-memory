@@ -77,6 +77,26 @@ export const RELATION_TYPES = [
 ] as const;
 export type RelationType = (typeof RELATION_TYPES)[number];
 
+/**
+ * How past memory was used while solving a problem.
+ *
+ * Observations, not stages. An adapter reports what it can tell — some never
+ * see a search step, some only know at the end that a memory changed the
+ * direction of the work — so no order is required between these and none is
+ * enforced. `SEARCHED` means the memory appeared as a candidate; `REFERENCED`
+ * that it was actually read; `ADOPTED` that its direction was taken;
+ * `EXCLUDED` that it was considered and set aside; `CHANGED_STRATEGY` that it
+ * materially altered how the problem was approached.
+ */
+export const USAGE_ACTIONS = [
+  'SEARCHED',
+  'REFERENCED',
+  'ADOPTED',
+  'EXCLUDED',
+  'CHANGED_STRATEGY',
+] as const;
+export type UsageAction = (typeof USAGE_ACTIONS)[number];
+
 /** How much the recorded conclusion can be relied on. */
 export const CONFIDENCES = ['HIGH', 'MEDIUM', 'LOW', 'CONFLICTED'] as const;
 export type Confidence = (typeof CONFIDENCES)[number];

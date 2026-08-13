@@ -84,6 +84,7 @@ describe.skipIf(databaseUrl === undefined)('domain enums in the database', () =>
       'problems',
       'projects',
       'relations',
+      'usage_logs',
       'verifications',
     ]);
   });

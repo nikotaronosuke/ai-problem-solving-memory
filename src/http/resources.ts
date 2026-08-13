@@ -17,6 +17,7 @@ import type {
   ProblemRecord,
   ProjectRecord,
   RelationRecord,
+  UsageLogRecord,
   VerificationRecord,
 } from '../app/index.js';
 import {
@@ -26,6 +27,7 @@ import {
   FRESHNESSES,
   PROBLEM_STATUSES,
   RELATION_TYPES,
+  USAGE_ACTIONS,
   VERIFICATION_TYPES,
 } from '../domain/enums.js';
 
@@ -404,6 +406,71 @@ export const RELATION_RESOURCE_SCHEMA = {
     'to_id',
     'relation_type',
     'reason',
+    'created_at',
+  ],
+  additionalProperties: false,
+} as const;
+
+export interface UsageLogResource {
+  readonly usage_log_id: string;
+  readonly owner_id: string;
+  readonly problem_id: string;
+  readonly source_ai: string;
+  readonly action: string;
+  readonly memory_id: string;
+  readonly reason: string;
+  readonly result: string | null;
+  readonly created_at: string;
+}
+
+/**
+ * Maps a UsageLog for the wire.
+ *
+ * `problem_id` is the problem being worked on; `memory_id` is the past problem
+ * that was used. They are allowed to be equal — continuing an investigation
+ * under a different AI is a real case.
+ *
+ * `result` is null when the outcome is not known yet, which is the ordinary
+ * state for a memory that was merely found or read.
+ *
+ * There is no `updated_at` and no `version`, because there is no update path.
+ */
+export function toUsageLogResource(record: UsageLogRecord): UsageLogResource {
+  return {
+    usage_log_id: record.usageLogId,
+    owner_id: record.ownerId,
+    problem_id: record.problemId,
+    source_ai: record.sourceAi,
+    action: record.action,
+    memory_id: record.memoryId,
+    reason: record.reason,
+    result: record.result,
+    created_at: record.createdAt.toISOString(),
+  };
+}
+
+export const USAGE_LOG_RESOURCE_SCHEMA = {
+  type: 'object',
+  properties: {
+    usage_log_id: { type: 'string', format: 'uuid' },
+    owner_id: { type: 'string', format: 'uuid' },
+    problem_id: { type: 'string', format: 'uuid' },
+    source_ai: { type: 'string' },
+    action: { type: 'string', enum: [...USAGE_ACTIONS] },
+    memory_id: { type: 'string', format: 'uuid' },
+    reason: { type: 'string' },
+    result: { type: ['string', 'null'] },
+    created_at: { type: 'string', format: 'date-time' },
+  },
+  required: [
+    'usage_log_id',
+    'owner_id',
+    'problem_id',
+    'source_ai',
+    'action',
+    'memory_id',
+    'reason',
+    'result',
     'created_at',
   ],
   additionalProperties: false,

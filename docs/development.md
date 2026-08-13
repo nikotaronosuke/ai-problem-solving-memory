@@ -60,8 +60,9 @@ schema change.
 
 The migrations establish the pipeline, the shared value sets (PostgreSQL
 DOMAINs over `text` with CHECK constraints, mirroring `src/domain/enums.ts`),
-the seven tables — `owners`, `projects`, `environments`, `problems`, `events`,
-`verifications`, `relations` — and the Phase 1 integrity and index set.
+the eight tables — `owners`, `projects`, `environments`, `problems`, `events`,
+`verifications`, `relations`, `usage_logs` — and the Phase 1 integrity and
+index set.
 
 Every foreign key deletes with `RESTRICT`, so a parent with children cannot be
 removed. That prevents implicit deletion, not deletion: a deliberate removal
@@ -344,3 +345,53 @@ Verification of its own.
 
 Create and list only. There is no single-relation read, update or delete: how
 a mistaken link is corrected is not decided yet.
+
+Usage logs record that past memory was actually used while solving a problem:
+`SEARCHED` when it came up as a candidate, `REFERENCED` when it was read,
+`ADOPTED` when its direction was taken, `EXCLUDED` when it was considered and
+set aside, `CHANGED_STRATEGY` when it changed the approach. The problem being
+worked on comes from the path; the past problem used as memory comes from the
+body, along with who used it and why:
+
+```json
+{
+  "source_ai": "claude-code",
+  "action": "REFERENCED",
+  "memory_id": "...",
+  "reason": "Same authentication boundary and symptoms.",
+  "result": null
+}
+```
+
+`reason` is required — without it the log is a hit counter, and the question
+worth answering later is whether the memory deserved to be used. `result` is
+null when the outcome is not known yet, which is the ordinary state for a
+memory that was merely found or read.
+
+No order is required between the actions. An adapter reports what it can tell,
+and requiring `SEARCHED` before `ADOPTED` would make this a workflow rather
+than a record of what happened.
+
+`source_ai` describes who used the memory and is never consulted for
+authorisation. Whatever a caller writes there, the owner comes from the
+established request context and the same data is reachable.
+
+Logging is explicit. No read writes one: fetching a problem or listing its
+events, verifications or relations records nothing. A read that quietly writes
+can fail for reasons the caller did not ask about, and it would claim a memory
+was _used_ when all that happened was a look.
+
+Memory used across projects is the point, and is allowed. Memory across owners
+is not, and refusing it reveals nothing — another owner's problem answers
+exactly as one that does not exist. A problem may be recorded as its own
+memory, which is what continuing an investigation under a different AI looks
+like.
+
+Recording a use changes nothing about either problem: no version, no status,
+no confidence, and no relation, event or verification appears. Adopting a
+verified memory does not make the current problem verified.
+
+This is Memory-specific history, not a general audit log. Tool calls, deploys,
+model invocations and approvals are not recorded here.
+
+Create and list only, like relations: no single-log read, update or delete.
