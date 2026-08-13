@@ -141,11 +141,31 @@ no fix kind, low confidence and version 1 — the caller does not get to
 declare any of that.
 
 A patch changes only the fields it names. `status`, `fix_kind` and `version`
-are not among them: state transitions arrive with verification, and `version`
-becomes an optimistic lock later. Sending one is a validation failure rather
-than a silent no-op. `importance`, `confidence`, `freshness`, `suppressed`
-and the two memory flags are independent — setting any one of them never
-moves another.
+are not among them: state transitions have their own endpoint, and `version`
+is the server's to move. Sending one is a validation failure rather than a
+silent no-op. `importance`, `confidence`, `freshness`, `suppressed` and the
+two memory flags are independent — setting any one of them never moves
+another.
+
+Every write to a Problem carries `expected_version`, the version the caller
+last read:
+
+```json
+{ "expected_version": 4, "title": "..." }
+```
+
+If the Problem is still at that version the write happens and the version
+becomes 5; if not, nothing is written and the response is `409` with code
+`VERSION_CONFLICT`. Re-read the Problem and decide again. Two people or
+assistants working on the same Problem is the normal case, and a silent
+overwrite would lose a finding without either of them noticing — which is
+worse than an error, because it looks like it worked.
+
+The ordinary patch and the status transition share that one version, so an
+edit and a transition conflict with each other rather than passing unseen.
+Appends do not: an Event or Verification can be recorded whatever version the
+Problem is at, and recording one does not move it. Retry safety for an append
+is `client_event_id`, which answers a different question.
 
 Events record what happened while a problem was being solved: a hypothesis,
 an attempt, a dead end, a discovery, a fix, a correction from the user. They
@@ -186,7 +206,7 @@ That step is `POST /v1/problems/:problem_id/status-transitions`, with a body
 naming only where the Problem should end up:
 
 ```json
-{ "target_status": "FIX_CANDIDATE" }
+{ "target_status": "FIX_CANDIDATE", "expected_version": 4 }
 ```
 
 It is the only way a status changes — the Problem PATCH still refuses
@@ -211,9 +231,10 @@ all count for nothing. Anything the rule refuses is a 400, and the Problem is
 left exactly as it was — status, `updated_at` and all.
 
 A transition changes the status and nothing else. `fix_kind`, `confidence`,
-`freshness`, `importance` and the memory flags stay where they were, and
-`version` does not move: verifying a Problem says the fix holds, not that
-anyone is more confident in the record or that the fix addressed the cause.
+`freshness`, `importance` and the memory flags stay where they were:
+verifying a Problem says the fix holds, not that anyone is more confident in
+the record or that the fix addressed the cause. The version moves, as it does
+for any successful write.
 
 JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
 another owner answers exactly as one that does not exist.

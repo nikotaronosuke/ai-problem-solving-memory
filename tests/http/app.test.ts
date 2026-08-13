@@ -19,6 +19,7 @@ import {
   createProblemService,
   createProblemStatusService,
   createProjectEnvironmentService,
+  ProblemVersionConflictError,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type HealthReport,
@@ -26,6 +27,7 @@ import {
   type RequestContextService,
 } from '../../src/app/index.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { ERROR_CODES, ERROR_STATUS } from '../../src/http/errors.js';
 import type { MemoryRepository } from '../../src/repository/index.js';
 
 const OWNER_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
@@ -188,6 +190,48 @@ describe('unauthenticated requests', () => {
 });
 
 describe('error envelope', () => {
+  it('offers exactly the codes a client can branch on', async () => {
+    const app = buildApp();
+
+    // Codes are added when a caller genuinely needs to act differently.
+    // VERSION_CONFLICT earns its place: the response tells a client to
+    // re-read and try again, which no other code says.
+    expect([...ERROR_CODES].sort()).toEqual([
+      'INTERNAL_ERROR',
+      'INVALID_REQUEST',
+      'NOT_FOUND',
+      'UNAUTHENTICATED',
+      'VERSION_CONFLICT',
+    ]);
+    expect(ERROR_STATUS.VERSION_CONFLICT).toBe(409);
+
+    await app.close();
+  });
+
+  it('renders a version conflict without naming a version', async () => {
+    const app = buildApp();
+    app.get('/test-only/conflict', () => {
+      throw new ProblemVersionConflictError();
+    });
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/test-only/conflict' });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: { code: 'VERSION_CONFLICT', message: 'Problem version conflict.' },
+    });
+    expect(typeof response.json<{ request_id: string }>().request_id).toBe('string');
+    // No version number: telling a client the current one would hand out a
+    // fact about a record rather than about its request. The internal error
+    // text is not the contract either. (`request_id` has digits of its own,
+    // so the check is on the error object.)
+    expect(JSON.stringify(response.json<{ error: unknown }>().error)).not.toMatch(/\d/);
+    expect(response.body).not.toContain('since it was read');
+    expect(response.body).not.toMatch(/\bat\s+\w+\s+\(/);
+
+    await app.close();
+  });
   it('carries a request id on every failure', async () => {
     const app = buildApp();
 

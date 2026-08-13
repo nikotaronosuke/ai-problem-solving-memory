@@ -387,3 +387,13 @@ export const NON_BLANK_STRING_SCHEMA = { type: 'string', pattern: '\\S' } as con
 
 /** An optional free-form field: a string, or null to clear it. */
 export const NULLABLE_TEXT_SCHEMA = { type: ['string', 'null'] } as const;
+
+/**
+ * The version a caller believes it is acting on.
+ *
+ * A whole number from 1, matching `version` on the way out. `integer` rather
+ * than `number` and no coercion, so `"2"`, `2.5`, `true` and null are refused
+ * rather than quietly reinterpreted — a concurrency token that can be
+ * misread is not one.
+ */
+export const EXPECTED_VERSION_SCHEMA = { type: 'integer', minimum: 1 } as const;

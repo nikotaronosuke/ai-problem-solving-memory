@@ -29,6 +29,7 @@ import {
   NON_BLANK_STRING_SCHEMA,
   NULLABLE_TEXT_SCHEMA,
   PROBLEM_ID_PARAMS_SCHEMA,
+  EXPECTED_VERSION_SCHEMA,
   PROBLEM_RESOURCE_SCHEMA,
   PROJECT_ID_PARAMS_SCHEMA,
   toProblemResource,
@@ -38,6 +39,7 @@ const COMMON_ERROR_RESPONSES = {
   400: ERROR_RESPONSE_SCHEMA,
   401: ERROR_RESPONSE_SCHEMA,
   404: ERROR_RESPONSE_SCHEMA,
+  409: ERROR_RESPONSE_SCHEMA,
   500: ERROR_RESPONSE_SCHEMA,
 } as const;
 
@@ -59,6 +61,7 @@ interface CreateProblemBody {
 }
 
 interface UpdateProblemBody {
+  expected_version: number;
   title?: string;
   symptoms?: string;
   problem_domain?: string | null;
@@ -158,6 +161,12 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
         body: {
           type: 'object',
           properties: {
+            // The version the caller last read. Required: a patch sent without
+            // one would overwrite whatever happened since, and losing another
+            // person's finding silently is exactly what this record must not
+            // do. It is a concurrency token, not a stored field — `version`
+            // itself stays unwritable.
+            expected_version: EXPECTED_VERSION_SCHEMA,
             title: NON_BLANK_STRING_SCHEMA,
             symptoms: NON_BLANK_STRING_SCHEMA,
             problem_domain: NULLABLE_TEXT_SCHEMA,
@@ -173,9 +182,11 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
             memory_write_enabled: { type: 'boolean' },
             suppressed: { type: 'boolean' },
           },
-          // A patch that changes nothing would still move `updated_at`,
-          // recording a change that never happened.
-          minProperties: 1,
+          required: ['expected_version'],
+          // `expected_version` plus at least one field actually being changed.
+          // A patch that changes nothing would still move `updated_at` and the
+          // version, recording a change that never happened.
+          minProperties: 2,
           // Everything absent from `properties` is refused: status, fix_kind,
           // version, the identifiers and the timestamps. Status in particular
           // must not be reachable here — VERIFIED requires a successful
@@ -188,6 +199,7 @@ export function registerProblemRoutes(scope: FastifyInstance, service: ProblemSe
     async (request) => {
       const body = request.body;
       const command: UpdateProblemCommand = {
+        expectedVersion: body.expected_version,
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.symptoms !== undefined ? { symptoms: body.symptoms } : {}),
         ...(body.problem_domain !== undefined ? { problemDomain: body.problem_domain } : {}),

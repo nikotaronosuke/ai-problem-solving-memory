@@ -358,13 +358,13 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload,
+      payload: { ...payload, expected_version: 4 },
     });
 
     expect(response.statusCode).toBe(200);
     // Omitted fields are absent, not undefined, so the service can tell
-    // "leave alone" from "clear".
-    expect(calls.updateProblem?.command).toEqual(expected);
+    // "leave alone" from "clear". The token travels alongside them.
+    expect(calls.updateProblem?.command).toEqual({ ...expected, expectedVersion: 4 });
     expect(calls.updateProblem?.problemId).toBe(PROBLEM_ID);
 
     await app.close();
@@ -377,11 +377,11 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: { confidence },
+      payload: { confidence, expected_version: 4 },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(calls.updateProblem?.command).toEqual({ confidence });
+    expect(calls.updateProblem?.command).toEqual({ confidence, expectedVersion: 4 });
 
     await app.close();
   });
@@ -393,25 +393,56 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: { freshness },
+      payload: { freshness, expected_version: 4 },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(calls.updateProblem?.command).toEqual({ freshness });
+    expect(calls.updateProblem?.command).toEqual({ freshness, expectedVersion: 4 });
 
     await app.close();
   });
 
-  it('refuses a patch that changes nothing', async () => {
+  it.each([
+    ['an empty body', {}],
+    // `expected_version` is a concurrency token, not a field being changed, so
+    // a body carrying only it changes nothing.
+    ['only the expected version', { expected_version: 4 }],
+    ['a missing expected version', { title: 'renamed' }],
+  ])('refuses a patch with %s', async (_label, payload) => {
     const calls: ServiceCalls = {};
     const app = buildApp(serviceRecording(calls));
 
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload: {},
+      payload,
     });
 
+    expect(response.statusCode).toBe(400);
+    expect(calls.updateProblem).toBeUndefined();
+
+    await app.close();
+  });
+
+  it.each([
+    ['a string expected version', { expected_version: '4' }],
+    ['a fractional expected version', { expected_version: 4.5 }],
+    ['a zero expected version', { expected_version: 0 }],
+    ['a negative expected version', { expected_version: -1 }],
+    ['a null expected version', { expected_version: null }],
+    ['a boolean expected version', { expected_version: true }],
+  ])('refuses %s', async (_label, payload) => {
+    const calls: ServiceCalls = {};
+    const app = buildApp(serviceRecording(calls));
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/problems/${PROBLEM_ID}`,
+      payload: { ...payload, title: 'renamed' },
+    });
+
+    // A concurrency token that can be misread is not one, so nothing is
+    // coerced on the way through.
     expect(response.statusCode).toBe(400);
     expect(calls.updateProblem).toBeUndefined();
 
@@ -423,7 +454,6 @@ describe('PATCH /v1/problems/:problem_id', () => {
     ['status even to a valid non-verified value', { status: 'PAUSED' }],
     ['fix_kind', { fix_kind: 'ROOT_FIX' }],
     ['version', { version: 2 }],
-    ['expected_version', { expected_version: 1 }],
     ['owner_id', { owner_id: OWNER_ID }],
     ['problem_id', { problem_id: PROBLEM_ID }],
     ['project_id', { project_id: PROJECT_ID }],
@@ -438,7 +468,9 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload,
+      // A valid token and a real change, so the refusal is attributable to
+      // the field under test rather than to a malformed request.
+      payload: { ...payload, expected_version: 4, title: 'renamed' },
     });
 
     // Status in particular: VERIFIED requires a successful Verification, and
@@ -466,7 +498,7 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: `/v1/problems/${PROBLEM_ID}`,
-      payload,
+      payload: { ...payload, expected_version: 4 },
     });
 
     expect(response.statusCode).toBe(400);
@@ -481,7 +513,7 @@ describe('PATCH /v1/problems/:problem_id', () => {
     const response = await app.inject({
       method: 'PATCH',
       url: '/v1/problems/not-a-uuid',
-      payload: { title: 'x' },
+      payload: { title: 'x', expected_version: 4 },
     });
 
     expect(response.statusCode).toBe(400);

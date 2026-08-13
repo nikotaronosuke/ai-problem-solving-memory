@@ -20,7 +20,11 @@
  * is supposed to provide.
  */
 
-import { InvalidApplicationInputError, ResourceNotFoundError } from './errors.js';
+import {
+  InvalidApplicationInputError,
+  ProblemVersionConflictError,
+  ResourceNotFoundError,
+} from './errors.js';
 import type { AuthenticatedRequestContext } from './request-context.js';
 import type { Confidence, Freshness } from '../domain/enums.js';
 import { toEnvironmentId } from '../domain/environment.js';
@@ -38,6 +42,15 @@ export interface CreateProblemCommand {
 }
 
 export interface UpdateProblemCommand {
+  /**
+   * The version the caller last read.
+   *
+   * Required. Without it a client that read a problem, thought about it, and
+   * sent a change would silently overwrite whatever happened in between —
+   * which for a record of what was tried and learned means losing someone
+   * else's finding without either of them noticing.
+   */
+  readonly expectedVersion: number;
   readonly title?: string;
   readonly symptoms?: string;
   readonly problemDomain?: string | null;
@@ -182,13 +195,34 @@ export function createProblemService(): ProblemService {
 
       if (Object.keys(patch).length === 0) {
         // Transport rejects this too. Repeated here because an update that
-        // changes nothing would still move `updated_at`.
+        // changes nothing would still move `updated_at`. `expectedVersion` is
+        // a concurrency token rather than a field, so a body carrying only it
+        // changes nothing.
         throw new InvalidApplicationInputError('A problem update must change at least one field.');
       }
 
-      const updated = await context.repository.updateProblem(target, patch);
-      if (updated === undefined) {
+      // Existence is settled before the version is, so a caller guessing at a
+      // version for a problem that is not theirs gets the same 404 as for one
+      // that does not exist. Answering "wrong version" would confirm it is
+      // real.
+      const current = await context.repository.getProblem(target);
+      if (current === undefined) {
         throw new ResourceNotFoundError();
+      }
+      if (current.version !== command.expectedVersion) {
+        throw new ProblemVersionConflictError();
+      }
+
+      const updated = await context.repository.updateProblem(
+        target,
+        command.expectedVersion,
+        patch,
+      );
+      if (updated === undefined) {
+        // The read above said the version matched, so the only way to be here
+        // is another writer landing in between. The predicate on the update is
+        // what makes that a refusal rather than a silent overwrite.
+        throw new ProblemVersionConflictError();
       }
       return updated;
     },
