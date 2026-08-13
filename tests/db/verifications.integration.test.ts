@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { createEnvironment } from '../../src/db/environments.js';
-import { DuplicateClientEventIdError, ProblemNotAvailableError } from '../../src/db/errors.js';
+import { ProblemNotAvailableError } from '../../src/db/errors.js';
 import { appendEvent } from '../../src/db/events.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
@@ -478,7 +478,64 @@ describe.skipIf(databaseUrl === undefined)('verifications', () => {
   });
 
   describe('retry protection', () => {
-    it('refuses a second verification carrying the same client event id', async () => {
+    // P1-10 refused a duplicate; since P2-05 the same write sent again returns
+    // what the first attempt produced, as Events have since P2-04. What has
+    // not changed is that only one row can exist — the unique index is still
+    // what decides, and the tests below check that directly.
+    it('returns the original when the same client event id is sent again', async () => {
+      const fixture = await makeFixture();
+      const clientEventId = generateClientEventId();
+
+      const original = await appendVerification(pool, fixture.context, {
+        problemId: fixture.problemId,
+        verificationType: 'TEST',
+        result: true,
+        summary: 'First send',
+        clientEventId,
+      });
+
+      const retry = await appendVerification(pool, fixture.context, {
+        problemId: fixture.problemId,
+        verificationType: 'TEST',
+        result: true,
+        summary: 'Same write, retried',
+        clientEventId,
+      });
+
+      expect(retry).toEqual(original);
+      expect(retry.summary).toBe('First send');
+      expect(await listVerifications(pool, fixture.context, fixture.problemId)).toHaveLength(1);
+    });
+
+    it('keeps the recorded result when the retry claims a different one', async () => {
+      const fixture = await makeFixture();
+      const clientEventId = generateClientEventId();
+
+      const original = await appendVerification(pool, fixture.context, {
+        problemId: fixture.problemId,
+        verificationType: 'TEST',
+        result: false,
+        summary: 'The suite still fails',
+        clientEventId,
+      });
+
+      const retry = await appendVerification(pool, fixture.context, {
+        problemId: fixture.problemId,
+        verificationType: 'USER_CONFIRMATION',
+        result: true,
+        summary: 'Actually it works',
+        clientEventId,
+      });
+
+      // A Verification is evidence of a check that was carried out. A retry is
+      // the same write arriving again, not a second check, so it cannot turn a
+      // recorded failure into a success.
+      expect(retry).toEqual(original);
+      expect(retry.result).toBe(false);
+      expect(retry.verificationType).toBe('TEST');
+    });
+
+    it('still stores only one row, whatever the append path answers', async () => {
       const fixture = await makeFixture();
       const clientEventId = generateClientEventId();
 
@@ -490,26 +547,32 @@ describe.skipIf(databaseUrl === undefined)('verifications', () => {
         clientEventId,
       });
 
+      // Straight past the append path, to confirm the constraint itself is
+      // intact rather than the behaviour merely being implemented above it.
       await expect(
-        appendVerification(pool, fixture.context, {
-          problemId: fixture.problemId,
-          verificationType: 'TEST',
-          result: true,
-          summary: 'Same write, retried',
-          clientEventId,
-        }),
-      ).rejects.toThrow(DuplicateClientEventIdError);
-
-      expect(await listVerifications(pool, fixture.context, fixture.problemId)).toHaveLength(1);
+        pool.query(
+          `insert into public.verifications
+                  (verification_id, owner_id, problem_id, verification_type, result, summary,
+                   client_event_id)
+                values ($1, $2, $3, 'TEST', true, $4, $5)`,
+          [
+            generateVerificationId(),
+            fixture.context.ownerId,
+            fixture.problemId,
+            'Second row for the same key',
+            clientEventId,
+          ],
+        ),
+      ).rejects.toThrow(/verifications_owner_id_client_event_id_key/);
     });
 
-    it('refuses it even when retried against a different problem', async () => {
+    it('returns the original even when retried against a different problem', async () => {
       const context = await makeOwnerContext();
       const first = await makeFixture(context);
       const second = await makeFixture(context);
       const clientEventId = generateClientEventId();
 
-      await appendVerification(pool, context, {
+      const original = await appendVerification(pool, context, {
         problemId: first.problemId,
         verificationType: 'TEST',
         result: true,
@@ -517,15 +580,18 @@ describe.skipIf(databaseUrl === undefined)('verifications', () => {
         clientEventId,
       });
 
-      await expect(
-        appendVerification(pool, context, {
-          problemId: second.problemId,
-          verificationType: 'TEST',
-          result: true,
-          summary: 'Retried against the wrong problem',
-          clientEventId,
-        }),
-      ).rejects.toThrow(DuplicateClientEventIdError);
+      const retry = await appendVerification(pool, context, {
+        problemId: second.problemId,
+        verificationType: 'TEST',
+        result: false,
+        summary: 'Retried against the wrong problem',
+        clientEventId,
+      });
+
+      expect(retry).toEqual(original);
+      expect(retry.problemId).toBe(first.problemId);
+      expect(retry.result).toBe(true);
+      expect(await listVerifications(pool, context, second.problemId)).toHaveLength(0);
     });
 
     it('lets a different owner use the same client event id', async () => {

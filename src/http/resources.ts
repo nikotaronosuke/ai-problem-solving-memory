@@ -11,13 +11,20 @@
  * and send another.
  */
 
-import type { EnvironmentRecord, EventRecord, ProblemRecord, ProjectRecord } from '../app/index.js';
+import type {
+  EnvironmentRecord,
+  EventRecord,
+  ProblemRecord,
+  ProjectRecord,
+  VerificationRecord,
+} from '../app/index.js';
 import {
   CONFIDENCES,
   EVENT_TYPES,
   FIX_KINDS,
   FRESHNESSES,
   PROBLEM_STATUSES,
+  VERIFICATION_TYPES,
 } from '../domain/enums.js';
 
 export interface ProjectResource {
@@ -270,6 +277,75 @@ export const EVENT_RESOURCE_SCHEMA = {
     'reason',
     'source_ai',
     'evidence_ref',
+    'client_event_id',
+    'created_at',
+  ],
+  additionalProperties: false,
+} as const;
+
+export interface VerificationResource {
+  readonly verification_id: string;
+  readonly owner_id: string;
+  readonly problem_id: string;
+  readonly verification_type: string;
+  readonly result: boolean;
+  readonly summary: string;
+  readonly evidence_ref: string | null;
+  readonly verified_by: string | null;
+  readonly client_event_id: string;
+  readonly created_at: string;
+}
+
+/**
+ * Maps a Verification for the wire.
+ *
+ * `result` is a boolean and stays one. True means a check was carried out and
+ * confirmed the state; false means it was carried out and did not. Neither
+ * means "not checked yet" — that is the absence of a Verification. Widening
+ * this to a string or a nullable would let the third meaning in through the
+ * back door, and P2-06 has to be able to find a successful check
+ * mechanically.
+ *
+ * There is no `updated_at`, because there is nothing to update.
+ */
+export function toVerificationResource(record: VerificationRecord): VerificationResource {
+  return {
+    verification_id: record.verificationId,
+    owner_id: record.ownerId,
+    problem_id: record.problemId,
+    verification_type: record.verificationType,
+    result: record.result,
+    summary: record.summary,
+    evidence_ref: record.evidenceRef,
+    verified_by: record.verifiedBy,
+    client_event_id: record.clientEventId,
+    created_at: record.createdAt.toISOString(),
+  };
+}
+
+export const VERIFICATION_RESOURCE_SCHEMA = {
+  type: 'object',
+  properties: {
+    verification_id: { type: 'string', format: 'uuid' },
+    owner_id: { type: 'string', format: 'uuid' },
+    problem_id: { type: 'string', format: 'uuid' },
+    verification_type: { type: 'string', enum: [...VERIFICATION_TYPES] },
+    result: { type: 'boolean' },
+    summary: { type: 'string' },
+    evidence_ref: { type: ['string', 'null'] },
+    verified_by: { type: ['string', 'null'] },
+    client_event_id: { type: 'string', format: 'uuid' },
+    created_at: { type: 'string', format: 'date-time' },
+  },
+  required: [
+    'verification_id',
+    'owner_id',
+    'problem_id',
+    'verification_type',
+    'result',
+    'summary',
+    'evidence_ref',
+    'verified_by',
     'client_event_id',
     'created_at',
   ],

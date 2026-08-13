@@ -29,7 +29,6 @@ import { generateProblemId, type ProblemId } from '../../src/domain/problem.js';
 import { MEMORY_OWNER_ID_VAR, resolveOwnerContext } from '../../src/owner/context.js';
 import {
   createMemoryRepository,
-  DuplicateClientEventIdError,
   ProblemNotAvailableError,
   type MemoryRepository,
 } from '../../src/repository/index.js';
@@ -337,28 +336,54 @@ describe.skipIf(databaseUrl === undefined)('Phase 1 scenario', () => {
 
     it('replaying a verification client event id', async () => {
       const clientEventId = generateClientEventId();
-      await owner.appendVerification({
+      const original = await owner.appendVerification({
         problemId,
         verificationType: 'TEST',
-        result: true,
-        summary: 'Checked once',
+        result: false,
+        summary: 'Checked once, and it did not hold',
         clientEventId,
       });
       const before = await owner.listVerifications(problemId);
 
-      await expect(
-        owner.appendVerification({
-          problemId,
-          verificationType: 'TEST',
-          result: true,
-          summary: 'The same write, sent again',
-          clientEventId,
-        }),
-      ).rejects.toThrow(DuplicateClientEventIdError);
+      const retry = await owner.appendVerification({
+        problemId,
+        verificationType: 'TEST',
+        result: true,
+        summary: 'The same write, sent again',
+        clientEventId,
+      });
 
-      // Verifications still refuse; their replay is P2-05. Events and
-      // Verifications behaving differently is deliberate, not a gap.
+      // Since P2-05 this returns the original, as Events do. The recorded
+      // result survives a retry claiming the opposite: a retry is the same
+      // write arriving again, not a second check.
+      expect(retry).toEqual(original);
+      expect(retry.result).toBe(false);
       expect(await owner.listVerifications(problemId)).toHaveLength(before.length);
+    });
+
+    it('using one client event id for both an event and a verification', async () => {
+      const clientEventId = generateClientEventId();
+
+      const event = await owner.appendEvent({
+        problemId,
+        eventType: 'FIX',
+        summary: 'Pinned the resolver version',
+        clientEventId,
+      });
+      const verification = await owner.appendVerification({
+        problemId,
+        verificationType: 'TEST',
+        result: true,
+        summary: 'Suite green after the fix',
+        clientEventId,
+      });
+
+      // Separate kinds of write, separate namespaces. Neither replayed the
+      // other, which is what keeps a Verification retry from colliding with an
+      // unrelated Event.
+      expect(event.clientEventId).toBe(clientEventId);
+      expect(verification.clientEventId).toBe(clientEventId);
+      expect(verification.summary).toBe('Suite green after the fix');
     });
 
     it('storing an event type outside the shared value set', async () => {

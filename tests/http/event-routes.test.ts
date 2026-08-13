@@ -16,6 +16,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createVerificationService,
   createProblemService,
   createProjectEnvironmentService,
   RequestContextUnavailableError,
@@ -92,6 +93,7 @@ function buildApp(service: EventService, authenticated = true) {
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: createProblemService(),
     eventService: service,
+    verificationService: createVerificationService(),
     logger: false,
   });
 }

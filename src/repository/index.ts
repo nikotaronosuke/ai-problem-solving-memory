@@ -27,6 +27,6 @@ export type { AppendVerificationInput, VerificationRecord } from '../db/verifica
 
 // The failures a caller has to handle. Mapping stays in the database layer;
 // these are re-exported so the caller need not reach past this boundary.
-export { DuplicateClientEventIdError, ProblemNotAvailableError } from '../db/errors.js';
+export { ProblemNotAvailableError } from '../db/errors.js';
 export { ProjectNotAvailableError } from '../db/environments.js';
 export { EnvironmentNotAvailableError } from '../db/problems.js';

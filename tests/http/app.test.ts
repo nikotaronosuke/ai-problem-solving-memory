@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createVerificationService,
   createEventService,
   createProblemService,
   createProjectEnvironmentService,
@@ -59,6 +60,7 @@ function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> =
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: createProblemService(),
     eventService: createEventService(),
+    verificationService: createVerificationService(),
     logger: false,
     ...overrides,
   });

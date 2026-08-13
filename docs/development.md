@@ -110,22 +110,24 @@ The Memory JSON API lives under `/v1`; `/health` sits outside it, because
 whether the process is serving is not part of the API contract. Everything
 under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 
-| Method | Path                                    |
-| ------ | --------------------------------------- |
-| GET    | `/v1/me`                                |
-| POST   | `/v1/projects`                          |
-| GET    | `/v1/projects`                          |
-| GET    | `/v1/projects/:project_id`              |
-| PATCH  | `/v1/projects/:project_id`              |
-| POST   | `/v1/projects/:project_id/environments` |
-| GET    | `/v1/projects/:project_id/environments` |
-| GET    | `/v1/environments/:environment_id`      |
-| POST   | `/v1/projects/:project_id/problems`     |
-| GET    | `/v1/projects/:project_id/problems`     |
-| GET    | `/v1/problems/:problem_id`              |
-| PATCH  | `/v1/problems/:problem_id`              |
-| POST   | `/v1/problems/:problem_id/events`       |
-| GET    | `/v1/problems/:problem_id/events`       |
+| Method | Path                                     |
+| ------ | ---------------------------------------- |
+| GET    | `/v1/me`                                 |
+| POST   | `/v1/projects`                           |
+| GET    | `/v1/projects`                           |
+| GET    | `/v1/projects/:project_id`               |
+| PATCH  | `/v1/projects/:project_id`               |
+| POST   | `/v1/projects/:project_id/environments`  |
+| GET    | `/v1/projects/:project_id/environments`  |
+| GET    | `/v1/environments/:environment_id`       |
+| POST   | `/v1/projects/:project_id/problems`      |
+| GET    | `/v1/projects/:project_id/problems`      |
+| GET    | `/v1/problems/:problem_id`               |
+| PATCH  | `/v1/problems/:problem_id`               |
+| POST   | `/v1/problems/:problem_id/events`        |
+| GET    | `/v1/problems/:problem_id/events`        |
+| POST   | `/v1/problems/:problem_id/verifications` |
+| GET    | `/v1/problems/:problem_id/verifications` |
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in
@@ -157,6 +159,27 @@ again. The key belongs to the owner rather than to a problem: sending it at a
 different problem replays the original rather than recording a second event,
 which is how a client finds out it reused a key. If the retry's payload
 differs, the first write still wins.
+
+Verifications record that something actually checked whether the state holds
+— a test run, a build, a real device, an API or database result, a person
+confirming it. They attach to the Problem, never to an Event: a FIX Event
+says what was changed, and a Verification says whether it worked. An
+assistant saying "it works" is not evidence that it does, which is why the
+two are separate records.
+
+`result` is a boolean. True means a check was carried out and confirmed the
+state; false means it was carried out and did not. Neither means "not checked
+yet" — that is simply the absence of a Verification — so a string, a number
+or a null is refused rather than coerced.
+
+Appending is idempotent on `client_event_id` in the same way as Events, with
+one thing worth stating plainly: a retry cannot change a recorded `result`. A
+retry is the same write arriving again, not a second check. Recording a
+different finding means a new Verification with a new key.
+
+Recording a successful Verification does not move the Problem to `VERIFIED`
+and does not change its status at all. Concluding a problem is solved weighs
+the transition rules as well as the evidence, and no endpoint does it yet.
 
 JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
 another owner answers exactly as one that does not exist.

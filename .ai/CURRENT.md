@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-04 done; P2-05 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 … P2-05 done; P2-06 next)
 
 ## Source of truth
 
@@ -98,7 +98,23 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **The race.** The insert is attempted and the unique index decides; the original is read back only after it refuses. A test sends the same key six times at once, with the pool's connections opened first so the attempts really are simultaneous, and it was confirmed to fail against a read-then-write append. That handling is confined to `src/db/events.ts`.
 
-**Verifications are unchanged.** A duplicate Verification `client_event_id` is still refused. That difference is deliberate and asserted by a test; P2-05 decides what a Verification retry means.
+## What exists now — Verification API (P2-05)
+
+| Method | Path |
+| --- | --- |
+| POST / GET | `/v1/problems/:problem_id/verifications` |
+
+**Attached to the Problem, never to an Event.** No `event_id` in the request or the response, and no route reaching a Verification through an Event. A FIX Event says what was changed; a Verification says whether it worked. A Problem with a Verification and no Events at all is a coherent record, and a test keeps it one.
+
+**`result` is a boolean, at the boundary too.** True means a check was carried out and confirmed the state, false that it was carried out and did not. "Not checked yet" is the *absence* of a Verification — so `null`, `"true"`, `"false"`, `1`, `0` and a missing field are each a 400 rather than coerced. A failed check is stored and listed like any other: it is evidence too.
+
+**Retry replays, and cannot change the finding.** Idempotent on `(owner_id, client_event_id)` exactly as Events are. What is stronger here: a retry claiming the opposite `result` still returns the original unchanged, in both directions. A retry is the same write arriving again, not a second check. A different finding is a new Verification with a new key, and both stay visible.
+
+**Ownership first, same race handling.** Both routes confirm the problem is the caller's before the key is consulted. The insert is attempted and the unique index decides; six simultaneous retries produce one row, and that test was confirmed to fail against a read-then-write append.
+
+**Still decides nothing.** A successful Verification leaves `status` where it was, including `INVESTIGATING`. No transition service, no status write, no version increment. An integration test reads the status back through the API to check it.
+
+**`DuplicateClientEventIdError` is gone.** With both append paths replaying, nothing raised it, so it was removed rather than kept for symmetry. The two `(owner_id, client_event_id)` unique constraints are untouched and still refuse a direct insert past the append path.
 
 ## What exists now
 
@@ -126,33 +142,31 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 802 tests across 35 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 890 tests across 37 files.
 
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Recording a successful Verification does **not** move a Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That judgement is P2-06
-- A duplicate Verification `client_event_id` is refused, not replayed. Returning the original is P2-05. Events already replay, since P2-04
 - `version` exists on Problem and nothing increments it. It is response-only, no endpoint accepts it, and there is no `expected_version`. Optimistic locking is P2-07
 - Nothing changes a Problem's `status` or `fix_kind`. The Problem PATCH refuses both. Transitions are P2-06, close and review P2-12
-- No Verification endpoints. Those are P2-05
 - No delete anywhere, no Environment update, no MCP, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
 - No pagination, filtering or search on list endpoints
 - No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-05 — Verification append/list API.
+P2-06 — Problem state transition service.
 
 Not started.
 
 Notes for whoever picks this up:
-- `appendVerification` and `listVerifications` already exist on the repository, and `verifications (owner_id, problem_id, created_at, verification_id)` indexes the list path. Fifteen operations is likely still enough
-- The Event API is the template for route shape, ownership checks and the append-only stance. Copying it wholesale is not the same as deciding, though — see the next point
-- Verification retry is the real decision. Events replay the original (D-058) and Verifications still refuse. What a retry should return when the original recorded a different `result` is genuinely open: a Verification is evidence, and "the same write, sent again" is a weaker claim there than it is for an Event
-- `result` is a boolean because P2-06 has to find a successful Verification mechanically (D-031). Do not let a replay decision blur it
-- Recording a Verification still must not move a Problem to `VERIFIED` (D-033). That is P2-06
+- Nothing writes `status` today. It is not PATCHable (D-055), no append moves it (D-033, D-065), and the database does not prevent any value. This task is where that changes, and it should end up the *only* way status moves
+- `VERIFIED` has to require at least one successful Verification. That is now findable mechanically: `result` is a boolean the API cannot blur (D-062), and `listVerifications` already exists. Do not infer success from a FIX Event or from prose
+- `version` is still response-only and nothing increments it. Optimistic locking is P2-07, so decide deliberately whether a transition touches `version` at all rather than adding it by reflex
+- `fix_kind` is P2-12's. FIX_CANDIDATE and the fix kind are separate axes (D-024), so a transition service should not start setting one from the other
+- The repository exposes fifteen operations and has `updateProblem`, but its input deliberately has no `status` field (D-055). Widening it is a decision this task has to make explicitly, not a detail
 
 ## Core MVP milestone
 

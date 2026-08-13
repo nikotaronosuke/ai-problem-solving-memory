@@ -33,6 +33,7 @@ import type {
   ProblemService,
   ProjectEnvironmentService,
   RequestContextService,
+  VerificationService,
 } from '../app/index.js';
 import {
   InvalidApplicationInputError,
@@ -43,6 +44,7 @@ import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './error
 import { registerEventRoutes } from './event-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
+import { registerVerificationRoutes } from './verification-routes.js';
 
 /** Version prefix for the Memory JSON API. Operational routes sit outside it. */
 export const API_PREFIX = '/v1';
@@ -53,6 +55,7 @@ export interface MemoryHttpAppDependencies {
   readonly projectEnvironmentService: ProjectEnvironmentService;
   readonly problemService: ProblemService;
   readonly eventService: EventService;
+  readonly verificationService: VerificationService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -249,6 +252,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       registerProjectRoutes(scope, dependencies.projectEnvironmentService);
       registerProblemRoutes(scope, dependencies.problemService);
       registerEventRoutes(scope, dependencies.eventService);
+      registerVerificationRoutes(scope, dependencies.verificationService);
 
       done();
     },

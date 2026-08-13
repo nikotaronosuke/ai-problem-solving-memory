@@ -49,10 +49,21 @@ The open question D-027 left is now settled (D-058): a retry returns the origina
 
 Repository operations unchanged at fifteen — `appendEvent` and `listEvents` already existed.
 
-### P2-05 — NEXT
+### P2-05 — DONE
 Verification append / list API.
 
-Depends on P2-03, which is satisfied. A duplicate Verification `client_event_id` is still refused, deliberately: P2-05 decides what a Verification retry returns, including what it should mean when the original recorded a different `result`. Do not assume it is the same answer Events gave — see D-060.
+Two routes: `POST|GET /v1/problems/:problem_id/verifications`. No single-verification read, no update, no delete, and no route reaching one through an Event.
+
+Definition of Done verified against a real database: a FIX Event and a Verification are stored and read back as separate things, and successful and failed checks are distinguishable — `result` is a boolean at the HTTP boundary as well as in storage, with `null`, `"true"`, `1` and a missing field all refused rather than coerced.
+
+The question D-060 deferred is now answered (D-063): a Verification retry replays the original and cannot change what the check found, in either direction. `DuplicateClientEventIdError` had no remaining thrower once both paths replayed, so it was removed rather than kept (D-064). Recording a successful Verification still leaves the Problem's status untouched (D-065).
+
+Repository operations unchanged at fifteen — `appendVerification` and `listVerifications` already existed.
+
+### P2-06 — NEXT
+Problem state transition service.
+
+Depends on P2-03, P2-04 and P2-05, all satisfied. Nothing writes `status` today: it is not PATCHable (D-055) and no write moves it as a side effect (D-033, D-065). This task is where that becomes possible, and where `VERIFIED` has to be made to require at least one successful Verification — which is now findable mechanically, since `result` is a boolean the API cannot blur.
 
 ## BLOCKED
 

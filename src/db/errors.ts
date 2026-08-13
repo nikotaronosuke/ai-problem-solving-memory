@@ -1,9 +1,16 @@
 /**
  * Errors shared by the append paths.
  *
- * Events and Verifications are separate kinds of write with the same two
- * failure modes. They live here rather than in one of the two modules so that
- * neither has to depend on the other.
+ * Events and Verifications are separate kinds of write reaching for the same
+ * failure. It lives here rather than in one of the two modules so that neither
+ * has to depend on the other.
+ *
+ * There used to be a second one, raised when a `client_event_id` had already
+ * been used. Both append paths now return the original record instead — P2-04
+ * for Events, P2-05 for Verifications — so nothing raised it any more and it
+ * was removed. The `(owner_id, client_event_id)` unique constraints are
+ * untouched: they are what makes the replay safe, and a direct insert past the
+ * append path is still refused by the database.
  */
 
 /**
@@ -17,26 +24,6 @@ export class ProblemNotAvailableError extends Error {
   constructor() {
     super('No such problem for this owner.');
     this.name = 'ProblemNotAvailableError';
-  }
-}
-
-/**
- * Raised when this owner has already recorded a write with the same
- * `client_event_id`.
- *
- * The namespace is per table: an Event and a Verification may each carry the
- * same value, since they are separate writes.
- *
- * Only Verifications raise this now. P2-04 replaced the Event rejection with
- * returning the original event, so an Event retry is a no-op rather than an
- * error; P2-05 does the same for Verifications. Until then the two behave
- * differently on purpose, and this stays because the Verification path still
- * needs it.
- */
-export class DuplicateClientEventIdError extends Error {
-  constructor() {
-    super('This client event id has already been recorded for this owner.');
-    this.name = 'DuplicateClientEventIdError';
   }
 }
 
