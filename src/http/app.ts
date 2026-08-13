@@ -29,10 +29,16 @@ import Fastify, {
 import type {
   AuthenticatedRequestContext,
   HealthService,
+  ProjectEnvironmentService,
   RequestContextService,
 } from '../app/index.js';
-import { RequestContextUnavailableError } from '../app/index.js';
+import {
+  InvalidApplicationInputError,
+  RequestContextUnavailableError,
+  ResourceNotFoundError,
+} from '../app/index.js';
 import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './errors.js';
+import { registerProjectRoutes } from './project-routes.js';
 
 /** Version prefix for the Memory JSON API. Operational routes sit outside it. */
 export const API_PREFIX = '/v1';
@@ -40,6 +46,7 @@ export const API_PREFIX = '/v1';
 export interface MemoryHttpAppDependencies {
   readonly healthService: HealthService;
   readonly requestContextService: RequestContextService;
+  readonly projectEnvironmentService: ProjectEnvironmentService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -113,6 +120,21 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     const statusCode = error.statusCode ?? 500;
     if (statusCode === 400) {
       request.log.info({ err: error }, 'request could not be parsed');
+      void reply
+        .code(ERROR_STATUS.INVALID_REQUEST)
+        .send(buildErrorEnvelope('INVALID_REQUEST', request.id));
+      return;
+    }
+
+    // Application-level failures. Transport maps them by type and never by
+    // inspecting a driver error, so PostgreSQL stays out of the HTTP contract.
+    if (error instanceof ResourceNotFoundError) {
+      void reply.code(ERROR_STATUS.NOT_FOUND).send(buildErrorEnvelope('NOT_FOUND', request.id));
+      return;
+    }
+
+    if (error instanceof InvalidApplicationInputError) {
+      request.log.info({ err: error }, 'request rejected by the application layer');
       void reply
         .code(ERROR_STATUS.INVALID_REQUEST)
         .send(buildErrorEnvelope('INVALID_REQUEST', request.id));
@@ -217,6 +239,8 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
           return { owner_id: context.repository.ownerId };
         },
       );
+
+      registerProjectRoutes(scope, dependencies.projectEnvironmentService);
 
       done();
     },

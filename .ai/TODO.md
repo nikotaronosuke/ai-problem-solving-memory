@@ -18,19 +18,24 @@ Fastify 5 transport in `src/http/`, application services in `src/app/`, `/v1` ve
 
 Definition of Done verified: `/health` and `/v1/me` work, invalid input returns a consistent `INVALID_REQUEST` envelope, and the transport layer imports neither `pg` nor `src/db/` — enforced by `tests/architecture.test.ts`, not convention.
 
-### P2-02 — NEXT
+### P2-02 — DONE
 Project / Environment API.
 
-- Project create / get / list / update
-- Environment create / get / list
-- owner scope enforced on every endpoint
+Seven routes in the authenticated `/v1` scope: Project create, get, list and partial update; Environment create, get and list. Environments are nested under their project for create and list. No delete, and no Environment update.
+
+Definition of Done verified against a real database: an owner creates, reads, lists and patches its own projects and environments; another owner gets 404 for each of read, patch, environment-create and environment-list, with a body identical to a resource that does not exist; patching an unknown id creates nothing; and transport reaches storage only through the application service, enforced by the architecture test.
+
+Repository grew from ten operations to thirteen: `listProjects`, `updateProject`, `listEnvironments`.
+
+### P2-03 — NEXT
+Problem create / get / list / update API.
 
 Definition of Done:
-- CRUD works within an owner
-- another owner's data is unreachable
-- destructive operations may stay unimplemented if outside MVP requirements
+- Problem CRUD within an owner
+- another owner's data unreachable
+- consistent error shape
 
-Depends on P2-01, which is satisfied. Routes go inside the existing `/v1` scope, which already applies the authentication hook. List and update need adding at the repository boundary as well.
+Depends on P2-02, which is satisfied. Deciding which Problem fields a caller may set is part of this task: status transitions belong to P2-06 and `version` to P2-07.
 
 ## BLOCKED
 

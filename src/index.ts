@@ -12,7 +12,11 @@
  */
 
 import { loadEnv } from './config/env.js';
-import { createHealthService, createRequestContextService } from './app/index.js';
+import {
+  createHealthService,
+  createProjectEnvironmentService,
+  createRequestContextService,
+} from './app/index.js';
 import { resolveDatabaseConfig } from './db/config.js';
 import { closePool, createPool } from './db/pool.js';
 import { buildMemoryHttpApp, REDACTED_LOG_PATHS } from './http/index.js';
@@ -24,6 +28,7 @@ const pool = createPool(resolveDatabaseConfig({ nodeEnv: env.nodeEnv }));
 const app = buildMemoryHttpApp({
   healthService: createHealthService(pool),
   requestContextService: createRequestContextService(pool),
+  projectEnvironmentService: createProjectEnvironmentService(),
   logger: {
     level: env.logLevel,
     // Credentials must not survive into a log file, and the failure is silent

@@ -42,10 +42,11 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 実装 Phase 2 に入り、HTTP/JSON API の土台ができました。
 
 - Fastify によるローカル HTTP サーバー（既定で `127.0.0.1` のみ）
-- `/health` と、owner が確立していることを要求する `/v1/me`
+- `/health` と、owner が確立していることを要求する `/v1/*`
+- Project の作成・取得・一覧・更新、Environment の作成・取得・一覧
 - リクエスト検証と、全エラー共通の JSON 形式
 
-Memory 本体の API（Project / Problem / Event 等）と AI 連携はまだこれからです。
+Problem / Event / Verification の API と AI 連携はまだこれからです。
 
 詳細な内部仕様は現時点では非公開です。
 

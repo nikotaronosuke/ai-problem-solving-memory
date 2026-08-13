@@ -6,7 +6,7 @@ Updated: 2026-08-13
 
 Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
-Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01 done, P2-02 next)
+Implementation Phase 2 — Core Memory API: **IN PROGRESS** (P2-01, P2-02 done; P2-03 next)
 
 ## Source of truth
 
@@ -35,6 +35,29 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 **Config.** `HOST` and `PORT`, defaulting to `127.0.0.1:3000`. Loopback by default because this holds one person's memory. Blank `HOST` is refused rather than defaulted; `PORT` must be digits in 1–65535.
 
 **Logging.** Fastify's logger at `LOG_LEVEL`, with authorization, cookie, api-key and set-cookie headers redacted. Bodies are not logged. Tests pass `logger: false`.
+
+## What exists now — Project and Environment API (P2-02)
+
+| Method | Path |
+| --- | --- |
+| POST / GET | `/v1/projects` |
+| GET / PATCH | `/v1/projects/:project_id` |
+| POST / GET | `/v1/projects/:project_id/environments` |
+| GET | `/v1/environments/:environment_id` |
+
+**Nesting.** Environments are created and listed under their project so the project id has exactly one source. Accepting it in a path and a body would allow the two to disagree. A single environment is fetched by its own id, which already identifies one record.
+
+**No delete, no environment update.** Nothing is deleted in this phase, and an Environment is a point in time — changed conditions are a new one.
+
+**PATCH semantics.** Partial. An absent field is unchanged; an explicit `null` clears `repo` or `platform`; a blank string normalises to null. `owner_id`, `project_id` and the timestamps cannot be set. An empty patch is refused rather than executed, since it would still move `updated_at` and record a change that did not happen. It never upserts: patching an unknown id is a 404 and creates nothing.
+
+**Ordering.** Lists are `created_at` then id, in the SQL itself. Repeated reads agree even when rows share a timestamp.
+
+**Not-found unification.** A resource that does not exist and one belonging to another owner produce the same `ResourceNotFoundError` and the same 404 body. Listing a project's environments checks the project first, so another owner's project cannot answer with an empty list — which would read as "it exists and is empty".
+
+**Snapshot boundary.** The request schema accepts only a JSON object at the top level, with free keys inside. An array, string, number, boolean or null is a 400 before the domain converter is reached.
+
+**Layers.** `src/http/project-routes.ts` reads requests and shapes responses; `src/app/project-environment-service.ts` converts ids, decides not-found, and orchestrates. Transport never names a database error type — the architecture test enforces that.
 
 ## What exists now
 
@@ -71,22 +94,22 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - Recording a successful Verification does **not** move a Problem to `VERIFIED`, and nothing prevents `VERIFIED` at the database level. That judgement is P2-06
 - A duplicate `client_event_id` is refused, not replayed. Returning the original is P2-04 for Events and P2-05 for Verifications
 - `version` exists on Problem and nothing increments it. Optimistic locking is P2-07
-- No Memory API routes yet: `/health` and `/v1/me` are the whole HTTP surface. Project, Environment, Problem, Event and Verification endpoints are P2-02 onward
-- No MCP, no update or delete path, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
+- No Problem, Event or Verification endpoints. Those are P2-03 onward
+- No delete anywhere, no Environment update, no MCP, no Relation, UsageLog or ChangeLog, no sanitization, no search, embedding or retrieval, no AI adapter, no UI
+- No pagination, filtering or search on list endpoints
 - No OpenAPI generation. Response schemas exist per route and are reusable for P2-13, but nothing generates a document
 
 ## Immediate objective
 
-P2-02 — Project / Environment API.
+P2-03 — Problem create/get/list/update API.
 
-Not started. Project create/get/list/update and Environment create/get/list, with owner scope enforced on every endpoint.
+Not started.
 
 Notes for whoever picks this up:
-- Register routes inside the existing `/v1` plugin scope in `src/http/app.ts`; the authentication `preHandler` already applies there and hands the handler an owner-scoped repository
-- The repository currently exposes create/get only. List and update are new operations and need adding at the repository boundary too — that is real work, not a pass-through
-- Request bodies use Fastify JSON Schema. Keep `additionalProperties: false` refusing rather than silently dropping, as the shared Ajv config already does
-- Response fields are snake_case and shaped explicitly. Do not serialise a record directly
-- P1-07's environment snapshot converter accepts any non-array object, including class instances. HTTP input is parsed JSON, so this is the natural place to constrain it
+- The pattern is established: add repository operations, extend the application service, register routes in the `/v1` scope, map records explicitly in `src/http/resources.ts`
+- Problem lists will need a project filter; `problems (owner_id, project_id, created_at, problem_id)` already exists for exactly that
+- Problem update is where the caller could try to set `status`, `confidence` or `version`. Deciding which of those a caller may set at all is part of this task — status transitions are P2-06, and `version` is P2-07
+- The repository now exposes 13 operations
 
 ## Core MVP milestone
 
