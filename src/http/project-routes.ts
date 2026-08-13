@@ -64,6 +64,9 @@ export function registerProjectRoutes(
     '/projects',
     {
       schema: {
+        operationId: 'createProject',
+        summary: 'Create a project',
+        tags: ['Projects'],
         body: {
           type: 'object',
           properties: {
@@ -95,6 +98,9 @@ export function registerProjectRoutes(
     '/projects',
     {
       schema: {
+        operationId: 'listProjects',
+        summary: 'List your projects',
+        tags: ['Projects'],
         response: {
           200: {
             type: 'object',
@@ -116,6 +122,9 @@ export function registerProjectRoutes(
     '/projects/:project_id',
     {
       schema: {
+        operationId: 'getProject',
+        summary: 'Read a project',
+        tags: ['Projects'],
         params: PROJECT_ID_PARAMS_SCHEMA,
         response: { 200: PROJECT_RESOURCE_SCHEMA, ...COMMON_ERROR_RESPONSES },
       },
@@ -133,6 +142,11 @@ export function registerProjectRoutes(
     '/projects/:project_id',
     {
       schema: {
+        operationId: 'updateProject',
+        summary: 'Update a project',
+        description:
+          'Changes only the fields it names. An empty patch is refused rather than treated as a no-op.',
+        tags: ['Projects'],
         params: PROJECT_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',
@@ -174,6 +188,10 @@ export function registerProjectRoutes(
     '/projects/:project_id/environments',
     {
       schema: {
+        operationId: 'createEnvironment',
+        summary: 'Record an environment snapshot',
+        description: 'A point in time. There is no update or delete for one.',
+        tags: ['Environments'],
         params: PROJECT_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',
@@ -204,6 +222,9 @@ export function registerProjectRoutes(
     '/projects/:project_id/environments',
     {
       schema: {
+        operationId: 'listEnvironments',
+        summary: 'List a project\u2019s environments',
+        tags: ['Environments'],
         params: PROJECT_ID_PARAMS_SCHEMA,
         response: {
           200: {
@@ -232,6 +253,9 @@ export function registerProjectRoutes(
     '/environments/:environment_id',
     {
       schema: {
+        operationId: 'getEnvironment',
+        summary: 'Read an environment',
+        tags: ['Environments'],
         params: ENVIRONMENT_ID_PARAMS_SCHEMA,
         response: { 200: ENVIRONMENT_RESOURCE_SCHEMA, ...COMMON_ERROR_RESPONSES },
       },

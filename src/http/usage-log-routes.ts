@@ -69,6 +69,11 @@ export function registerUsageLogRoutes(scope: FastifyInstance, service: UsageLog
     '/problems/:problem_id/usage-logs',
     {
       schema: {
+        operationId: 'createUsageLog',
+        summary: 'Record that past memory was used',
+        description:
+          'Explicit only. No read writes one, and recording a use changes neither problem.',
+        tags: ['Usage'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         body: {
           type: 'object',
@@ -124,6 +129,9 @@ export function registerUsageLogRoutes(scope: FastifyInstance, service: UsageLog
     '/problems/:problem_id/usage-logs',
     {
       schema: {
+        operationId: 'listUsageLogs',
+        summary: 'List memory used on a problem',
+        tags: ['Usage'],
         params: PROBLEM_ID_PARAMS_SCHEMA,
         response: {
           200: {
