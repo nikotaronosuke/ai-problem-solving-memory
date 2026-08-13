@@ -698,3 +698,45 @@ The source Problem comes from the path only, so it has one source and cannot dis
 How a mistaken link is corrected or withdrawn is deliberately undecided. Events and Verifications are append-only because a later correction is another record; Problems are updatable and versioned. A Relation is neither obviously one nor the other, and adding a route now would settle it by accident rather than by decision.
 
 No graph traversal, no automatic similarity detection, no deduplication and no pagination. Retrieval is a later phase, and building for it now would fix shapes that phase has not justified.
+
+## D-081 — UsageLog is Memory-specific history, not a global audit log (P2-09)
+
+`usage_logs` records that a past Problem was used while working on another: found, read, taken, set aside, or decisive enough to change the approach. Separate from the Memory itself, per the specification — a Problem records what was learned, and this records that someone consulted it. Folding them together would make the record of an investigation depend on who has been reading it.
+
+It records nothing wider. No tool calls, deploys, model invocations or approvals, and no columns for them. The boundary addendum places a Global Audit Layer outside this repository, and the way to keep that true is for this table to stay something such a layer could read from rather than something already trying to be it. Tests assert the absence of `tool_id`, `model_id` and `approval_id`, and that `/v1/audit-logs` is not served.
+
+## D-082 — memory_id is a Problem, and may be the same Problem (P2-09)
+
+In the MVP a Case Memory *is* a Problem, so `memory_id` is a plain composite foreign key to `problems (owner_id, problem_id)` — the same shape as `problem_id`. No `memory_type`, no `entity_type`, no polymorphic target: Patterns and Skills do not exist, and columns added for them now would fix their shape in advance, as D-076 says of Relations.
+
+`problem_id` is the problem being worked on; `memory_id` is the past one drawn upon. They may be equal, and there is deliberately no self-check — continuing the same investigation under a different AI, reading back its own history, is a real case and refusing it would gain nothing. This differs from a Relation, where a self-link is refused (D-078), because the two record different things: one asserts that two problems are related, the other that something was consulted.
+
+Cross-project is allowed and cross-owner is refused, for D-078's reasons and by the same double check — the application against the owner-scoped repository, and both foreign keys.
+
+## D-083 — Five actions, no order between them (P2-09)
+
+`SEARCHED`, `REFERENCED`, `ADOPTED`, `EXCLUDED`, `CHANGED_STRATEGY`, as a text-backed DOMAIN like the seven before it (D-012) and registered in `ENUM_DOMAIN_BINDINGS`.
+
+They are observations, not stages. Nothing requires `SEARCHED` before `REFERENCED` or `REFERENCED` before `ADOPTED`, and nothing in the domain relates one to another. An adapter reports what it can tell — some never see a search step, some only realise at the end that a memory changed the direction of the work — and a required sequence would turn a record of what happened into a workflow that adapters would have to satisfy with invented entries.
+
+## D-084 — Logging is explicit; no read writes one (P2-09)
+
+A usage log is created only by calling the endpoint. Fetching a Problem, or listing its Events, Verifications or Relations, writes nothing.
+
+Two reasons. A read that quietly writes can fail for reasons the caller never asked about, and Memory trouble must not stop the work it is meant to support. And a read is not a use: only the adapter knows whether it referenced a memory, adopted it, or set it aside, so only the adapter can say. An integration test performs every read a caller might make while consulting a memory and asserts nothing was recorded.
+
+## D-085 — source_ai describes; it never authorises (P2-09)
+
+Required and non-blank, free-form text: provider and model names change, and manual and imported entries exist alongside AI ones — the same reasoning that keeps `source_ai` free-form on an Event (D-026).
+
+It is not a credential and is never consulted for scope. The owner comes from the established request context and from nowhere else, as it has since D-014. A test sends another AI's name, `manual`, another owner's id and `root` in that field and asserts each reaches exactly the same data — a 404 for the other owner's Problem in every case.
+
+## D-086 — Using memory is not a claim about it (P2-09)
+
+Creating a usage log changes neither Problem: no status, no version, no `updated_at`, no confidence or freshness, and no Relation, Event or Verification appears. So there is no `expected_version` — this is not a Problem write (D-071 governs those) — and sending one is a 400.
+
+Adopting a `VERIFIED` memory does not let the current Problem become `VERIFIED`. Memory is a candidate, not an answer, and the evidence rule (D-068) is unaffected by how many memories were consulted. A test drives that sequence and asserts the transition is still refused.
+
+Create and list only, with the list scoped to the problem being worked on: "what did this investigation draw on?" is the question. "Where has this memory been used?" is a different one, and the index for it exists but no endpoint asks it yet.
+
+Retention and correction are deliberately undecided. There is no update or delete path, but that is not a promise that usage history is kept forever — deciding that belongs with whatever privacy and export work comes later, not with the table that first stores it. No idempotency key either: whether a resent log needs one is a question for when adapter retry behaviour is designed, and copying `client_event_id` across from the append paths would answer it by reflex.

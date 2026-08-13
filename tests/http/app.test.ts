@@ -20,6 +20,7 @@ import {
   createProblemStatusService,
   createProjectEnvironmentService,
   createRelationService,
+  createUsageLogService,
   ProblemVersionConflictError,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
@@ -67,6 +68,7 @@ function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> =
     eventService: createEventService(),
     verificationService: createVerificationService(),
     relationService: createRelationService(),
+    usageLogService: createUsageLogService(),
     logger: false,
     ...overrides,
   });

@@ -99,12 +99,27 @@ Schema counts moved as expected: migrations 9 → 10, tables 6 → 7, DOMAINs 6 
 
 Repository grew from sixteen operations to eighteen: `createRelation`, `listRelations`.
 
-### P2-09 — NEXT
+### P2-09 — DONE
 UsageLog.
 
-Depends on P2-03, satisfied. See the private task breakdown for its Definition of Done. Like P2-08 it starts at the schema — nothing exists yet.
+An eleventh migration adds the `usage_action` DOMAIN and the `usage_logs` table; two routes follow: `POST|GET /v1/problems/:problem_id/usage-logs`. Create and list only.
 
-Worth deciding early: a usage log records what was read rather than what was learned, so how long it is kept, whether it is owner-scoped in the same way, and whether it is append-only are its own questions rather than inherited ones. Note also that nothing in the model currently writes on a read, so this is the first entity whose creation is a side effect of retrieval rather than of a caller's explicit intent.
+Definition of Done verified against a real database: usage is recorded independently of the Memory itself — neither Problem changes — and which AI used what is traceable through `source_ai`, `action`, `memory_id` and `reason`.
+
+It stayed explicit rather than becoming a read side effect (D-084), which was the question this task had to answer first. `source_ai` describes and never authorises (D-085). Cross-project usage is allowed and cross-owner refused, both ends checked. A Problem may be its own memory, unlike a Relation, because continuing an investigation under a different AI is real.
+
+Global Audit stayed out (D-081): no tool, model or approval columns, and no audit route.
+
+Schema counts moved as expected: migrations 10 → 11, tables 7 → 8, DOMAINs 7 → 8, foreign keys 7 → 9, all still RESTRICT, still no native enum and no trigger.
+
+Repository grew from eighteen operations to twenty: `createUsageLog`, `listUsageLogs`.
+
+### P2-10 — NEXT
+ChangeLog.
+
+Depends on P2-03, satisfied. See the private task breakdown for its Definition of Done. Like P2-08 and P2-09 it starts at the schema.
+
+The shape of the question differs from UsageLog's, though: a ChangeLog records who changed what and how, so unlike usage — which the adapter alone can characterise — the service already knows when a change happens. Whether that makes it a write side effect rather than an explicit call is this task's first decision, and D-084 argues only about reads, so it does not settle it. Note also that Problems are the only mutable entity (D-071), which bounds what there is to log.
 
 ## BLOCKED
 

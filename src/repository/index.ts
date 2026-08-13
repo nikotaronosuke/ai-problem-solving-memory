@@ -25,6 +25,7 @@ export { EmptyProblemUpdateError } from '../db/problems.js';
 export type { AppendEventInput, EventRecord } from '../db/events.js';
 export type { AppendVerificationInput, VerificationRecord } from '../db/verifications.js';
 export type { CreateRelationInput, RelationRecord } from '../db/relations.js';
+export type { CreateUsageLogInput, UsageLogRecord } from '../db/usage-logs.js';
 
 // The failures a caller has to handle. Mapping stays in the database layer;
 // these are re-exported so the caller need not reach past this boundary.

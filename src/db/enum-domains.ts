@@ -16,6 +16,7 @@ import {
   FRESHNESSES,
   PROBLEM_STATUSES,
   RELATION_TYPES,
+  USAGE_ACTIONS,
   VERIFICATION_TYPES,
 } from '../domain/enums.js';
 
@@ -55,6 +56,11 @@ export const ENUM_DOMAIN_BINDINGS: readonly EnumDomainBinding[] = [
     domainName: 'relation_type',
     constraintName: 'relation_type_allowed_values',
     values: RELATION_TYPES,
+  },
+  {
+    domainName: 'usage_action',
+    constraintName: 'usage_action_allowed_values',
+    values: USAGE_ACTIONS,
   },
   {
     domainName: 'confidence',

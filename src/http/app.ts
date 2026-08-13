@@ -35,6 +35,7 @@ import type {
   ProjectEnvironmentService,
   RelationService,
   RequestContextService,
+  UsageLogService,
   VerificationService,
 } from '../app/index.js';
 import {
@@ -49,6 +50,7 @@ import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerRelationRoutes } from './relation-routes.js';
+import { registerUsageLogRoutes } from './usage-log-routes.js';
 import { registerVerificationRoutes } from './verification-routes.js';
 
 /** Version prefix for the Memory JSON API. Operational routes sit outside it. */
@@ -63,6 +65,7 @@ export interface MemoryHttpAppDependencies {
   readonly eventService: EventService;
   readonly verificationService: VerificationService;
   readonly relationService: RelationService;
+  readonly usageLogService: UsageLogService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -272,6 +275,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       registerEventRoutes(scope, dependencies.eventService);
       registerVerificationRoutes(scope, dependencies.verificationService);
       registerRelationRoutes(scope, dependencies.relationService);
+      registerUsageLogRoutes(scope, dependencies.usageLogService);
 
       done();
     },

@@ -19,6 +19,7 @@ import {
   createProblemStatusService,
   createProjectEnvironmentService,
   createRelationService,
+  createUsageLogService,
   createRequestContextService,
   createVerificationService,
 } from './app/index.js';
@@ -39,6 +40,7 @@ const app = buildMemoryHttpApp({
   eventService: createEventService(),
   verificationService: createVerificationService(),
   relationService: createRelationService(),
+  usageLogService: createUsageLogService(),
   logger: {
     level: env.logLevel,
     // Credentials must not survive into a log file, and the failure is silent

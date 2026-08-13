@@ -31,6 +31,7 @@ import {
   createProblemStatusService,
   createProjectEnvironmentService,
   createRelationService,
+  createUsageLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -75,6 +76,7 @@ describe.skipIf(databaseUrl === undefined)('Problem optimistic locking', () => {
       eventService: createEventService(),
       verificationService: createVerificationService(),
       relationService: createRelationService(),
+      usageLogService: createUsageLogService(),
       logger: false,
     });
     appsCreated.push(app);

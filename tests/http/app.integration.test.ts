@@ -22,6 +22,7 @@ import {
   createProblemStatusService,
   createProjectEnvironmentService,
   createRelationService,
+  createUsageLogService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -54,6 +55,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       eventService: createEventService(),
       verificationService: createVerificationService(),
       relationService: createRelationService(),
+      usageLogService: createUsageLogService(),
       logger: false,
     });
 
@@ -126,6 +128,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       eventService: createEventService(),
       verificationService: createVerificationService(),
       relationService: createRelationService(),
+      usageLogService: createUsageLogService(),
       logger: false,
     });
 
@@ -150,6 +153,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       eventService: createEventService(),
       verificationService: createVerificationService(),
       relationService: createRelationService(),
+      usageLogService: createUsageLogService(),
       logger: false,
     });
 
@@ -182,6 +186,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       eventService: createEventService(),
       verificationService: createVerificationService(),
       relationService: createRelationService(),
+      usageLogService: createUsageLogService(),
       logger: false,
     });
 
