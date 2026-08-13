@@ -27,7 +27,13 @@ export type {
   EventRecord,
   ProblemRecord,
   ProjectRecord,
+  VerificationRecord,
 } from '../repository/index.js';
+export {
+  createVerificationService,
+  type AppendVerificationCommand,
+  type VerificationService,
+} from './verification-service.js';
 export {
   createRequestContextService,
   RequestContextUnavailableError,

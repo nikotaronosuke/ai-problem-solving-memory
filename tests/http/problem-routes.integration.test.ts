@@ -21,6 +21,7 @@ import {
   createProblemService,
   createProjectEnvironmentService,
   createRequestContextService,
+  createVerificationService,
 } from '../../src/app/index.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
@@ -63,6 +64,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       eventService: createEventService(),
+      verificationService: createVerificationService(),
       logger: false,
     });
     appsCreated.push(app);

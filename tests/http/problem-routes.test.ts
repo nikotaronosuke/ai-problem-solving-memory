@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createVerificationService,
   createEventService,
   createProjectEnvironmentService,
   RequestContextUnavailableError,
@@ -107,6 +108,7 @@ function buildApp(service: ProblemService, authenticated = true) {
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: service,
     eventService: createEventService(),
+    verificationService: createVerificationService(),
     logger: false,
   });
 }
@@ -507,9 +509,10 @@ describe('routes that do not exist', () => {
   });
 
   it.each([
-    // Events arrived in P2-04. Verifications are still P2-05.
-    `/v1/problems/${PROBLEM_ID}/verifications`,
+    // Events and Verifications both hang off a problem now; what a problem
+    // still does not have is a collection of its own or another version.
     '/problems',
+    `/v1/problems`,
     `/v2/problems/${PROBLEM_ID}`,
   ])('%s is not served', async (url) => {
     const app = buildApp(serviceRecording({}));

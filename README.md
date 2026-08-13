@@ -46,9 +46,10 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - Project の作成・取得・一覧・更新、Environment の作成・取得・一覧
 - Problem の作成・取得・一覧・部分更新
 - Event の append と Problem 単位一覧（`client_event_id` による再送の冪等性つき）
+- Verification の append と Problem 単位一覧（同じく冪等。成功 Verification でも status は変わりません）
 - リクエスト検証と、全エラー共通の JSON 形式
 
-Problem の状態遷移、Verification の API と AI 連携はまだこれからです。
+Problem の状態遷移と AI 連携はまだこれからです。
 
 詳細な内部仕様は現時点では非公開です。
 

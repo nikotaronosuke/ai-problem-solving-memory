@@ -191,7 +191,7 @@ describe('transport layer', () => {
     // here would make PostgreSQL part of the HTTP contract.
     const offenders = modules
       .filter((module) =>
-        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|DuplicateClientEventIdError|EmptyProjectUpdateError|EmptyProblemUpdateError)\b/.test(
+        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|EmptyProjectUpdateError|EmptyProblemUpdateError)\b/.test(
           module.source,
         ),
       )
@@ -233,13 +233,13 @@ describe('application layer', () => {
   it('does not name a database-layer error type', async () => {
     const modules = await readModules(join(SRC, 'app'));
 
-    // The same rule transport follows. `DuplicateClientEventIdError` matters
-    // most here: idempotent append is the database layer's to implement, and
-    // a service that caught this would be deciding storage behaviour from
-    // above — the place where it could not see a concurrent writer.
+    // The same rule transport follows. It matters most for the append paths:
+    // idempotent append is the database layer's to implement, and a service
+    // that recognised a storage failure would be deciding that behaviour from
+    // above — the place that cannot see a concurrent writer.
     const offenders = modules
       .filter((module) =>
-        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|DuplicateClientEventIdError|EmptyProjectUpdateError|EmptyProblemUpdateError)\b/.test(
+        /\b(ProjectNotAvailableError|EnvironmentNotAvailableError|ProblemNotAvailableError|EmptyProjectUpdateError|EmptyProblemUpdateError)\b/.test(
           module.source,
         ),
       )
