@@ -510,3 +510,41 @@ One consequence of a failed insert is an aborted transaction. That is fine while
 Only Events replay. A duplicate Verification `client_event_id` is still refused, and P2-05 changes that.
 
 The two were not done together on purpose. `client_event_id` namespaces are per table (D-032), so the paths are independent, and changing the shared error's meaning for both at once would make P2-05 a rename rather than a decision — including the question of what a Verification retry means when the original recorded a different `result`. Until then the difference is deliberate and is asserted by a test, so it reads as a decision rather than an oversight.
+
+## D-061 — Verification route shape (P2-05)
+
+`POST|GET /v1/problems/:problem_id/verifications`, mirroring the Event routes (D-057). No single-verification read, no update, no delete, no unscoped `/v1/verifications`.
+
+There is deliberately no route reaching a Verification through an Event, and `event_id` is refused in the body. D-030 made the two independent in storage; this keeps them independent in the contract, so nothing can start treating a Verification as a property of the FIX Event that preceded it. A Problem with a Verification and no Events at all is still a coherent record, and a test asserts it stays one.
+
+Both routes confirm the problem is the caller's first, so an unknown or another owner's problem is one 404 and listing never answers with an empty list for something that is not the caller's.
+
+## D-062 — result is a boolean at the HTTP boundary too (P2-05)
+
+D-031 made `result` a boolean in storage. The request schema keeps it one: `true` and `false` are accepted, and `null`, `"true"`, `"false"`, `1`, `0` and a missing field are each a 400 rather than something coerced. Type coercion is off application-wide, so this holds without special handling.
+
+Both values mean a check was actually carried out — true that it confirmed the state, false that it did not. "Not checked yet", "unknown" and "not tried" are the *absence* of a Verification, not a Verification recording false. Every widening of this type would let that third meaning in through a value, and P2-06 has to be able to find a successful check mechanically.
+
+A false result is kept and listed like any other. It is evidence too, and discarding it would leave "we checked and it failed" indistinguishable from "nobody checked".
+
+## D-063 — A Verification retry cannot change what was found (P2-05)
+
+Appending is idempotent on `(owner_id, client_event_id)` exactly as Events are (D-058): first write wins, the retry's payload is not applied, a retry aimed at a different problem replays the original including its `problem_id`, and ownership of the problem in the path is settled before the key is consulted.
+
+`result` is why this matters more here than it does for Events. A retry is the same write arriving again, not a second check, so it cannot turn a recorded false into true — or true into false. Allowing it would let a client overwrite a finding by resending, which is precisely the failure the separation of fix from confirmation exists to prevent: an assistant saying "it works" is not evidence that it does. Tests fix both directions.
+
+A different finding is a new Verification with a new key. There is no `USER_CORRECTION` here as there is for Events, because a second piece of evidence *is* the correction — and both remain visible, which is the honest record.
+
+## D-064 — DuplicateClientEventIdError was removed rather than kept (P2-05)
+
+With both append paths replaying, nothing raised it. It was deleted along with its re-exports from `src/db/index.ts` and `src/repository/index.ts`, rather than kept because it was once shared: an error type no code can produce is a claim about behaviour that no longer exists, and the next reader would have to prove that for themselves.
+
+This supersedes the last paragraph of D-032, which described it as shared by both append paths, and completes what D-060 deferred.
+
+Nothing about the constraints changed. `(owner_id, client_event_id)` is still unique per table, still the arbiter of concurrent retries, and still refuses a direct insert that goes around the append path — tests check that against the database rather than through the code that was just changed.
+
+## D-065 — Recording a Verification still decides nothing (P2-05)
+
+Appending a Verification with `result = true` leaves the Problem's `status` exactly where it was, including `INVESTIGATING`. There is no transition service, no status write and no version increment in this task.
+
+D-033 settled this for storage; P2-05 is where an API could most easily have undone it, since this is the endpoint a client would call on being told a fix worked. Deciding a Problem is solved weighs the transition rules as well as the evidence, and P2-06 owns both. An integration test reads the status back through the API after a successful verification, so the guarantee is checked at the boundary a client actually sees.

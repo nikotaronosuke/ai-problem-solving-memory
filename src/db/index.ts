@@ -58,7 +58,7 @@ export {
 } from './problems.js';
 
 // Raised by both append paths.
-export { DuplicateClientEventIdError, ProblemNotAvailableError } from './errors.js';
+export { ProblemNotAvailableError } from './errors.js';
 
 // Append and list only. Events are append-only, so no update or delete path
 // is offered.

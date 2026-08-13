@@ -11,8 +11,10 @@
  * That transition is a domain decision, made in P2-06 after checking that a
  * successful Verification exists — not a side effect of a write.
  *
- * This is the minimum P1-10 needs. Duplicate replay is P2-05, and the general
- * repository layer is P1-12.
+ * Since P2-05, appending is idempotent on `client_event_id`: a retry returns
+ * the verification the first attempt wrote rather than failing. Events work
+ * the same way and keep a separate namespace, so the same value may appear
+ * once in each table without the two colliding.
  */
 
 import type { ClientEventId } from '../domain/client-event-id.js';
@@ -26,7 +28,6 @@ import {
   type VerificationId,
 } from '../domain/verification.js';
 import {
-  DuplicateClientEventIdError,
   FOREIGN_KEY_VIOLATION,
   ProblemNotAvailableError,
   UNIQUE_VIOLATION,
@@ -101,11 +102,59 @@ const VERIFICATION_COLUMNS = `verification_id, owner_id, problem_id, verificatio
   summary, evidence_ref, verified_by, client_event_id, created_at`;
 
 /**
+ * Reads back the verification this owner already recorded under a client
+ * event id.
+ *
+ * Scoped by owner, like every read here, so one owner's key cannot reach
+ * another's verification even though the values may coincide.
+ *
+ * Not exported: it exists to answer "what did the first attempt write?" after
+ * a unique violation, and it is not a lookup the API offers.
+ */
+async function findVerificationByClientEventId(
+  executor: DatabaseExecutor,
+  context: OwnerContext,
+  clientEventId: ClientEventId,
+): Promise<VerificationRecord | undefined> {
+  const result = await executor.query<VerificationRow>(
+    `select ${VERIFICATION_COLUMNS}
+       from public.verifications
+      where owner_id = $1 and client_event_id = $2`,
+    [context.ownerId, clientEventId],
+  );
+
+  const row = result.rows[0];
+  return row === undefined ? undefined : toRecord(row);
+}
+
+/**
  * Records a verification against one of the context owner's problems.
  *
- * Fails if this owner has already used the same `clientEventId` for a
- * verification. Events keep a separate namespace, so the same value may also
- * appear once there.
+ * Idempotent on `clientEventId`, following the Event append path. The first
+ * attempt writes the verification; any later attempt carrying the same id
+ * returns that same verification, unchanged.
+ *
+ * The retry's payload is not applied, and `result` is the reason that matters
+ * most: a Verification is evidence of a check that was actually carried out.
+ * Letting a retry flip a recorded false to true would rewrite the outcome of
+ * a check nobody ran again. A later check is a new Verification with a new
+ * key, which is also how a correction is recorded — there is no
+ * USER_CORRECTION here as there is for Events, because the second piece of
+ * evidence is the correction.
+ *
+ * The insert is attempted first and the unique index on
+ * `(owner_id, client_event_id)` is what decides. Reading before writing would
+ * leave a window in which two concurrent attempts both find nothing and both
+ * insert; here one of them loses to the constraint and reads back the winner.
+ *
+ * As with Events, the failed insert aborts its transaction. That works because
+ * each `executor.query` is its own implicit transaction; calling this inside an
+ * explicit one would need a savepoint.
+ *
+ * Whether the problem exists is checked above this, before the append. The
+ * unique index is evaluated before the foreign key, so an unknown problem plus
+ * a reused key would otherwise replay a verification the caller never had a
+ * right to see.
  */
 export async function appendVerification(
   executor: DatabaseExecutor,
@@ -144,7 +193,19 @@ export async function appendVerification(
       throw new ProblemNotAvailableError();
     }
     if (violatesConstraint(error, UNIQUE_VIOLATION, CLIENT_EVENT_ID_KEY)) {
-      throw new DuplicateClientEventIdError();
+      // The same write, sent again. Return what it produced the first time.
+      const original = await findVerificationByClientEventId(
+        executor,
+        context,
+        input.clientEventId,
+      );
+      if (original === undefined) {
+        // The constraint fired, so the row was there a moment ago.
+        // Verifications have no delete path, so this should be unreachable;
+        // saying so beats returning something invented.
+        throw new Error('Verification conflicted on client_event_id but could not be read back.');
+      }
+      return original;
     }
     throw error;
   }

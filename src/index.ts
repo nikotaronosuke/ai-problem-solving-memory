@@ -18,6 +18,7 @@ import {
   createProblemService,
   createProjectEnvironmentService,
   createRequestContextService,
+  createVerificationService,
 } from './app/index.js';
 import { resolveDatabaseConfig } from './db/config.js';
 import { closePool, createPool } from './db/pool.js';
@@ -33,6 +34,7 @@ const app = buildMemoryHttpApp({
   projectEnvironmentService: createProjectEnvironmentService(),
   problemService: createProblemService(),
   eventService: createEventService(),
+  verificationService: createVerificationService(),
   logger: {
     level: env.logLevel,
     // Credentials must not survive into a log file, and the failure is silent
