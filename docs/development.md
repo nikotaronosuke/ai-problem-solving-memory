@@ -383,11 +383,31 @@ Run `npm run check` before reporting a task complete.
 | `src/db/`              | Database access boundary — importing it opens nothing  |
 | `src/repository/`      | Owner-scoped storage seam the service layer works with |
 | `tests/`               | Automated tests, mirroring `src/`                      |
+| `tests/e2e/`           | Whole-scenario tests, one per phase                    |
 | `supabase/migrations/` | Schema migrations, in filename order                   |
 | `supabase/config.toml` | Local stack configuration                              |
 | `db/`                  | Database notes                                         |
 | `docs/`                | Public implementation documentation                    |
 | `.ai/`                 | Implementation state for AI sessions — see `CLAUDE.md` |
+
+## End-to-end tests
+
+Two scenarios run a whole story rather than one endpoint.
+
+```bash
+npx vitest run tests/e2e/phase2.e2e.test.ts        # Phase 2, over HTTP
+npx vitest run tests/integration/phase1            # Phase 1, through the repository
+```
+
+`tests/e2e/phase2.e2e.test.ts` is the Phase 2 one: a problem investigated,
+fixed and verified, then used as memory by a second problem in a different
+project, every step an HTTP request against a real database. It is where a
+change that breaks the join between two features shows up — each endpoint
+still passing its own suite while the ids or versions no longer line up.
+
+Both generate their own owners, remove only what they created, and are skipped
+when `DATABASE_URL` is unset. Neither uses the owner from your `.env`, so
+running them does not touch your local data.
 
 ## Conventions
 
