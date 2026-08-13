@@ -298,7 +298,7 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 2050 tests across 66 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 2096 tests across 66 files.
 
 ## What exists now — Phase 2 end to end (P2-14)
 
@@ -344,7 +344,13 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Detection and action are separate files on purpose.** `detector.ts` says what a string is; `policy.ts` says what happens to it. P3-03 changes the second without reopening the first (D-120).
 
-**Meaning, never shape.** No entropy score and no length threshold. Every rule needs a signal that says *credential*: a PEM header, a JWT whose header actually decodes, an `Authorization` or `Cookie` line, a credential-named assignment, or a credential-named field in the caller's own structure. "Long random string" describes a UUID, a commit SHA and every evidence reference in the system, and a detector built on it would refuse the things that make a Memory worth keeping (D-122).
+**Meaning, never shape — in both directions.** No entropy score and no length threshold as evidence *for* a secret: "long random string" describes a UUID, a commit SHA and every evidence reference in the system (D-122). And none as evidence *against* one either, which took a review round to get right: `PASSWORD=letmein` and `{"api_key":"abcdef"}` are credentials, and an earlier version stored them because the value read like a word (D-124).
+
+**Names carry a strength.** `strong` names — `password`, `api_key`, `client_secret`, `access_token`, `private_key` — have no ordinary reading, so the value's shape is not consulted at all. `ambiguous` names — `token`, `secret`, `session` — do, so there shape separates `confirmed` from `suspected`. That is the only place it decides anything.
+
+**Content is read, not measured.** One function used by every rule: a value is a `placeholder` (already redacted, or a template), a `status` word (`unknown`, `expired`, `rotated` — a note about a credential), or a `value`. So `Authorization: Bearer [REDACTED]` and `{"api_key":"[REDACTED]"}` get the same answer, and a caller never has to learn which rule saw their string.
+
+**Headers are parsed.** `Authorization` needs a recognised scheme *and* a credential; `Authorization: disabled` and a bare `Authorization: Bearer` carry nothing. Cookies are split into pairs. One line is judged once — a header line is not re-read as a generic assignment (D-124).
 
 **Context comes from the structured path.** `{"api_key": "9f2c..."}` is recognised because the nearest key is named `api_key`, which is what P3-01's raw `FieldPath` is for. The association survives an array — `{"api_keys": ["..."]}` — and does not carry past an unrelated field.
 
@@ -354,7 +360,7 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **A finding holds no part of what it found.** Category and certainty, both from closed sets. No matched text, no excerpt, no offset, no hash — `JSON.stringify` of a finding is two short identifiers (D-121).
 
-**Confirmed is refused; suspected is kept.** Refusal is fail-closed holding P3-02's own completion condition, not the reject policy: P3-03 owns that. `suspected` — a credential-named field holding an ordinary word — is kept, because refusing configuration templates and documentation examples would make the record unusable, and nothing about it is logged either (D-123).
+**Confirmed is refused; suspected is kept.** Refusal is fail-closed holding P3-02's own completion condition, not the reject policy: P3-03 owns that. `suspected` — an *ambiguous* name over an ordinary word, like `{"session":"morning"}` — is kept, because refusing configuration templates and documentation examples would make the record unusable, and nothing about it is logged either (D-123, D-124).
 
 **False positives are a requirement, not a courtesy.** UUIDs, commit SHAs, content hashes, evidence references, URLs, file paths, package versions, PUBLIC keys, redaction markers and prose containing the words token/password/secret are all kept, each with a fixture. The detector is also the default policy, so all 1904 pre-existing tests act as a false-positive corpus and pass unaltered.
 
