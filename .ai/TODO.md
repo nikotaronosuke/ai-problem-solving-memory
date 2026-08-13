@@ -86,12 +86,25 @@ Events and Verifications are deliberately not versioned: their retry protection 
 
 Repository operations unchanged at sixteen — both write signatures gained `expectedVersion` rather than a new operation appearing.
 
-### P2-08 — NEXT
+### P2-08 — DONE
 Relation entity / API.
 
-Depends on P2-03, satisfied. See the private task breakdown for its Definition of Done. Nothing exists yet: no table, no migration, no domain type — so unlike P2-04 through P2-07 this one starts at the schema rather than at the API.
+A tenth migration adds the `relation_type` DOMAIN and the `relations` table; two routes follow: `POST|GET /v1/problems/:problem_id/relations`. Create and list only.
 
-Note that Relations cross Problems, which every rule so far has been careful to keep separate: evidence is per Problem (D-068), and the owner check is what makes a cross-Problem reference safe. A relation to another owner's Problem must not be creatable, and must not be able to reveal that one exists.
+Definition of Done verified against a real database: a link cannot cross owners, cannot point at a Problem that does not exist, and cannot join a Problem to itself — each refused by the application and, for the last two, by the database as well.
+
+Links may cross projects, which is the point (D-078). One row per link, both ends listed, rows reported as stored (D-077). A Relation does not touch either Problem and carries no evidence across — a Problem linked to a `VERIFIED` one still needs its own successful Verification (D-079).
+
+Schema counts moved as expected: migrations 9 → 10, tables 6 → 7, DOMAINs 6 → 7, foreign keys 5 → 7, all still RESTRICT, still no native enum and no trigger. The exact-count tests were updated to the new figures while keeping the existing constraints asserted.
+
+Repository grew from sixteen operations to eighteen: `createRelation`, `listRelations`.
+
+### P2-09 — NEXT
+UsageLog.
+
+Depends on P2-03, satisfied. See the private task breakdown for its Definition of Done. Like P2-08 it starts at the schema — nothing exists yet.
+
+Worth deciding early: a usage log records what was read rather than what was learned, so how long it is kept, whether it is owner-scoped in the same way, and whether it is append-only are its own questions rather than inherited ones. Note also that nothing in the model currently writes on a read, so this is the first entity whose creation is a side effect of retrieval rather than of a caller's explicit intent.
 
 ## BLOCKED
 

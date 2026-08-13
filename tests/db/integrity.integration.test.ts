@@ -39,6 +39,7 @@ const OWNED_TABLES = [
   'problems',
   'events',
   'verifications',
+  'relations',
 ] as const;
 
 interface Chain {
@@ -114,6 +115,11 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         'events: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'problems: FOREIGN KEY (owner_id, project_id, environment_id) REFERENCES environments(owner_id, project_id, environment_id) ON DELETE RESTRICT',
         'projects: FOREIGN KEY (owner_id) REFERENCES owners(owner_id) ON DELETE RESTRICT',
+        // A relation has two parents, one per end, so neither end can point
+        // at another owner's problem and neither problem can be removed while
+        // the link exists.
+        'relations: FOREIGN KEY (owner_id, from_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
+        'relations: FOREIGN KEY (owner_id, to_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'verifications: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
       ]);
     });
@@ -128,7 +134,8 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       // 'r' is RESTRICT. Anything else here would mean Memory could be
       // discarded as a side effect of deleting something above it.
       expect(result.rows.every((row) => row.confdeltype === 'r')).toBe(true);
-      expect(result.rows).toHaveLength(5);
+      // Seven since P2-08: the relations table brings one per end.
+      expect(result.rows).toHaveLength(7);
     });
 
     it('carries owner_id on every table, so owner scope never needs a join', async () => {
@@ -512,7 +519,7 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       expect(result.rows.map((row) => row.table_name).sort()).toEqual([...OWNED_TABLES].sort());
     });
 
-    it('keeps the six value sets as domains, with no native enum', async () => {
+    it('keeps every value set as a domain, with no native enum', async () => {
       const result = await pool.query<{ typtype: string; count: string }>(
         `select t.typtype::text as typtype, count(*)::text as count
            from pg_type t join pg_namespace n on n.oid = t.typnamespace
@@ -522,7 +529,8 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
 
       const byKind = Object.fromEntries(result.rows.map((row) => [row.typtype, row.count]));
 
-      expect(byKind['d']).toBe('6');
+      // Six from P1-04, plus `relation_type` from P2-08.
+      expect(byKind['d']).toBe('7');
       expect(byKind['e']).toBeUndefined();
     });
   });

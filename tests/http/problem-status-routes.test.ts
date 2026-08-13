@@ -20,6 +20,7 @@ import {
   createEventService,
   createProblemService,
   createProjectEnvironmentService,
+  createRelationService,
   createVerificationService,
   InvalidApplicationInputError,
   RequestContextUnavailableError,
@@ -107,6 +108,7 @@ function buildApp(service: ProblemStatusService, authenticated = true) {
     problemStatusService: service,
     eventService: createEventService(),
     verificationService: createVerificationService(),
+    relationService: createRelationService(),
     logger: false,
   });
 }

@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createRelationService,
   createVerificationService,
   createEventService,
   createProblemService,
@@ -127,6 +128,7 @@ function buildApp(service: ProjectEnvironmentService, authenticated = true) {
     problemStatusService: createProblemStatusService(),
     eventService: createEventService(),
     verificationService: createVerificationService(),
+    relationService: createRelationService(),
     logger: false,
   });
 }

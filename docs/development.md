@@ -60,8 +60,8 @@ schema change.
 
 The migrations establish the pipeline, the shared value sets (PostgreSQL
 DOMAINs over `text` with CHECK constraints, mirroring `src/domain/enums.ts`),
-the six tables — `owners`, `projects`, `environments`, `problems`, `events`,
-`verifications` — and the Phase 1 integrity and index set.
+the seven tables — `owners`, `projects`, `environments`, `problems`, `events`,
+`verifications`, `relations` — and the Phase 1 integrity and index set.
 
 Every foreign key deletes with `RESTRICT`, so a parent with children cannot be
 removed. That prevents implicit deletion, not deletion: a deliberate removal
@@ -129,6 +129,8 @@ under `/v1` needs an owner, so `npm run owner:bootstrap` must have run.
 | POST   | `/v1/problems/:problem_id/verifications`      |
 | GET    | `/v1/problems/:problem_id/verifications`      |
 | POST   | `/v1/problems/:problem_id/status-transitions` |
+| POST   | `/v1/problems/:problem_id/relations`          |
+| GET    | `/v1/problems/:problem_id/relations`          |
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in
@@ -312,3 +314,33 @@ This repository is the Problem-Solving Memory service alone. It is not the
 Personal AI Development OS. Tool Gateway, shared credential management, the
 shared Approval Engine, Skill Registry, Workflow Engine, Model Router and the
 OS-wide audit warehouse stay outside this repository. See `CLAUDE.md`.
+
+Relations link two of your Problems with a stated meaning — `SIMILAR_TO`,
+`RELATED_TO`, `CAUSED_BY`, `SUPERSEDES`, `CONTRADICTS` or `DERIVED_FROM` —
+and a `reason` explaining why. The source comes from the path, the target from
+the body:
+
+```json
+{ "to_id": "...", "relation_type": "SIMILAR_TO", "reason": "..." }
+```
+
+The two Problems may be in different projects. That is the point: a problem
+solved in one project informing an investigation in another is what makes
+this memory worth keeping. They may not be in different owners' accounts, and
+refusing that reveals nothing — another owner's Problem answers exactly as one
+that does not exist. A Problem cannot be linked to itself.
+
+Listing a Problem's relations returns links from both ends, so a Problem that
+only ever appeared as a target still sees them. Rows come back as stored
+rather than flipped to suit whose list is being read: a link recorded as A
+supersedes B says the same thing from B's side. Only one row is stored per
+link, including for the three symmetric meanings.
+
+A relation is a link, not an inheritance. It carries no status, confidence,
+freshness or evidence across, and it does not touch either Problem — neither
+version moves, so no `expected_version` is involved. Relating a Problem to a
+verified one does not let it become `VERIFIED`; it still needs a successful
+Verification of its own.
+
+Create and list only. There is no single-relation read, update or delete: how
+a mistaken link is corrected is not decided yet.

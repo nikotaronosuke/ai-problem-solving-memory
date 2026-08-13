@@ -51,6 +51,12 @@ import {
   type UpdateProjectInput,
 } from '../db/projects.js';
 import {
+  createRelation,
+  listRelations,
+  type CreateRelationInput,
+  type RelationRecord,
+} from '../db/relations.js';
+import {
   appendVerification,
   listVerifications,
   type AppendVerificationInput,
@@ -121,6 +127,16 @@ export interface MemoryRepository {
 
   appendVerification(input: AppendVerificationInput): Promise<VerificationRecord>;
   listVerifications(problemId: ProblemId): Promise<VerificationRecord[]>;
+
+  createRelation(input: CreateRelationInput): Promise<RelationRecord>;
+  /**
+   * Relations touching this problem, from either end.
+   *
+   * A problem that only appeared as a link's target still sees it: which end
+   * someone recorded a link from is not a difference the reader should have to
+   * know about.
+   */
+  listRelations(problemId: ProblemId): Promise<RelationRecord[]>;
 }
 
 /**
@@ -163,5 +179,8 @@ export function createMemoryRepository(
 
     appendVerification: (input) => appendVerification(executor, context, input),
     listVerifications: (problemId) => listVerifications(executor, context, problemId),
+
+    createRelation: (input) => createRelation(executor, context, input),
+    listRelations: (problemId) => listRelations(executor, context, problemId),
   };
 }

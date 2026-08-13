@@ -26,6 +26,7 @@ import {
   createProblemService,
   createProblemStatusService,
   createProjectEnvironmentService,
+  createRelationService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -70,6 +71,7 @@ describe.skipIf(databaseUrl === undefined)('Event API', () => {
       problemStatusService: createProblemStatusService(),
       eventService: createEventService(),
       verificationService: createVerificationService(),
+      relationService: createRelationService(),
       logger: false,
     });
     appsCreated.push(app);
