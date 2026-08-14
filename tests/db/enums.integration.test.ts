@@ -79,6 +79,8 @@ describe.skipIf(databaseUrl === undefined)('domain enums in the database', () =>
     // exist yet.
     expect(result.rows.map((row) => row.table_name).sort()).toEqual([
       'change_logs',
+      'client_credentials',
+      'clients',
       'environments',
       'events',
       'owners',

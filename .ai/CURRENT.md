@@ -30,9 +30,9 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **Errors.** One envelope everywhere: `{ error: { code, message }, request_id }`. Codes are `INVALID_REQUEST`, `UNAUTHENTICATED`, `NOT_FOUND`, `VERSION_CONFLICT`, `INTERNAL_ERROR`. Fastify and Ajv error objects never reach a client, and an internal failure returns no stack, driver message or connection string.
 
-**Auth.** `/v1/me` requires an owner. A `preHandler` on the `/v1` scope calls the request-context service, which resolves the owner and hands back an owner-scoped `MemoryRepository` — a handler never sees an owner id it could pass anywhere. Missing, malformed and unknown owners are three entries in the log and one indistinguishable 401 to the client, so the endpoint is not an existence oracle.
+**Auth.** Everything under `/v1` requires a credential. A `preHandler` on the `/v1` scope calls the request-context service, which verifies the presented credential and hands back an owner-scoped `MemoryRepository` — a handler never sees an owner id it could pass anywhere. Every distinct failure is one entry in the log and one indistinguishable 401 to the client, so the endpoint is not an existence oracle. Since P3-04 the credential is real; see *Credential separation* below.
 
-**Not a credential.** An owner id supplied in a header or body authenticates nothing. Real client credentials are P3-04; this phase uses the same local `MEMORY_OWNER_ID` identity Phase 1 established, behind one swappable function.
+**Not a credential.** An owner id supplied in a header or body authenticates nothing. `MEMORY_OWNER_ID` established the HTTP context until P3-04 and deliberately no longer can — it remains local tooling for bootstrap and for issuing credentials, with no route into a request.
 
 **Config.** `HOST` and `PORT`, defaulting to `127.0.0.1:3000`. Loopback by default because this holds one person's memory. Blank `HOST` is refused rather than defaulted; `PORT` must be digits in 1–65535.
 
@@ -116,7 +116,7 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **25 operations, stable names.** `healthCheck`, `getCurrentOwner`, and one per route. These are what a generated client calls its methods, so a rename is a breaking change to someone else's code (D-108). Eleven tags, classification only.
 
-**No invented authentication.** The document declares no security scheme and no header parameter. There is no client credential contract yet, and publishing `BearerAuth` would have generated clients sending a header nothing reads. `owner_id` is data, never a credential (D-110).
+**Authentication, once it existed.** P2-13 declared no security scheme because none existed, and publishing `BearerAuth` would have generated clients sending a header nothing reads (D-110). P3-04 built one, and the same rule points the other way: the document declares exactly the `memoryToken` bearer scheme the server implements, requires it by default so a new route is documented as protected, and exempts only `/health`. `owner_id` is data, never a credential (D-135).
 
 **Drift detection.** 70 tests read the generated document and assert against literal values: the exact operation inventory both ways, unique operationIds, every enum set, required fields, `minProperties`, `additionalProperties: false`, the five error codes, and parity between `app.swagger()` and the served response. A route schema loosened by accident fails there (D-111).
 
@@ -388,6 +388,30 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Two pre-sanitization log paths closed.** Ajv names the offending property on an `additionalProperties` failure, so logging the error object wrote a caller-chosen key into the operational log — before sanitization runs, since validation is first. Nothing from a validation error is logged now (D-128). The malformed-JSON branch got the same treatment defensively; Fastify 5 replaces the message and it was not observed to leak.
 
+## What exists now — Credential separation (P3-04)
+
+**Two tables.** `clients` belongs to an owner; `client_credentials` belongs to a client. A credential does not carry `owner_id`, deliberately: duplicating it would create a second answer to who owns a credential, and two answers can disagree (D-130). The owner is reached by joining, which is one answer by construction.
+
+**The token.** `mem_<lookup>_<secret>`, opaque, saying nothing about who holds it. The lookup is 16 base64url characters from 12 random bytes and is a public selector; the secret is 43 characters from 32 random bytes. Only a SHA-256 digest of the secret is stored, compared in constant time (D-131). The raw token exists once, at issue, and is printed once — a lost token is replaced, never recovered.
+
+**The lookup proves nothing.** It is stored in the clear, so anyone who has seen a token knows a valid one. A real lookup carrying a different well-formed secret is refused exactly like a lookup matching nothing, and a test presents precisely that: without the digest comparison the selector would silently *be* the credential.
+
+**Five failures, one answer.** Missing, malformed, unknown, invalid and revoked are a closed enum for the log and one byte-identical 401 for the client. No part of a presented token reaches an error, a message, a stack or a log line — the rule P3-01 through P3-03 arrived at the hard way, applied to the most outside-influenced string there is.
+
+**No environment fallback.** `MEMORY_OWNER_ID` established the HTTP context until P3-04 and now cannot (D-132). Thirty-eight test sites depended on it; they moved to an explicit double in `tests/support/` rather than leaving an optional fallback in production. A bypass kept for the convenience of tests is a bypass.
+
+**Verified every request, cached nowhere.** No process cache, no connection cache, no map. Revocation takes effect on the next call rather than at the next restart (D-133).
+
+**Rotation falls out of the shape.** A client may hold several credentials, so a second is issued, clients move over, and the first is revoked with no interruption. Revoking one credential leaves the client's others working.
+
+**A separate store.** `CredentialRepository` is not part of `MemoryRepository` and is not owner-scoped — the lookup is what *decides* the owner, so there is nothing to scope to yet. It is also not wrapped by the sanitization boundary (D-134): pointing a secret detector at a digest is wasted work at best, and at worst a policy redacting the one column that must survive verbatim.
+
+**Administered locally.** `npm run credential:issue -- --label "…"` and `npm run credential:revoke -- --credential-id …`. No HTTP endpoint, because an API that can mint its own credentials has to decide what may mint them. Revocation takes an id rather than a token, so revoking one does not put it in shell history.
+
+**`clientId` on the context.** Carried, consulted by nothing. It is where a per-client permission decision will go, and the question an audit trail will ask.
+
+**Two findings came from the mutation proofs, and both fixed a test.** Storing the secret's own bytes in place of a digest passed every credential test, because `to_jsonb` renders `bytea` as hex and no search for a base64url secret matches it; the test now decodes the column and compares against a digest computed from the standard library rather than from the function under test. And removing the `Authorization` redaction path changed nothing observable, because Fastify's `req` serializer never writes headers — dormant defence for the moment one does, pinned structurally, with the reason written down instead of a behavioural test that would pass either way.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -401,20 +425,22 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No general logging policy. Two specific pre-sanitization paths were closed in P3-03; the rest of P3-10 is untouched
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
-- No client SDK or codegen, and no authentication scheme. The document declares no security scheme because no client credential contract exists yet
+- No client SDK or codegen. The document declares the one scheme the server implements and nothing more
+- No HTTP credential management. Issuing and revoking are local commands; there is no endpoint that mints a credential
+- No permissions. A credential is all-or-nothing for its owner's memory; `clientId` is carried so that decision has somewhere to go, and nothing consults it
+- No expiry, no refresh, no scopes, no rate limiting per credential
 
 ## Immediate objective
 
-P3-04 — Credential separation.
+P3-05.
 
-Not started.
+Not started. See the private Phase 3 breakdown for the task.
 
 Notes for whoever picks this up:
-- The breakdown wants Memory content and client credentials managed separately, credentials revocable, and owner identity distinct from client identity
-- `createRequestContextService` is where an owner is established today, from `MEMORY_OWNER_ID`. P2-01 deliberately left that behind one function so a real credential resolver replaces it without touching a route (D-018 era)
-- The OpenAPI document declares no security scheme, on purpose: P3-02 refused to describe an authentication method that did not exist (D-110). P3-04 is what makes one exist, and the document should gain a scheme in the same change
-- Credentials must not land in Problem/Event content. The sanitization boundary already refuses or redacts what it recognises, but a credential *store* is a different thing from Memory content and should not share a table with it
-- Nothing in Phase 3 so far has added a migration. P3-04 probably needs one, which makes it the first schema change since P2-10
+- P3-04 left `clientId` on the request context, consulted by nothing. If a task needs per-client behaviour, the decision has a place to be made without rethreading authentication
+- The credential store is deliberately outside the sanitization boundary and outside `MemoryRepository`; an architecture test pins both, and merging them is not a refactor
+- `tests/support/request-context.ts` is a test double with no production equivalent, and is documented as such. Anything that makes it look like a supported way to build a context is a mistake
+- The OpenAPI contract is at 0.2.0 and gains a version when the `/v1` surface changes shape, not when the package does
 
 ## Core MVP milestone
 

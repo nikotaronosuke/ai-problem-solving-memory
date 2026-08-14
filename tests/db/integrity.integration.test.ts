@@ -32,6 +32,9 @@ import { MEMORY_OWNER_ID_VAR, resolveOwnerContext } from '../../src/owner/contex
 
 const databaseUrl = readDatabaseUrl();
 
+/**
+ * The Memory tables: what an owner records, scoped by `owner_id` throughout.
+ */
 const OWNED_TABLES = [
   'owners',
   'projects',
@@ -43,6 +46,20 @@ const OWNED_TABLES = [
   'usage_logs',
   'change_logs',
 ] as const;
+
+/**
+ * The identity tables, which are not Memory content.
+ *
+ * `clients` is owned and carries `owner_id` like everything else.
+ * `client_credentials` deliberately does not: a credential belongs to a
+ * client, and the client belongs to an owner. Copying the owner down a second
+ * level would create two records of the same fact that can disagree, and the
+ * copy is the one an attacker would want to change.
+ */
+const IDENTITY_TABLES = ['clients', 'client_credentials'] as const;
+
+/** Every table, for inventory assertions. */
+const ALL_TABLES = [...OWNED_TABLES, ...IDENTITY_TABLES] as const;
 
 interface Chain {
   readonly context: OwnerContext;
@@ -118,6 +135,10 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         // A change log entry belongs to the problem it describes, and that
         // problem cannot be removed while its history exists.
         'change_logs: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
+        // A credential reaches its owner through its client, and only through
+        // it. One path, so there is nothing to disagree with itself.
+        'client_credentials: FOREIGN KEY (client_id) REFERENCES clients(client_id) ON DELETE RESTRICT',
+        'clients: FOREIGN KEY (owner_id) REFERENCES owners(owner_id) ON DELETE RESTRICT',
         'environments: FOREIGN KEY (owner_id, project_id) REFERENCES projects(owner_id, project_id) ON DELETE RESTRICT',
         'events: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'problems: FOREIGN KEY (owner_id, project_id, environment_id) REFERENCES environments(owner_id, project_id, environment_id) ON DELETE RESTRICT',
@@ -146,8 +167,9 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       // 'r' is RESTRICT. Anything else here would mean Memory could be
       // discarded as a side effect of deleting something above it.
       expect(result.rows.every((row) => row.confdeltype === 'r')).toBe(true);
-      // Ten: relations and usage_logs bring one per end, change_logs one.
-      expect(result.rows).toHaveLength(10);
+      // Twelve: relations and usage_logs bring one per end, change_logs one,
+      // and P3-04 adds the client and its credentials.
+      expect(result.rows).toHaveLength(12);
     });
 
     it('carries owner_id on every table, so owner scope never needs a join', async () => {
@@ -157,9 +179,14 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
           order by table_name`,
       );
 
-      // On `owners` it is the identity itself; everywhere else it is the scope
-      // an owner-scoped read filters on directly.
-      expect(result.rows.map((row) => row.table_name).sort()).toEqual([...OWNED_TABLES].sort());
+      // On `owners` it is the identity itself; on the Memory tables it is the
+      // scope an owner-scoped read filters on directly; on `clients` it is
+      // ownership of the connection. `client_credentials` is absent on
+      // purpose — it reaches its owner through its client, and one path to a
+      // fact cannot disagree with itself.
+      expect(result.rows.map((row) => row.table_name).sort()).toEqual(
+        [...OWNED_TABLES, 'clients'].sort(),
+      );
     });
   });
 
@@ -531,7 +558,7 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         "select table_name from information_schema.tables where table_schema = 'public'",
       );
 
-      expect(result.rows.map((row) => row.table_name).sort()).toEqual([...OWNED_TABLES].sort());
+      expect(result.rows.map((row) => row.table_name).sort()).toEqual([...ALL_TABLES].sort());
     });
 
     it('keeps every value set as a domain, with no native enum', async () => {

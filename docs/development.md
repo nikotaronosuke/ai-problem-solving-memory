@@ -92,6 +92,34 @@ otherwise leaves it untouched. It creates no credential. Run it again after
 Owner-scoped work resolves a context first, and refuses to start when the owner
 is unset, malformed, or absent from the database.
 
+## Credentials
+
+An owner id is not a credential. `MEMORY_OWNER_ID` names who local tooling acts
+as; it does not open `/v1`, and a request that presents nothing is refused even
+when the variable is set to a real owner.
+
+Issue one, and copy the token it prints:
+
+```bash
+npm run credential:issue -- --label "Claude Code laptop"
+```
+
+The token is `mem_<lookup>_<secret>` and is shown once. Only a digest of the
+secret half is stored, so it cannot be read back — a lost token is replaced
+rather than recovered. Send it as `Authorization: Bearer mem_…`.
+
+A client may hold several credentials, which is how rotation works: issue the
+second, move over, then revoke the first. Revocation takes effect on the next
+request, in the running process.
+
+```bash
+npm run credential:revoke -- --credential-id <uuid>
+```
+
+Revoking takes a credential id rather than a token, so revoking one does not
+put it in shell history. `credential:issue` prints the id alongside the token
+for that reason.
+
 ## Running the server
 
 ```bash
@@ -347,27 +375,29 @@ the pool. It reports the host but never the connection string.
 
 ## Commands
 
-| Command                    | Purpose                                           |
-| -------------------------- | ------------------------------------------------- |
-| `npm run dev`              | Run the server from TypeScript, with watch        |
-| `npm run build`            | Compile `src/` to `dist/`                         |
-| `npm start`                | Run the compiled server                           |
-| `npm run typecheck`        | Type-check `src/` and `tests/` without emitting   |
-| `npm run lint`             | ESLint (type-aware rules enabled)                 |
-| `npm run lint:fix`         | ESLint with autofix                               |
-| `npm run format`           | Prettier, writing changes                         |
-| `npm run format:check`     | Prettier, verifying only                          |
-| `npm test`                 | Vitest, single run                                |
-| `npm run test:watch`       | Vitest, watch mode                                |
-| `npm run check`            | typecheck + lint + format:check + test            |
-| `npm run supabase:start`   | Start the local Supabase stack                    |
-| `npm run supabase:stop`    | Stop the local Supabase stack                     |
-| `npm run db:status`        | Show local stack URLs                             |
-| `npm run db:reset`         | Rebuild the local DB from migrations              |
-| `npm run db:migrate`       | Apply pending migrations                          |
-| `npm run db:migration:new` | Create a new migration file                       |
-| `npm run db:check`         | Verify the service can reach PostgreSQL           |
-| `npm run owner:bootstrap`  | Create the local owner named by `MEMORY_OWNER_ID` |
+| Command                     | Purpose                                           |
+| --------------------------- | ------------------------------------------------- |
+| `npm run dev`               | Run the server from TypeScript, with watch        |
+| `npm run build`             | Compile `src/` to `dist/`                         |
+| `npm start`                 | Run the compiled server                           |
+| `npm run typecheck`         | Type-check `src/` and `tests/` without emitting   |
+| `npm run lint`              | ESLint (type-aware rules enabled)                 |
+| `npm run lint:fix`          | ESLint with autofix                               |
+| `npm run format`            | Prettier, writing changes                         |
+| `npm run format:check`      | Prettier, verifying only                          |
+| `npm test`                  | Vitest, single run                                |
+| `npm run test:watch`        | Vitest, watch mode                                |
+| `npm run check`             | typecheck + lint + format:check + test            |
+| `npm run supabase:start`    | Start the local Supabase stack                    |
+| `npm run supabase:stop`     | Stop the local Supabase stack                     |
+| `npm run db:status`         | Show local stack URLs                             |
+| `npm run db:reset`          | Rebuild the local DB from migrations              |
+| `npm run db:migrate`        | Apply pending migrations                          |
+| `npm run db:migration:new`  | Create a new migration file                       |
+| `npm run db:check`          | Verify the service can reach PostgreSQL           |
+| `npm run owner:bootstrap`   | Create the local owner named by `MEMORY_OWNER_ID` |
+| `npm run credential:issue`  | Issue a client credential, printed once           |
+| `npm run credential:revoke` | Revoke one credential by id                       |
 
 Run `npm run check` before reporting a task complete.
 

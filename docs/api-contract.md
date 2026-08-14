@@ -61,26 +61,56 @@ The five codes are `INVALID_REQUEST` (400), `UNAUTHENTICATED` (401),
 Messages are fixed text and carry no detail; the detail is in the server log,
 under `request_id`.
 
-## Owner scope, and what authentication is not
+## Owner scope, and how a request proves it
 
-Everything under `/v1` is owner-scoped. `/health` and `/openapi.json` sit
-outside it: whether the process is serving, and what shape the API has, are
-not anyone's memory.
+Everything under `/v1` is owner-scoped and requires a credential. `/health`
+and `/openapi.json` sit outside it: whether the process is serving, and what
+shape the API has, are not anyone's memory, and a probe that needed a
+credential could not answer during the failure it exists to report.
 
-The owner is established server-side in the current MVP. There is no
-client-supplied credential, and so the OpenAPI document declares no security
-scheme. Publishing `BearerAuth` or an API key header would describe an
-authentication method that does not exist and would have generated clients
-sending a header nothing reads.
+A request carries one header:
 
-`owner_id` appears on resources because it is data. It is never something a
-caller supplies and never grants access to anything. Neither does `changed_by`
-or `source_ai`: both are descriptive fields recording who did something, and
-whatever a caller writes there, the owner comes from the established request
-context and exactly the same data is reachable.
+```
+Authorization: Bearer mem_<lookup>_<secret>
+```
 
-A real client credential lifecycle belongs to the later AI-integration phase.
-Nothing here anticipates its shape.
+The token is opaque and says nothing about who holds it. Its first half is a
+public selector that finds one row; its second half is the secret, and only the
+SHA-256 digest of that half is stored. The server compares digests in constant
+time, so a valid selector with the wrong secret is refused exactly as a
+selector that matches nothing. The token cannot be reconstructed from the
+database, which is why a lost token is replaced rather than recovered.
+
+The credential names a client, the client belongs to an owner, and the server
+resolves both. A request never names either. That indirection is the point of
+the phase: revoking one client leaves the owner and every other client intact,
+and an owner is a person's memory rather than a login.
+
+Every request is verified against the database. Nothing about a credential is
+held between requests, so revocation takes effect on the next call rather than
+at the next restart.
+
+Credentials are issued and revoked by local commands — `npm run
+credential:issue -- --label "…"` and `npm run credential:revoke --
+--credential-id …`. There is deliberately no HTTP endpoint for either. An API
+that can mint its own credentials has to decide what may mint them, and that
+decision belongs to whoever administers the machine rather than to a request.
+Revocation takes a credential id rather than a token, so revoking one does not
+put it in shell history.
+
+Authentication fails one way. Missing, malformed, unrecognised, wrong and
+revoked are five different things to an operator reading a log and one
+`UNAUTHENTICATED` with a byte-identical body to a client — distinguishing them
+would answer questions about credentials the caller does not hold.
+
+`owner_id` appears on resources because it is data. It is not a credential:
+presenting one authenticates nothing, and it is never something a caller
+supplies. Neither is `changed_by` or `source_ai`: both are descriptive fields
+recording who did something, and whatever a caller writes there, the owner
+comes from the verified credential and exactly the same data is reachable.
+
+An AI vendor account is not an owner identity and is never the ownership
+boundary. A client is one place a credential was installed, not a person.
 
 ## Not found means one thing
 
