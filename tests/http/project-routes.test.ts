@@ -19,6 +19,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createVerificationService,
   createEventService,
   createProblemService,
@@ -137,6 +138,7 @@ function buildApp(service: ProjectEnvironmentService, authenticated = true) {
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
+    problemDeleteService: createProblemDeleteService(),
     logger: false,
   });
 }

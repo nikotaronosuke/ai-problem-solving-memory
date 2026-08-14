@@ -294,10 +294,41 @@ Nine deliberate mutations fail between 1 and 8 tests each: the environment fallb
 
 Schema and repository counts: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 23 repository operations (unchanged), 3 runtime dependencies (unchanged). 2220 tests across 69 files.
 
-### P3-05 — NEXT
-See the private Phase 3 breakdown for the task and its completion condition.
+### P3-05 — DONE
 
-Depends on P3-04, satisfied.
+Physical delete path.
+
+No migration. `DELETE /v1/problems/{problem_id}?expected_version=N`, one new database module, one repository operation, one service, one route.
+
+The unit is a Problem and everything referring to it: its events, verifications and change log, and every relation and usage log naming it — including the ones pointing in from a Problem that survives (D-136, D-138). A surviving Problem can therefore lose part of its own history, which is the accepted trade rather than an oversight: a request to remove something outranks another record's account of it. Nulling those references would have meant making a NOT NULL composite foreign key nullable in order to keep a row whose subject no longer exists.
+
+Physical, not soft (D-137). No `deleted_at`, no `DELETED` status, no tombstone, no delete audit table, and no `changed_by` on the request. Every path already resolves the Problem before doing anything, so removing the row produces the right 404 everywhere without new code — and the same 404 a Problem that never existed gets. A soft delete would have needed every read, list and append to remember to exclude the row, with the one that forgot serving exactly what the delete existed to remove.
+
+Six statements in one transaction, leaves first, every one naming the owner. The order lives in `src/db/problem-deletion.ts` and nowhere else. RESTRICT stays and does real work here (D-139): a later table that references `problems` without joining the delete path makes the final statement fail on its foreign key and rolls the transaction back. That failure is deliberately not translated into a version conflict — it is a programming mistake, and reporting it as a stale version would hide the bug behind a plausible retry.
+
+`expected_version` is required and guards less than it appears to (D-140). It catches a change to the Problem; it does not catch an appended Event, because appending does not move the Problem's version and Phase 2's append-only design was not reworked to make it. Recorded plainly rather than implied. No confirmation flag: any client that can send the delete can send one, so explicit user intent stays the caller's responsibility.
+
+The row lock is honest about its own value: correctness comes from the version predicate, which holds without it; the lock adds determinism. Removing it fails no behavioural test, because deleting the Problem locks the same row moments later, so an architecture test pins it instead.
+
+Project and Environment survive, deliberately, even when the deleted Problem was the last one using them. Clients and credentials are a different boundary and no foreign key connects them.
+
+Secret purge proved against a real database: a credential marker written into every free-text surface with raw SQL — historical data simulation, since P3-02 would refuse it today and was not weakened — then deleted through real HTTP and swept out of every Memory table. The marker is asserted present before the delete, and another owner holding the same string keeps it.
+
+Eleven deliberate mutations fail between 1 and 12 tests each: dropping the `memory_id` side, dropping the `to_id` side, dropping the change log delete, deleting the parent first, dropping the version check, dropping an owner scope, answering a foreign owner as a conflict, echoing the deleted Problem in the response, taking Environments too, dropping the row lock, and removing the transaction.
+
+The last of those found a real gap rather than confirming a guard: replacing `runInTransaction` with a direct repository call passed all 59 tests, because a successful delete looks identical either way and nothing tested an unsuccessful one at that seam. A service-level test now pins it.
+
+Two counts corrected from the pre-implementation investigation: `problems` has **seven** incoming foreign keys, not six — `relations` and `usage_logs` contribute two each, and counting tables undercounts exactly the references that point in from a surviving Problem. That inventory is now pinned literally, so a new reference has to be considered rather than noticed later (D-141).
+
+Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 3 runtime dependencies. Repository operations 23 → 24. 2254 tests across 72 files.
+
+### P3-06 — NEXT
+
+Export.
+
+Depends on P3-05, satisfied. See the private Phase 3 breakdown for the completion condition.
+
+JSON export with `schema_version`, covering Project, Environment, Problem, Event, Verification, Relation, UsageLog and ChangeLog with relationships preserved, re-importable into a clean environment. `src/db/problem-deletion.ts` already states what belongs to a Problem and is the natural reference for what an export of one has to carry. Credential tables are not Memory and are not part of it.
 
 ## BLOCKED
 
@@ -308,6 +339,14 @@ None currently documented.
 Docker publishes the local Supabase ports on all interfaces, not only loopback. Enabling fewer services reduced the published ports to three, but the binding address is a Docker daemon setting, not a repository one.
 
 Decided: not a blocker. The Docker daemon configuration is left unchanged, and the operating rule is to stop the local stack when it is not in use (`npm run supabase:stop`). Revisit only if the stack ever needs to run on an untrusted network.
+
+## STANDING RULE — anything derived from Memory joins the delete path
+
+A phase that adds a retrieval artifact, a search index, an embedding store or any cache derived from Memory content must extend the physical delete path and the Phase 3 delete end-to-end in the same change (D-141).
+
+Inside PostgreSQL this is partly self-enforcing: give the table a RESTRICT foreign key to `problems` like everything else, and a delete that forgets it fails rather than silently leaving rows. The literal foreign key inventory in `tests/db/integrity.integration.test.ts` fails first, which is the intended prompt to decide.
+
+Outside PostgreSQL — a vector store, an external search index — nothing enforces it. That integration has to be written deliberately when the store is introduced, and this line exists so the question is asked rather than remembered.
 
 ## LATER
 

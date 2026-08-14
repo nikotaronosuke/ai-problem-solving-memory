@@ -26,6 +26,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -68,6 +69,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
       logger: false,
     });
 
@@ -150,6 +152,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
       logger: false,
     });
 
@@ -188,6 +191,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
       logger: false,
     });
 
@@ -222,6 +226,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
       logger: false,
     });
 
