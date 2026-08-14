@@ -344,6 +344,8 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Detection and action are separate files on purpose.** `detector.ts` says what a string is; `policy.ts` says what happens to it. P3-03 changes the second without reopening the first (D-120).
 
+**Names carry their issuer.** `accesskey`, `secretkey` and `securitytoken` were exact names, so `AWS_SECRET_ACCESS_KEY` — which is how a real credential variable is written — matched nothing and read as ordinary prose. A review found it through P3-06: the export inspects with the same detector, so a Memory holding one was exported in full, reproduced at 200 with the secret in the body. Three compounds became suffixes instead, each judged against the same test the strong names state — no ordinary reading (D-150). `accesskey` deliberately stayed exact: HTML gives every element one, so as a suffix it would make `menuAccessKey` a credential, and the AWS half that is secret is `SECRET_ACCESS_KEY` anyway.
+
 **Meaning, never shape — in both directions.** No entropy score and no length threshold as evidence *for* a secret: "long random string" describes a UUID, a commit SHA and every evidence reference in the system (D-122). And none as evidence *against* one either, which took a review round to get right: `PASSWORD=letmein` and `{"api_key":"abcdef"}` are credentials, and an earlier version stored them because the value read like a word (D-124).
 
 **Names carry a strength.** `strong` names — `password`, `api_key`, `client_secret`, `access_token`, `private_key` — have no ordinary reading, so the value's shape is not consulted at all. `ambiguous` names — `token`, `secret`, `session` — do, so there shape separates `confirmed` from `suspected`. That is the only place it decides anything.
@@ -466,7 +468,9 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Credentials are not in it** (D-149). No token, lookup, digest, client id, label or revocation state, and the module does not read those tables. An artifact carrying one would be a backup file that is also a key.
 
-**What the mutation proofs turned up.** Two facts about the surrounding system, neither of them export defects. A request body is parsed by `JSON.parse` before the server sees it, so a number too large for JavaScript cannot be *stored* through the API at all — the export is lossless with respect to what the database holds, which is the strongest claim available. And `AWS_SECRET_ACCESS_KEY=…` is not detected as a credential: `accesskey` and `secretkey` are exact names in the P3-02 vocabulary rather than suffixes, so any prefixed form is unrecognised. That is a detection gap belonging to P3-02, left alone here rather than changed inside an export task.
+**What the mutation proofs turned up.** A request body is parsed by `JSON.parse` before the server sees it, so a number too large for JavaScript cannot be *stored* through the API at all — the export is lossless with respect to what the database holds, which is the strongest claim available.
+
+**And one security blocker, found by review and since fixed.** `AWS_SECRET_ACCESS_KEY=…` was not detected as a credential, so an export carried it out in full — reproduced at 200 with the raw secret in the response before anything was changed. The cause was in the P3-02 vocabulary rather than in the export, and the correction is there (D-150). Five export tests now hold the egress: removing the correction returns them to 200 with the secret in the body.
 
 ## What is deliberately absent
 
