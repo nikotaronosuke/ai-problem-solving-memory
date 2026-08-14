@@ -1,59 +1,80 @@
 /**
- * Connecting detection to the boundary, and deciding as little as possible.
+ * What happens to a credential, now that there is somewhere to put the answer.
  *
- * The detector says what a string is. This says what happens to it, and the
- * split is the point: P3-03 owns refusal and redaction policy in full, and it
- * should arrive to find a question it can answer rather than an answer already
- * baked into the detector.
+ * Three components, and this one holds the decision. The detector says what a
+ * string is; the redactor says what removing the credential would leave; this
+ * decides between storing that and refusing the write. Neither of the other
+ * two knows which way it went, which is what let redaction be added to P3-02
+ * without reopening detection.
  *
- * What this does today is the minimum that satisfies P3-02's own completion
- * condition — a representative secret must not be stored in plaintext. A
- * confirmed credential is refused. Nothing is redacted, nothing is summarised,
- * and no attempt is made to keep the surrounding meaning while removing the
- * value; all of that is P3-03's and doing any of it here would be inventing a
- * policy nobody has designed.
+ * The rule, in order:
  *
- * So the refusal is deliberately blunt and deliberately temporary. It is not
- * "the reject policy"; it is fail-closed holding the line until there is one.
- * When P3-03 decides that a credential inside a long summary should be replaced
- * rather than refused, the change is here — a different outcome for the same
- * finding — and neither the detector nor the boundary moves.
+ * A `suspected` finding is kept. Refusing configuration templates and
+ * documentation examples would make the record unusable, and nothing about a
+ * suspected finding is logged either — "we saw something that might be a
+ * secret" only helps someone who already has the data.
  *
- * `suspected` findings are kept. Widening refusal to cover them would refuse
- * configuration templates and documentation examples, and a caller who cannot
- * record what happened is the failure this record exists to prevent. Nothing is
- * logged about them either: "we saw something that might be a secret at this
- * path" is a sentence that only helps someone who already has the data, and it
- * puts a claim about caller content into an operational log for no one's
- * benefit.
+ * A confirmed credential in an object *key* is refused. Replacing a key can
+ * collide with a key already present and silently merge two fields into one,
+ * and the caller loses data without being told. Refusing hands the problem
+ * back to them, where it can be fixed.
+ *
+ * A confirmed credential in a value is redacted if that can be done safely,
+ * and refused if it cannot. `null` from the redactor is a refusal, not a
+ * shrug.
+ *
+ * And then the part that matters most: the redacted text is shown to the
+ * detector again, and if a confirmed credential is still there the write is
+ * refused anyway. Partial removal is the worst available outcome — a record
+ * that looks sanitised, reads as safe, and still holds a credential, with the
+ * caller told it succeeded. Everything here fails closed toward refusing.
  */
 
 import type { SanitizationPolicy } from '../policy.js';
 import { createSecretDetector, type SecretDetector } from './detector.js';
+import { createSecretRedactor, type SecretRedactor } from './redactor.js';
 
 /**
  * Builds the policy the server runs with.
  *
- * The detector is a parameter so a test can supply a different one, and so
- * P3-03 can wrap or replace the decision without touching detection.
+ * Both collaborators are parameters so a test can substitute either, and so a
+ * later phase can change one without disturbing the other.
  */
 export function createSecretDetectionPolicy(
   detector: SecretDetector = createSecretDetector(),
+  redactor: SecretRedactor = createSecretRedactor(),
 ): SanitizationPolicy {
   return {
     inspect(text, at) {
       const finding = detector.detect(text, at);
 
-      if (finding?.certainty === 'confirmed') {
-        // No reason accompanies this, and there is no field for one. What the
-        // boundary reports is a safe locator and whether it was a key or a
-        // value; the category stays here, because P3-02 has no need to publish
-        // which rule fired and every string that has escaped this boundary
-        // escaped through a field added for debugging.
+      if (finding?.certainty !== 'confirmed') {
+        // Nothing found, or found and not certain. P3-02 settled this.
+        return { kind: 'keep' };
+      }
+
+      if (at.kind === 'key') {
+        // Key replacement is not something the boundary supports, and giving
+        // two keys the same redacted name would lose a field silently.
         return { kind: 'reject' };
       }
 
-      return { kind: 'keep' };
+      const redacted = redactor.redact(text, at);
+      if (redacted === null) {
+        return { kind: 'reject' };
+      }
+
+      // Fail closed. If anything confirmed survived the removal, the write does
+      // not happen — a half-cleaned credential stored under a green light is
+      // worse than a refusal the caller can act on.
+      if (detector.detect(redacted, at)?.certainty === 'confirmed') {
+        return { kind: 'reject' };
+      }
+
+      // No reason accompanies either outcome, and there is no field for one.
+      // What the boundary reports is a safe locator and whether it was a key
+      // or a value; the category stays here.
+      return { kind: 'replace', value: redacted };
     },
   };
 }

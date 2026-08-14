@@ -1025,6 +1025,8 @@ The first attempt at this kept the ordering — a key is inspected before it is 
 
 Renaming a key is refused outright. Replacing a key is not the same act as replacing a value: the replacement can collide with a key already present and silently merge two fields into one. What should happen then is a genuine design question and belongs with P3-03's redaction rules, so the boundary raises `UnsupportedSanitizationOutcomeError` rather than picking whichever behaviour was easiest to implement.
 
+**Confirmed by D-126.** P3-03 looked at the collision problem and kept key replacement unsupported: a credential in a key is refused, never rewritten.
+
 ## D-117 — A policy cannot explain a refusal (P3-01, after review)
 
 `SanitizationOutcome`'s `reject` originally carried `reason: string`, which became `SanitizationRejectedError.reason` and was logged by transport.
@@ -1109,6 +1111,8 @@ P3-02 refuses `confirmed` and keeps `suspected`.
 
 The refusal is not the reject policy. P3-03 owns that, and this is fail-closed holding P3-02's own completion condition — a representative secret must not be stored in plaintext — by the least-invented means available. Nothing is redacted, replaced or summarised, because a half-designed redaction is harder to undo than a refusal and would prejudge the phase that is supposed to decide it.
 
+**Settled by D-126.** P3-03 replaced the blanket refusal with redaction where a credential can be removed safely, and kept refusal where it cannot. `suspected` is still kept, exactly as decided here.
+
 Keeping `suspected` is the deliberate half. Widening refusal to cover it would refuse configuration templates, documentation examples and the ordinary act of writing down that a credential was involved, and a caller who cannot record what happened is the failure this whole record exists to prevent. Nothing about a suspected finding is logged either: "we saw something that might be a secret at this path" only helps someone who already has the data, and it puts a claim about caller content into an operational log for nobody's benefit.
 
 The false-positive fixtures are treated as requirements rather than courtesy checks, and the detector was made the default policy so that every pre-existing test — roughly nineteen hundred of them, full of UUIDs, commit SHAs, snapshots and evidence references — runs as a false-positive corpus on every build.
@@ -1132,3 +1136,49 @@ The false-positive side is handled by reading the *content* rather than measurin
 One line is judged once: a line beginning `Authorization:`, `Cookie:` or `Set-Cookie:` belongs to those parsers, and the generic assignment rule skips it. Without that, the assignment rule read `Authorization: Bearer [REDACTED]` as the field `Authorization` holding the value `Bearer` and confirmed it anyway — the same bug one rule further down. `authorization=rawtoken`, with `=` rather than `:`, is a variable assignment and is judged as one.
 
 Nothing about the leak guarantees changed, and the new weak-credential fixtures are covered by the same database, response and log sweeps as the rest.
+
+## D-125 — Detection and redaction read the same rules, and spans stay inside (P3-03)
+
+`patterns.ts` holds every rule about what a credential looks like and where it sits. The detector asks it what a string *is*; the redactor asks it *where*. Neither owns a copy.
+
+Two copies would drift the first time either was edited alone, and the failure would be silent in both directions. A detector recognising a form the redactor could not locate would refuse writes that were perfectly removable. A redactor locating a form the detector did not recognise would rewrite text nobody asked it to. Both are the kind of bug that shows up as "the tool is unreliable" rather than as a test failure.
+
+What the shared module reports is spans — offsets into the string. The detector discards them and keeps only a category and a certainty; the redactor keeps them just long enough to build the replacement.
+
+Those offsets never leave the directory, and an architecture test pins that: the words `Span`, `findJwtSpans`, `findAssignmentValues` and `replaceSpans` appear in exactly three files. An offset and a length are information about a secret — how long it is, where in the text it appeared — and `SecretFinding` was deliberately built as two closed identifiers so that nothing of that shape could travel into an error or a log (D-121). Adding spans to a finding would have undone that quietly.
+
+## D-126 — Redact a value where it is safe, refuse where it is not (P3-03)
+
+The action for a confirmed credential depends on whether it can be removed, not on what kind it is. There is no category-to-action table, because no requirement has asked for one and inventing one would fix answers nobody has needed yet.
+
+**Redacted, in a value.** Prose keeps its sentence — `API_KEY=abc123` inside "the deploy failed because … was stale" loses four characters and keeps the finding. Refusing that write would have lost the investigation, which is the failure this whole record exists to prevent. The variable name survives deliberately: `API_KEY` is the part a future reader needs. Every credential in the string goes, not the first, because a `.env` paste holds several and removing one reads as though the string had been cleaned.
+
+**Whole-value, under a credential-named field.** `{"api_key":"secret"}` has nothing around the credential to preserve — the value *is* the credential, however it happens to be written.
+
+**Refused, when the extent is unknowable.** An unterminated PEM block starts and never finishes. Its end is not discoverable, so there is no span that safely covers it, and guessing would leave part of the key material stored. `null` from the redactor is a refusal, never a shrug.
+
+**Refused, in an object key.** Key replacement stays unsupported, as P3-01 left it (D-116). `{"sk-live-A":1,"sk-live-B":2}` redacted to one name each would collapse into a single field and lose data with nobody told. Suffixing to avoid the collision leaks the original key count. Refusing hands the problem back to the caller, who can fix it — the credential was in a field *name*, which is an unusual enough mistake that the cost of refusing is low.
+
+**Kept, when suspected.** Unchanged from D-123. Rewriting a documentation example would be worse than storing it.
+
+`[REDACTED]` is the marker because the placeholder vocabulary already recognises it. That is what makes redaction idempotent: redacted text run through again is read as already handled rather than as a fresh credential, so records survive an export, a migration or a retry without being rewritten each time.
+
+## D-127 — The redacted text is checked again, and a survivor refuses the write (P3-03)
+
+After redaction the result goes back to the detector, and if a confirmed credential is still there the write is refused rather than stored.
+
+Partial removal is the worst outcome available here, worse than either doing nothing or refusing. A record that has been through redaction reads as sanitised: the marker is visible, the caller got a success, and nobody looks again. A credential that survived that is hidden more effectively than one that was never touched.
+
+The check costs one extra detector call on a path that is already rare, and it converts an entire class of future bug — a pattern the redactor bounds slightly wrong, a form it handles incompletely — from a silent leak into a visible refusal. Everything in the policy fails toward refusing for the same reason: `null` from the redactor refuses, a key refuses, and a survivor refuses.
+
+## D-128 — Validation errors are logged without anything a caller wrote (P3-03)
+
+Ajv reports an `additionalProperties` failure by naming the offending property. Fastify attaches that array to the error, and the handler logged the error object — so a request with an unknown top-level body key wrote that key into the operational log.
+
+This was real and measured: a body key of `sk-live-…` appeared at `err.validation.0.params.additionalProperty`. It also happens *before* sanitization, since validation runs first, so none of the boundary's guarantees applied to it. A caller who put a credential in a field name would have had it refused and then recorded — which is the exact shape of the leaks P3-01 review found twice, arriving through a third door.
+
+Nothing from a validation error is logged now. What replaces it is `validationContext` — `body`, `params`, `querystring` or `headers`, chosen by Fastify from the schema — and a count. Both are server-generated. An operator gets which part of the request failed and how badly, and finds the rest from the request id.
+
+The malformed-JSON branch was given the same treatment. Node's own `JSON.parse` message quotes the bytes it choked on, so the message is unsafe in principle; Fastify 5 replaces it with a fixed `FST_ERR_CTP_INVALID_JSON_BODY` string and no leak was observed. That change is hardening against a future Fastify or a custom parser rather than a fix for something seen, and its test cannot currently fail — which is worth knowing when reading it.
+
+This is not P3-10. The general logging policy is untouched; these were two specific paths that defeated P3-03's own completion condition.

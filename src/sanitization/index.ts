@@ -22,11 +22,14 @@ export {
 export {
   createSecretDetectionPolicy,
   createSecretDetector,
+  createSecretRedactor,
+  REDACTION_MARKER,
   SECRET_CATEGORIES,
   SECRET_CERTAINTIES,
   type SecretCategory,
   type SecretCertainty,
   type SecretDetector,
+  type SecretRedactor,
   type SecretFinding,
 } from './secrets/index.js';
 export { sanitizeValue } from './sanitize.js';

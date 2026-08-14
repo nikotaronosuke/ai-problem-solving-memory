@@ -258,7 +258,7 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
     return dumps.join('\n');
   }
 
-  describe('representative surfaces refuse a representative credential', () => {
+  describe('representative surfaces strip a representative credential', () => {
     it.each([
       [
         'a project name',
@@ -349,24 +349,21 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
         () => `/v1/projects/${projectId}/environments`,
         () => ({ snapshot: { auth: { client_secret: SECRET.fieldValue } } }),
       ],
-      [
-        'an environment snapshot key',
-        'POST',
-        () => `/v1/projects/${projectId}/environments`,
-        () => ({ snapshot: { [SECRET.keyText]: 'an ordinary looking value' } }),
-      ],
-    ])('refuses %s', async (_label, method, url, payload) => {
+    ])('strips a credential from %s', async (_label, method, url, payload) => {
       const response = await app.inject({
         method: method as 'POST',
         url: url(),
         payload: payload() as object,
       });
 
-      expect(response.statusCode).toBe(400);
-      expect(response.json<{ error: { code: string } }>().error.code).toBe('INVALID_REQUEST');
+      // The write succeeds and the record keeps its meaning. What it does not
+      // keep is the credential — checked here in the response, and again at
+      // the end against every column of every table.
+      expect([200, 201]).toContain(response.statusCode);
+      expect(response.body).toContain('[REDACTED]');
     });
 
-    it('refuses a credential in a problem update, and in `changed_by`', async () => {
+    it('strips a credential from a problem update, and from `changed_by`', async () => {
       const patched = await app.inject({
         method: 'PATCH',
         url: `/v1/problems/${problemId}`,
@@ -376,49 +373,72 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
           symptoms: SECRET.apiKeyAssignment,
         },
       });
-      expect(patched.statusCode).toBe(400);
+      expect(patched.statusCode).toBe(200);
+      expect(patched.json<{ symptoms: string }>().symptoms).toBe('API_KEY=[REDACTED]');
 
       // `changed_by` is caller text that reaches the change log, so it is a
-      // storage surface like any other.
+      // storage surface like any other — and the change log is one of the
+      // three places P3-03 has to keep clean.
       const attributed = await app.inject({
         method: 'PATCH',
         url: `/v1/problems/${problemId}`,
-        payload: { expected_version: 1, changed_by: SECRET.bearer, importance: true },
+        payload: { expected_version: 2, changed_by: SECRET.bearer, importance: true },
       });
-      expect(attributed.statusCode).toBe(400);
+      expect(attributed.statusCode).toBe(200);
+
+      const history = (
+        await app.inject({ method: 'GET', url: `/v1/problems/${problemId}/change-logs` })
+      ).json<{ change_logs: { changed_by: string }[] }>().change_logs;
+      expect(history.at(-1)?.changed_by).toBe('Authorization: Bearer [REDACTED]');
     });
 
-    it('refuses a credential in a close review, leaving the problem untouched', async () => {
-      const before = (await app.inject({ method: 'GET', url: `/v1/problems/${problemId}` })).json<
-        Record<string, unknown>
-      >();
+    it('strips a credential from a close review, inside the transaction', async () => {
+      const before = (await app.inject({ method: 'GET', url: `/v1/problems/${problemId}` })).json<{
+        version: number;
+      }>();
 
-      const refused = await app.inject({
+      const closed = await app.inject({
         method: 'POST',
         url: `/v1/problems/${problemId}/close`,
         payload: {
-          expected_version: before['version'],
+          expected_version: before.version,
           changed_by: 'phase3-e2e',
           target_status: 'PAUSED',
           // Becomes an Event inside the same transaction as the conclusion and
           // the history entry.
-          final_cause_summary: SECRET.jwt,
+          final_cause_summary: `the call sent ${SECRET.jwt} and failed`,
         },
       });
 
-      expect(refused.statusCode).toBe(400);
+      expect(closed.statusCode).toBe(200);
+      expect(closed.json<{ status: string }>().status).toBe('PAUSED');
 
-      // The transaction guarantee P3-01 established, now with a real refusal
-      // driving it: status, review events and history all or nothing.
-      const after = (await app.inject({ method: 'GET', url: `/v1/problems/${problemId}` })).json<
-        Record<string, unknown>
-      >();
-      expect(after).toEqual(before);
-
+      // The review survived as an Event, with the token gone and the sentence
+      // intact — which is the whole reason redaction exists rather than a
+      // refusal that would have lost the finding.
       const events = (
         await app.inject({ method: 'GET', url: `/v1/problems/${problemId}/events` })
-      ).json<{ events: unknown[] }>().events;
-      expect(events).toEqual([]);
+      ).json<{ events: { summary: string }[] }>().events;
+      expect(events.at(-1)?.summary).toBe('the call sent [REDACTED] and failed');
+    });
+
+    it('still refuses a credential a caller wrote into an object key', async () => {
+      // Keys are never redacted: a replacement can collide with a key already
+      // present and merge two fields, losing data silently. Refusing hands the
+      // problem back to the caller, where it can be fixed.
+      for (const payload of [
+        { snapshot: { [SECRET.keyText]: 'an ordinary looking value' } },
+        { snapshot: { deployment: { env: { [SECRET.keyText]: 'value' } } } },
+      ]) {
+        const refused = await app.inject({
+          method: 'POST',
+          url: `/v1/projects/${projectId}/environments`,
+          payload,
+        });
+
+        expect(refused.statusCode).toBe(400);
+        expect(refused.json<{ error: { code: string } }>().error.code).toBe('INVALID_REQUEST');
+      }
     });
   });
 
@@ -434,21 +454,18 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
       ['a `.env` pasted whole', { snapshot: { notes: SECRET.envPaste } }],
       ['a credential surrounded by ordinary prose', { snapshot: { notes: SECRET.inProse } }],
       [
-        'a credential as a key deep in the structure',
-        { snapshot: { deployment: { env: { [SECRET.keyText]: 'value' } } } },
-      ],
-      [
         'a credential-named field several levels down',
         { snapshot: { a: { b: { c: { access_token: SECRET.fieldValue } } } } },
       ],
-    ])('refuses %s', async (_label, payload) => {
+    ])('strips a credential from %s', async (_label, payload) => {
       const response = await app.inject({
         method: 'POST',
         url: `/v1/projects/${projectId}/environments`,
         payload,
       });
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(201);
+      expect(response.body).toContain('[REDACTED]');
     });
 
     it.each([
@@ -471,13 +488,14 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
         () => `/v1/projects/${projectId}/environments`,
         () => ({ snapshot: { password: WEAK.passphrase } }),
       ],
-    ])('refuses %s, which reads like ordinary words', async (_label, url, payload) => {
-      // The second review's finding: an earlier version required a digit or
-      // punctuation before believing an explicit credential name, so the
-      // weakest real passwords were the ones it stored.
+    ])('strips %s, which reads like ordinary words', async (_label, url, payload) => {
+      // An earlier version required a digit or punctuation before believing an
+      // explicit credential name, so the weakest real passwords were the ones
+      // it stored.
       const response = await app.inject({ method: 'POST', url: url(), payload: payload() });
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(201);
+      expect(response.body).toContain('[REDACTED]');
     });
 
     it('still accepts a snapshot with no credential in it', async () => {
@@ -575,6 +593,55 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
       expect(logged).not.toContain('api_key');
       // What it says instead.
       expect(logged).toContain('<key>');
+    });
+
+    it('left the redacted text in place of every marker', async () => {
+      const stored = await everythingStored();
+
+      // The other half of the claim. Absence of the secret would also be
+      // satisfied by nothing having been written at all; this says the record
+      // is there and carries the marker instead.
+      expect(stored).toContain('[REDACTED]');
+    });
+
+    it('keeps a caller-chosen key out of the log when validation refuses it', async () => {
+      const marker = 'sk-live-in-an-unknown-body-key';
+      const before = logLines.length;
+
+      // Ajv reports an `additionalProperties` failure by naming the offending
+      // property, and validation runs before sanitization does — so logging
+      // the error object wrote a caller-chosen key into the operational log
+      // for a request that was refused. Nothing from the error is logged now.
+      const refused = await app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'ok', [marker]: 'x' },
+      });
+      expect(refused.statusCode).toBe(400);
+
+      const written = logLines.slice(before).join('\n');
+      expect(written).toContain('request failed validation');
+      expect(written).not.toContain(marker);
+    });
+
+    it('keeps the body out of the log when it cannot be parsed', async () => {
+      const marker = 'sk9x';
+      const before = logLines.length;
+
+      // A JSON parse error quotes the bytes it choked on: `Unexpected token
+      // 's', "{"a": sk9x}" is not valid JSON`. The message carries a fragment
+      // of the request body, so the message cannot be logged either.
+      const refused = await app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: `{"project_name": ${marker}}`,
+        headers: { 'content-type': 'application/json' },
+      });
+      expect(refused.statusCode).toBe(400);
+
+      const written = logLines.slice(before).join('\n');
+      expect(written).toContain('request could not be parsed');
+      expect(written).not.toContain(marker);
     });
 
     it('left no detection detail in the log', () => {
