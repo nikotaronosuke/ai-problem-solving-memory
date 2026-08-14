@@ -30,7 +30,15 @@
  * library the thing that decides whether real work happens.
  */
 
-import { OwnerMismatchError, type SubmitOutcome, type SubmitResult } from './coordinator.js';
+import {
+  OwnerMismatchError,
+  type ReliableWriteCoordinator,
+  type SubmitEventInput,
+  type SubmitOutcome,
+  type SubmitResult,
+  type SubmitVerificationInput,
+} from './coordinator.js';
+import type { DeliveryContext, RetryDelivery } from './delivery.js';
 import type { QueueableOperation, QueueItem } from './item.js';
 import type { RetryQueue } from './queue.js';
 import { QueueCapacityError, QueueStorageError } from './store.js';
@@ -146,7 +154,7 @@ const unsaved = (
  * adapter that concludes it cannot recover one may decide to escalate; this
  * module does not decide that for it, and does not know what a credential is.
  */
-export function fallbackForSubmit(
+function fallbackForSubmit(
   result: SubmitResult,
   operation: QueueableOperation,
   problemImportant: boolean,
@@ -175,6 +183,13 @@ export function fallbackForSubmit(
  * sent, nothing is on disk, and there is nothing to find later — which is why
  * the notice carries no key.
  *
+ * They arrive here only from admission. A filesystem failure *after* the write
+ * is durable is turned into an outcome by the queue instead, because by then
+ * the answer depends on what happened rather than on what broke: a file that
+ * could not be deleted after the server accepted the write is a saved write,
+ * and an attempt whose result could not be recorded is a pending one. Reaching
+ * this `catch` therefore means the write never got in.
+ *
  * A refused payload is not a Memory failure in the ordinary sense; the boundary
  * did its job. It is grouped here because from the caller's position the result
  * is identical — the thing was not saved — and because the alternative is to
@@ -186,7 +201,7 @@ export function fallbackForSubmit(
  * own contract, and an error this module does not recognise is by definition
  * not a failure it knows how to be safe about.
  */
-export async function submitWithFallback(
+async function submitWithFallback(
   submit: () => Promise<SubmitResult>,
   operation: QueueableOperation,
   problemImportant: boolean,
@@ -215,6 +230,50 @@ export async function submitWithFallback(
   }
 
   return fallbackForSubmit(result, operation, problemImportant);
+}
+
+/**
+ * Records an Event, and answers with what the caller should do about it.
+ *
+ * One call, one set of facts. The Problem's importance and the kind of write
+ * are given once — importance by the caller, the operation by which function
+ * was called — and both the submission and the decision are built from them.
+ *
+ * That is the whole reason these exist rather than a general helper taking the
+ * operation and the importance as arguments. With two places to state the same
+ * thing, a caller could submit an important Event and describe it as routine,
+ * and the notice about it would simply not appear; or submit an Event and
+ * describe it as a Verification, and the handle used to recognise it later
+ * would name the wrong one. Neither mistake produces a failure at the time.
+ * They are only visible as a notice somebody never received.
+ */
+export function submitEventWithFallback(
+  coordinator: ReliableWriteCoordinator,
+  input: SubmitEventInput,
+  now: Date,
+  context: DeliveryContext,
+  delivery: RetryDelivery,
+): Promise<WriteFallbackDecision> {
+  return submitWithFallback(
+    () => coordinator.submitEvent(input, now, context, delivery),
+    'appendEvent',
+    input.problemImportant,
+  );
+}
+
+/** The same, for a Verification. */
+export function submitVerificationWithFallback(
+  coordinator: ReliableWriteCoordinator,
+  input: SubmitVerificationInput,
+  now: Date,
+  context: DeliveryContext,
+  delivery: RetryDelivery,
+): Promise<WriteFallbackDecision> {
+  return submitWithFallback(
+    () => coordinator.submitVerification(input, now, context, delivery),
+    'appendVerification',
+    input.problemImportant,
+  );
 }
 
 /** Everything important that is on disk and will not be delivered. */
