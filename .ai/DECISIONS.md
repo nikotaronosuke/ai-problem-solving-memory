@@ -1421,3 +1421,99 @@ Nothing else moved. `SecretFinding` is unchanged, no category was added, no valu
 One limit is worth recording rather than leaving to be rediscovered: `AWS SECRET ACCESS KEY = …`, written with spaces, is still not an assignment. The parser takes an identifier, because a rule that accepted spaces around `=` would read "the access key = whatever we agreed" out of ordinary prose. The structured-field rule covers the same credential when it sits under a name.
 
 The mutation proof is what makes this more than a unit test. Removing the correction fails 21 tests, and five of them are the real export: `GET /v1/export` returns 200 with the raw secret in the body. Removing only `secretaccesskey` still fails those five. The detection gap and the egress it opened are pinned separately.
+
+## D-151 — The retry queue is not part of the Memory Server (P3-07)
+
+The spec asks that a Memory failure not stop the work an assistant is doing, that an important Event go to a temporary queue, and that it be resent on recovery. E2E-7 names the failure exactly: *Memory Server が落ちても* — even when the server is down.
+
+A queue inside the server cannot satisfy that. When the process is stopped, or the network is unreachable, or a connection is refused, the request never arrives; there is nothing for a server-side queue to hold. Such a queue rescues one case out of ten — a database that is briefly gone while the HTTP server still answers — and calling that "Memory Server failure handling" would be claiming a guarantee that fails in exactly the situation it names.
+
+So the queue is a client-side library. `src/reliability/` is imported by nothing the server runs: not `src/http`, not `src/app`, not `src/db`, not the entry point. An architecture test fails if that changes, and it is not a style rule — something the server starts cannot be the thing that keeps working when the server stops.
+
+It lives in this repository anyway, and that is a deliberate compromise rather than an oversight. The adapters that will use it are Phase 5 and Phase 6, so shipping it with them would mean writing it twice; and what it encodes — which writes the server deduplicates, what it says when it refuses one, what a credential may never be written into — is this project's knowledge. Keeping it here means those answers exist once, with tests, rather than being reconstructed by two adapters that will not agree.
+
+The task list places retry queue in Step 3, before any adapter exists. That tension is real and is recorded rather than resolved by reinterpretation: the component is built now, and the scheduler and transport that drive it belong to whoever ships an adapter.
+
+## D-152 — Only the two writes the server deduplicates may be queued (P3-07)
+
+`appendEvent` and `appendVerification`, and nothing else.
+
+Both carry a `client_event_id`, and the database has a unique index on `(owner_id, client_event_id)` with the first write winning (D-058, D-063). Sending one of them twice therefore leaves one row, which is what makes a retry safe at all. Nothing else in the API has that property. Creating a Problem twice makes two Problems. A Problem update, a status transition and a close all carry `expected_version`, which is a statement about a moment that a retry has already left behind. Relations and usage logs have no idempotency key, deliberately.
+
+Deleting is not on the list and must never be added to it. A retried delete is a destructive operation replayed against a state nobody checked, and the queue exists to protect work rather than to repeat the removal of it.
+
+The operation is a closed union of two, pinned by an architecture test. Widening it means first giving the new operation an idempotency story, which is the same order of work the original two required.
+
+## D-153 — The idempotency key is assigned once, before the first attempt (P3-07)
+
+`clientEventId` sits at the top level of a queue item, never inside the payload, and is carried unchanged through every attempt. The queue does not generate one.
+
+That last part is the whole point. A queue that minted a fresh key per attempt would turn one Event into one row per retry — precisely the duplicate the key exists to prevent, produced by the mechanism meant to protect against it. It is also why the key is not copied into the payload: two copies are two things to keep in step, and the failure mode of them disagreeing is the same duplicate.
+
+Where the key comes from is P3-08's, which joins "generate it, send it, queue the failure, replay it" into one path and proves end to end that a resent Event stays one row. P3-07 provides the half that has to be true first: the key survives the queue, a restart, and every retry.
+
+## D-154 — A queued write is inspected before it reaches the disk (P3-07)
+
+Enqueuing runs the payload through the same sanitization policy the server's write boundary uses. A confirmed credential is redacted where that is safe and refuses the enqueue where it is not, exactly as a write to the database would be.
+
+A queue file is a stronger case for this than the database, not a weaker one. It outlives the process, sits in a directory chosen by whoever installed the adapter, and gets copied by whatever backs that directory up — and it is read by a person, in a text editor, at the moment something has gone wrong. A queue that skipped the boundary would be a durable copy of exactly what P3-01 through P3-03 exist to keep out.
+
+The policy is the server's own, not a second implementation. `src/reliability/` never names the detector, and an architecture test pins that it builds the policy rather than reaching past it — the same rule that kept credential vocabulary inside one directory when the export service needed it (D-147).
+
+The queue accepts structured Event and Verification intents and nothing else. There is no generic blob API, so there is no way to hand it a raw conversation, a log dump or a chain of thought and have it written down.
+
+## D-155 — Files, one per item, replaced by rename (P3-07)
+
+Not PostgreSQL: the queue holds writes that could not be stored, and the most ordinary reason for that is the database being unreachable, so a queue in the same database fails at the moment it is needed. Not memory: a session ends, a process restarts, a laptop sleeps, and a queue emptied by any of those has lost the Events it was holding. Not SQLite: a native module and a second storage engine, for a handful of small records that must survive a crash.
+
+One file per item rather than one log. An append-only log needs a whole rewrite to update one attempt count, and one corrupt byte in the middle puts every record after it out of reach. Separate files make a success an `unlink`, an attempt an atomic replace of one small file, and a damaged record the loss of exactly that record.
+
+Content is written to a temporary file in the same directory, flushed, and renamed over the destination. `rename` within a directory is atomic, so a reader sees the old file or the new one. The limit is stated rather than implied: the file's data is synced before the rename, but the directory entry is not, so a power loss in the instant after the rename can still lose it. Closing that costs a directory sync on every write and protects against the machine dying, which is not the failure this exists for.
+
+Names come from a UUID this module generated. No part of a path comes from a caller, an owner, a Problem or a payload.
+
+The directory is a required option with no default anywhere. Choosing it means choosing where somebody's unsaved work sits on their disk, and a library that guessed would write into a home directory, a working directory or a repository without being asked.
+
+## D-156 — Nothing is thrown away, and the only deletion is a success (P3-07)
+
+A delivered item is removed. Everything else is kept, including a permanent refusal and a run of attempts that used itself up. Both get a closed `terminal_failure` — `PERMANENT_RESPONSE` or `RETRY_EXHAUSTED` — and stop being attempted.
+
+The spec's other half is that the user is told about important things that were not saved, and nothing can be reported that has already been deleted. Deleting on failure would make P3-09 impossible to implement honestly. There is no TTL that removes an old item either: age is not evidence that somebody stopped wanting their work.
+
+A full queue refuses the new item rather than evicting the oldest. The oldest is the one that has been waiting longest to be saved, and dropping it silently is the outcome this whole task exists to prevent. Every limit — count, item size, total size — is the caller's to set; the library ships none.
+
+There is no dead-letter subsystem, no management endpoint and no UI. A terminal item is a file in a directory, which is all P3-09 needs to find it.
+
+## D-157 — A credential is never written down, and the owner is a guard rather than a key (P3-07)
+
+No token, no header, no client id, and nothing derived from one, appears in a queue item. The stored shape is a closed set of eleven fields, asserted whole by a test rather than spot-checked. Delivery holds its own credential — it is the thing making the request — so the queue never sees one and cannot persist one.
+
+That has a consequence worth naming: a credential rotated after an item was queued still delivers it. The item was tied to the owner whose memory it belongs to, not to the credential that happened to produce it, and an Event recorded before a revocation is still worth saving. A `401` therefore does not consume an attempt, does not make an item terminal, and does not modify anything; the drain stops and the caller tries again with a working credential.
+
+`owner_id` is recorded and is checked against the context a drain is running as. It is not authorisation — the server decides that from the credential, as it always has (D-132) — it is a guard against handing one person's Event to a context established for someone else. On a mismatch nothing is delivered, nothing is counted and nothing is changed.
+
+## D-158 — There is no timer, and the caller supplies the moment (P3-07)
+
+`drain` takes the current time as an argument, and the queue records when an item may next be attempted. Nothing here sleeps, schedules or loops in the background.
+
+A background timer in a library would keep running in a process with nothing to do, and it would have to be started and stopped by someone. It would also need a clock and a scheduler to test around — where this design needs neither: a ten-minute backoff is tested by passing a later date. That matters because `src/` had no clock and no timer at all before this task, and every timestamp in the system comes from PostgreSQL.
+
+Backoff is a pure function: doubling from a base, capped at a maximum, with no jitter. Jitter spreads a thundering herd and there is no herd — one person's assistant, retrying one person's writes. A `Retry-After` is honoured when it asks for longer and ignored when it asks for less: being told to wait is information a client does not have, and being told to hurry by a server that has just failed is not something to accept.
+
+Classification reads a closed outcome — a transport failure, or a status with an optional error code — and never an error message. A retry policy that read `error.message` would have its behaviour chosen by whatever wrote the message, and a proxy rewording a timeout would silently start dropping writes.
+
+`500` is classified as retryable, and it is the ambiguous one: this server answers `500` both for a database that is briefly gone and for a bug in its own code, with nothing in the response to tell them apart. Retrying spends a bounded number of attempts on a bug and then stops, keeping the item; refusing would discard a write every time the database blinked. Bounded waste is the cheaper mistake.
+
+## D-159 — A queued write for a deleted Problem stops, and nothing is resurrected (P3-07)
+
+A `404` is permanent. The Problem was deleted, P3-05 leaves nothing to bring back, and retrying would ask for the same absent row forever.
+
+The item becomes terminal and is kept. The `problem_id` is not rewritten, no Problem is created to hold the orphaned Event, and nothing about the deletion is undone — the delete was somebody's explicit request, and a queue that quietly re-created what it removed would be the worst possible answer to it. What remains is a record that this Event never reached anywhere, which is what P3-09 will report.
+
+## D-160 — Replay must respect the Problem's current state, and that belongs to the adapter (P3-07)
+
+`memory_write_enabled` is stored and settable and is not enforced on an append today; the spec treats it as a rule about whether an assistant *should* write, not something the server refuses. This task does not change that, and adding enforcement inside a retry task would be a Phase 2 decision made in the wrong place.
+
+But it leaves a real question for whoever writes a delivery implementation, so it is recorded here as a standing rule: **a replay must respect the Problem's state at the time of the replay, not at the time of the enqueue.** An Event queued while writes were enabled, and delivered after the owner turned them off, is a write the owner asked not to happen. A delivery that blindly resends is doing so on the strength of a decision the owner has since reversed.
+
+That belongs to Phase 5 and Phase 6, and to whatever P3-08 and P3-09 settle about how a caller learns what happened.

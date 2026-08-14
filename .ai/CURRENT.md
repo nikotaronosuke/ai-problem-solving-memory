@@ -472,6 +472,32 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **And one security blocker, found by review and since fixed.** `AWS_SECRET_ACCESS_KEY=…` was not detected as a credential, so an export carried it out in full — reproduced at 200 with the raw secret in the response before anything was changed. The cause was in the P3-02 vocabulary rather than in the export, and the correction is there (D-150). Five export tests now hold the egress: removing the correction returns them to 200 with the secret in the body.
 
+## What exists now — Retry queue (P3-07)
+
+**Not part of the server.** `src/reliability/` is a client-side library, imported by nothing the server runs — not `src/http`, not `src/app`, not `src/db`, not the entry point — and an architecture test fails if that changes (D-151). The reason is E2E-7: the failure the queue exists for is *the Memory Server being down*, and a queue behind an unreachable server never receives the request it was meant to hold. Something the server starts cannot be the thing that keeps working when the server stops.
+
+**Why it is in this repository anyway.** The adapters that will use it are Phase 5 and Phase 6, so shipping it with them means writing it twice; and what it encodes — which writes the server deduplicates, what it says when it refuses one, what a credential may never be written into — is this project's knowledge. The task list placing it in Step 3, before any adapter exists, is a real tension and is recorded rather than reinterpreted.
+
+**Two operations, and only two.** `appendEvent` and `appendVerification` (D-152). They are the complete set of writes carrying `client_event_id`, where the database keeps the first write — so resending one leaves one row. Creating a Problem twice makes two Problems; an update carries a version a retry has already left behind; delete must never appear on this list. The union is closed and pinned by a test.
+
+**The key is assigned once and never regenerated** (D-153). `clientEventId` sits at the top level, not in the payload, and survives the queue, a restart and every attempt. A queue minting a fresh key per attempt would produce exactly the duplicate the key prevents. Where the key comes from — generate, send, queue, replay as one path — is P3-08.
+
+**Sanitized before it touches the disk** (D-154), with the server's own policy rather than a second idea of what a credential looks like. A queue file outlives the process, sits in a directory somebody chose, gets copied by whatever backs it up, and is read in a text editor when things have gone wrong. Confirmed credentials are redacted where safe and refuse the enqueue where not. There is no generic blob API, so a raw conversation or log dump cannot be handed to it.
+
+**One file per item, replaced by rename** (D-155). Not PostgreSQL — same failure domain as the thing being worked around. Not memory — a restart would lose the Events. Not SQLite — a native module for a handful of small records. Written to a temporary file, flushed, renamed; the data is synced before the rename and the directory entry is not, which is stated in the module rather than implied. Names come from a generated UUID, so no path contains anything a caller supplied. The directory is a required option with no default: choosing it means choosing where somebody's unsaved work lives.
+
+**Nothing is discarded but a success** (D-156). A delivered item is unlinked; a permanent refusal and an exhausted retry both become terminal and are kept, because P3-09 cannot report what has been deleted. A full queue refuses the new item rather than evicting the oldest — the oldest has been waiting longest to be saved. No TTL, no dead-letter subsystem, no endpoint, no UI. Every limit is the caller's to set.
+
+**No credential, ever** (D-157). The stored shape is eleven fields, asserted whole rather than spot-checked. Delivery holds its own credential, so the queue never sees one. A consequence worth having: a credential rotated after an item was queued still delivers it. A `401` spends no attempt, changes nothing, and stops the drain until the caller has a working one. `owner_id` is recorded as a guard — a mismatch delivers nothing and changes nothing — and is not authorisation, which the server still decides from the credential.
+
+**No timer** (D-158). `drain` takes the moment as an argument, so a ten-minute backoff is tested by passing a later date. This is the first clock the codebase has needed and it is supplied rather than read: `src/` still contains no `Date.now`, no `setTimeout`, no scheduler. Backoff doubles from a base, caps, and has no jitter; a `Retry-After` is honoured when it asks for longer and ignored when it asks for less.
+
+**Classification reads a closed outcome, never a message.** Transport failure and `408/429/500/502/503/504` are retryable, `401` is its own answer, everything else refuses. `500` is the ambiguous one — this server answers it for a database that is briefly gone *and* for a bug — and it retries, because bounded waste on a bug is cheaper than discarding a write whenever the database blinks.
+
+**A deleted Problem stops the item and resurrects nothing** (D-159). `404` is permanent, the item is kept terminal, the `problem_id` is untouched and no Problem is invented to hold the orphaned Event.
+
+**Delivery is an interface and nothing else.** No HTTP client ships, because choosing a transport, a timeout and a credential source for adapters that do not exist is how a library acquires behaviour nobody picked. The integration test writes one, against a real server on a real port that is really stopped.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -489,6 +515,8 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No retrieval artifact, search index or derived cache — so nothing derived to delete, and nothing derived to export. A phase that adds one must extend the delete path in the same change (D-141)
 - No import. Export proves its format is restorable; reading an artifact back is outside the Core MVP by the specification's own line (D-142)
 - No per-project or per-problem export, no streaming, no archive, no export job, no pagination
+- No HTTP client, no scheduler and no queue directory default. The retry queue ships an interface, a `drain` the caller drives, and a required path (D-151, D-155, D-158)
+- No enforcement of `memory_write_enabled` on an append. It is stored and settable; whether a replay may proceed against a Problem whose owner has since turned writes off is a rule for the adapter's delivery (D-160)
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
 - No client SDK or codegen. The document declares the one scheme the server implements and nothing more
@@ -498,15 +526,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-07 — Retry queue.
+P3-08 — Idempotent replay.
 
 Not started. See the private Phase 3 breakdown for the task.
 
 Notes for whoever picks this up:
-- `client_event_id` already exists on Events and Verifications and already deduplicates. P3-08 connects it to retry; P3-07 is the queue in front of it
-- Nothing in P3-01 through P3-06 buffers a write. Every path is synchronous, and a failure reaches the caller
-- The export carries `client_event_id`, so a restored Memory keeps its idempotency. A queue that generated fresh keys on retry would defeat that
-- Contract version is 0.4.0 and moves when the `/v1` surface changes shape; the export's `schema_version` is `"1"` and moves for its own reasons
+- The server side already deduplicates. `unique (owner_id, client_event_id)` on Events and Verifications, `on conflict do nothing` then re-select, first write wins, replay returns the original with the same 201 (D-058, D-063). Nothing there needs building
+- What P3-07 left is a queue that keeps whatever key it was given. P3-08 is the path that generates the key before the first attempt and carries it through send, queue and replay as one thing (D-153)
+- The proof to aim for is end to end: the same Event sent any number of times leaves exactly one row, with the queue in the middle
+- `src/reliability/` must stay out of the server's imports; that is what makes it work when the server is down
 
 ## Core MVP milestone
 

@@ -412,6 +412,9 @@ Run `npm run check` before reporting a task complete.
 | `src/app/`             | Application services transport depends on              |
 | `src/db/`              | Database access boundary — importing it opens nothing  |
 | `src/repository/`      | Owner-scoped storage seam the service layer works with |
+| `src/credentials/`     | Client credentials — a boundary of its own, not Memory |
+| `src/sanitization/`    | What may be stored, and what a credential looks like   |
+| `src/reliability/`     | Client-side retry queue — **not part of the server**   |
 | `tests/`               | Automated tests, mirroring `src/`                      |
 | `tests/e2e/`           | Whole-scenario tests, one per phase                    |
 | `supabase/migrations/` | Schema migrations, in filename order                   |
@@ -446,6 +449,23 @@ running them does not touch your local data.
 - TypeScript runs in strict mode. Prefer fixing types over `any` or assertions.
 - Deterministic, repeatable work belongs in ordinary code. Reserve model
   inference for semantic judgement — summarisation, similarity, comparison.
+
+## The retry queue is not part of the server
+
+`src/reliability/` is the one directory under `src/` that the server does not
+run. It is a library for whoever _calls_ the Memory Server — the Claude Code
+and Codex adapters of Phase 5 and Phase 6 — and it holds writes that could not
+be delivered so they can be sent again later.
+
+It has to be on that side. The failure it exists for is the Memory Server being
+unreachable: stopped, unroutable, refusing connections. A queue inside the
+server would never receive the request it was meant to hold.
+
+So nothing under `src/http`, `src/app`, `src/db` or `src/index.ts` imports it,
+starting the server starts no queue and no retry loop, and an architecture test
+fails if either changes. It ships no HTTP client, no scheduler and no default
+directory, because a transport, a moment to retry and a place on somebody's
+disk are all decisions for whoever installs an adapter.
 
 ## Scope reminder
 

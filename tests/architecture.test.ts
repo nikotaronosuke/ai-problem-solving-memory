@@ -793,6 +793,142 @@ describe('the export path', () => {
   });
 });
 
+describe('the retry queue is not part of the server', () => {
+  it('is imported by nothing the server runs', async () => {
+    const modules = (await readModules(SRC)).filter(
+      (module) => !module.path.startsWith('reliability/'),
+    );
+
+    const importers = modules
+      .filter((module) =>
+        importsOf(module.source).some((specifier) => specifier.includes('reliability')),
+      )
+      .map((module) => module.path);
+
+    // The queue holds writes the server could not accept, and the most
+    // ordinary reason for that is the server not running. Something the server
+    // starts cannot be the thing that keeps working when it stops, so nothing
+    // under `http`, `app`, `db` or the entry point may reach it. It ships from
+    // this repository for adapters to use, not for the server to run.
+    expect(importers).toEqual([]);
+  });
+
+  it('reaches neither the database nor the credential store', async () => {
+    const modules = await readModules(join(SRC, 'reliability'));
+    expect(modules.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        if (
+          specifier === 'pg' ||
+          specifier.startsWith('pg/') ||
+          specifier.includes('/db/') ||
+          specifier.includes('/credentials/') ||
+          specifier.includes('/repository/')
+        ) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    // It runs where the database is unreachable by assumption, and it must
+    // never hold a credential — so it has no reason to name either.
+    expect(offenders).toEqual([]);
+  });
+
+  it('ships no HTTP client of its own', async () => {
+    const modules = await readModules(join(SRC, 'reliability'));
+
+    const offenders = modules
+      .filter((module) =>
+        /\bfetch\s*\(|node:http|node:https|undici|axios/.test(
+          module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''),
+        ),
+      )
+      .map((module) => module.path);
+
+    // Delivery is an interface. Choosing a transport, a timeout and a
+    // credential source on behalf of adapters that do not exist yet is how a
+    // library acquires behaviour nobody picked.
+    expect(offenders).toEqual([]);
+  });
+
+  it('has no clock, timer or scheduler', async () => {
+    const modules = await readModules(join(SRC, 'reliability'));
+
+    const offenders = modules
+      .filter((module) =>
+        /Date\.now|new Date\(\)|setTimeout|setInterval|setImmediate/.test(
+          module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''),
+        ),
+      )
+      .map((module) => module.path);
+
+    // The caller supplies the moment and decides when to drain. A background
+    // loop here would keep running in a process with nothing to do, and would
+    // need a clock and a scheduler to test around.
+    expect(offenders).toEqual([]);
+  });
+
+  it('queues exactly the two writes the server deduplicates', async () => {
+    const { QUEUEABLE_OPERATIONS } = await import('../src/reliability/index.js');
+
+    // Events and Verifications carry `client_event_id` and the database keeps
+    // the first write, so resending one is safe by construction. Nothing else
+    // has that property: creating a Problem twice makes two Problems, an
+    // update carries a version a retry has already left behind, and deleting
+    // must never appear on this list at all.
+    expect([...QUEUEABLE_OPERATIONS]).toEqual(['appendEvent', 'appendVerification']);
+  });
+
+  it('writes down a closed set of fields, with nothing that authenticates', async () => {
+    const source = await readFile(join(SRC, 'reliability', 'item.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const stored = /interface StoredItem \{([\s\S]*?)\n\}/.exec(code)?.[1] ?? '';
+    const fields = [...stored.matchAll(/^\s*(\w+)[?]?:/gm)].map((match) => match[1]).sort();
+
+    // The on-disk shape, asserted whole rather than by spot-checking the
+    // fields somebody remembered. A queue file outlives the process and gets
+    // copied by whatever backs up a home directory.
+    expect(fields).toEqual([
+      'attempt_count',
+      'client_event_id',
+      'enqueued_at',
+      'next_attempt_at',
+      'operation',
+      'owner_id',
+      'payload',
+      'problem_id',
+      'queue_item_id',
+      'schema_version',
+      'terminal_failure',
+    ]);
+    for (const forbidden of [
+      'token',
+      'credential',
+      'authorization',
+      'header',
+      'stack',
+      'message',
+    ]) {
+      expect(stored.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  it('inspects a write before it reaches the disk, using the boundary’s own policy', async () => {
+    const queue = await readFile(join(SRC, 'reliability', 'queue.ts'), 'utf8');
+
+    // The same policy the write boundary uses, not a second idea of what a
+    // credential looks like. A queue that skipped it would be a durable copy
+    // of exactly what P3-01 through P3-03 keep out of the database.
+    expect(queue).toContain('sanitizeValue');
+    expect(queue).toContain('createSecretDetectionPolicy');
+    expect(queue).not.toContain('createSecretDetector');
+  });
+});
+
 describe('contract generation', () => {
   it('is named in one transport module and nowhere else', async () => {
     const modules = await readModules(SRC);
