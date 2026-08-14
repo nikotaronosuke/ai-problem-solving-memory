@@ -402,13 +402,35 @@ One measurement is recorded rather than acted on (D-168): a unique violation abo
 
 Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations. 2424 tests across 80 files.
 
-### P3-09 — NEXT
+### P3-09 — DONE
 
 Failure fallback contract.
 
-Depends on P3-08, satisfied. See the private Phase 3 breakdown for the completion condition.
+No migration, no dependency, no HTTP surface, nothing on the server. One new file in `src/reliability/`, plus a storage boundary and one durable field.
 
-The mechanical half is built: a submit answers `DELIVERED`, `QUEUED`, `AUTH_REQUIRED` or `PERMANENT_FAILURE`, and every write that has not arrived is a file in the queue directory, terminal ones included. What is missing is the contract around it — that a Memory failure does not become the caller's fatal error, that a search failure falls back to ordinary investigation, and that the person hears about the important things that were not saved and only those.
+The task is a contract rather than an engine: what already happened — a submit outcome, a queue that would not take a write, a search reporting itself unavailable — becomes a decision the caller acts on. No search engine, adapter, HTTP client, notification renderer or scheduler was added.
+
+The absorbed failures are named one at a time (D-171): a submit outcome, `QueueCapacityError`, `SanitizationRejectedError`, `QueueStorageError`, `UNAVAILABLE`. Everything else propagates, including an owner mismatch and a delivery that threw where its contract says to return an outcome. `catch (error) { carryOn() }` would satisfy the requirement in one line and turn every bug in the codebase into silence, so the tests for what still throws are as thorough as the ones for what does not, and `continueMainWork` is typed `true` so there is no branch to write.
+
+Filesystem detail stops at the queue's edge (D-172). Each `fs` call is wrapped individually into a `QueueStorageError` carrying one of three operation kinds and nothing else — no path, no `errno`, no syscall, no OS message, and deliberately no `cause`, because a Node filesystem error's message *is* the absolute path it failed on and an error holding one travels wherever errors travel. Wrapped per syscall rather than per method, so a mistake in this module's own logic still surfaces as itself.
+
+Importance comes from the Problem and nowhere else (D-173), is recorded when the write is made rather than looked up later (D-174), and lives in the queue file — because the moment a queued write runs out of attempts is usually a moment the server is unreachable, which is why it ran out. That made the queue format version `'2'` (D-175); leaving it at `'1'` would have left a reader unable to tell "not important" from "written before the field existed".
+
+A queued write is not a failure to report (D-176). `QUEUED` and `AUTH_REQUIRED` are silent even for an important Problem: there is a durable copy and a recovery path, and announcing it would interrupt somebody every time a laptop lost its network. One notice kind exists (D-177), carrying the operation and an opaque handle and nothing from the write itself — in the case that matters most, the write was refused precisely because its content should not travel. The handle is the same whether the failure is reported immediately or found on disk later (D-178), which is what P3-07's refusal to delete a terminal item was for.
+
+An empty search result is an answer; a search that did not run is not (D-179). And the library answers rather than running the caller's work (D-180) — continuation is proved with a caller-side sentinel, which is what an adapter will look like.
+
+Fourteen deliberate mutations fail between 1 and 5 tests each: throwing on an unavailable search, treating an empty result as unavailable, notifying on `QUEUED`, notifying on `AUTH_REQUIRED`, notifying routine failures, not notifying important terminal ones, absorbing everything with a catch-all, putting the write's summary in a notice, attaching the raw error to `QueueStorageError`, dropping `problem_important` from the file, leaving the schema version at `'1'`, deleting terminal items, dropping the operation from the dedup handle, and reporting an unreadable queue as important-unsaved.
+
+Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations. 2477 tests across 81 files.
+
+### P3-10 — NEXT
+
+Logging policy.
+
+Depends on P3-09, satisfied. See the private Phase 3 breakdown for the completion condition.
+
+Separating operational logs from Memory content, masking secrets, and keeping raw prompts and chain-of-thought out. Two specific paths were closed in P3-03 — Ajv naming an offending property, and a JSON parse error quoting the bytes it choked on (D-128) — and the general policy is what this task owes. P3-09 dropped filesystem detail rather than carrying it for diagnostics (D-172), so if operational diagnostics are wanted they need somewhere safe to go first. Nothing in `src/reliability/` logs at all today, which is a question this task inherits rather than an answer.
 
 ## BLOCKED
 

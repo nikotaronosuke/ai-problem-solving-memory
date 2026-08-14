@@ -75,6 +75,7 @@ describe('a queue of writes that have not reached the server', () => {
       ownerId,
       problemId: randomUUID() as ProblemId,
       clientEventId: randomUUID() as ClientEventId,
+      problemImportant: false,
       payload: {
         eventType: 'DISCOVERY',
         summary: 'the cache was the problem',
@@ -90,6 +91,7 @@ describe('a queue of writes that have not reached the server', () => {
     ownerId,
     problemId: randomUUID() as ProblemId,
     clientEventId: randomUUID() as ClientEventId,
+    problemImportant: false,
     payload: {
       verificationType: 'TEST',
       result: true,
@@ -133,12 +135,15 @@ describe('a queue of writes that have not reached the server', () => {
     it('carries the format version, which is not the API or export version', async () => {
       // Three versions for three different questions. A queue file is read by
       // the process that wrote it, minutes later; an export artifact is read
-      // by another install, years later.
-      expect(RETRY_QUEUE_SCHEMA_VERSION).toBe('1');
+      // by another install, years later. This one moved to '2' when the
+      // Problem's importance was added, because a required field is a new
+      // format — calling it the old one would leave a reader unable to tell
+      // "not important" from "written before the field existed".
+      expect(RETRY_QUEUE_SCHEMA_VERSION).toBe('2');
 
       await queue.enqueue(eventWrite(), AT);
       const stored = JSON.parse((await readItemFiles())[0] ?? '') as Record<string, unknown>;
-      expect(stored['schema_version']).toBe('1');
+      expect(stored['schema_version']).toBe('2');
     });
 
     it('takes both queueable operations and nothing else', async () => {
@@ -564,6 +569,7 @@ describe('a queue of writes that have not reached the server', () => {
         'owner_id',
         'payload',
         'problem_id',
+        'problem_important',
         'queue_item_id',
         'schema_version',
         'terminal_failure',

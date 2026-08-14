@@ -311,6 +311,7 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
         {
           ownerId,
           problemId,
+          problemImportant: false,
           payload: { eventType: 'DISCOVERY', summary: 'the first and only summary' },
         },
         AT,
@@ -366,6 +367,7 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
         {
           ownerId,
           problemId,
+          problemImportant: false,
           payload: {
             eventType: 'ATTEMPT',
             summary: 'the same words both times',
@@ -403,6 +405,7 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
         {
           ownerId,
           problemId,
+          problemImportant: false,
           payload: {
             verificationType: 'TEST',
             result: true,
@@ -449,7 +452,12 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
       // Queued by a first attempt whose answer was lost, so there is an item
       // to race over.
       const submitted = await coordinator.submitEvent(
-        { ownerId, problemId, payload: { eventType: 'FIX', summary: 'raced' } },
+        {
+          ownerId,
+          problemId,
+          problemImportant: false,
+          payload: { eventType: 'FIX', summary: 'raced' },
+        },
         AT,
         context,
         delivery({ loseAnswer: true }),
@@ -494,7 +502,12 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
       const context: DeliveryContext = { ownerId };
 
       const submitted = await coordinator.submitEvent(
-        { ownerId, problemId, payload: { eventType: 'HYPOTHESIS', summary: 'what was true' } },
+        {
+          ownerId,
+          problemId,
+          problemImportant: false,
+          payload: { eventType: 'HYPOTHESIS', summary: 'what was true' },
+        },
         AT,
         context,
         delivery({ loseAnswer: true }),
@@ -537,7 +550,12 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
       const coordinator = createReliableWriteCoordinator(queue);
 
       const event = await coordinator.submitEvent(
-        { ownerId, problemId, payload: { eventType: 'DISCOVERY', summary: 'the event' } },
+        {
+          ownerId,
+          problemId,
+          problemImportant: false,
+          payload: { eventType: 'DISCOVERY', summary: 'the event' },
+        },
         AT,
         context,
         delivery(),
@@ -569,7 +587,12 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
       const coordinator = createReliableWriteCoordinator(queue);
 
       const mine = await coordinator.submitEvent(
-        { ownerId, problemId, payload: { eventType: 'DISCOVERY', summary: 'mine' } },
+        {
+          ownerId,
+          problemId,
+          problemImportant: false,
+          payload: { eventType: 'DISCOVERY', summary: 'mine' },
+        },
         AT,
         { ownerId },
         delivery(),
@@ -659,7 +682,12 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
 
       await expect(
         coordinator.submitEvent(
-          { ownerId, problemId, payload: { eventType: 'FIX', summary: 'never sent' } },
+          {
+            ownerId,
+            problemId,
+            problemImportant: false,
+            payload: { eventType: 'FIX', summary: 'never sent' },
+          },
           AT,
           { ownerId },
           attempted,
@@ -689,6 +717,7 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
           {
             ownerId,
             problemId,
+            problemImportant: false,
             payload: {
               eventType: 'DISCOVERY',
               summary: 'a private key, whole',
@@ -722,6 +751,7 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
         {
           ownerId,
           problemId,
+          problemImportant: false,
           payload: {
             eventType: 'DISCOVERY',
             summary: `it worked once I set AWS_SECRET_ACCESS_KEY=${secret}`,

@@ -518,6 +518,30 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Nothing on the server changed.** The unique index, `on conflict do nothing`, the re-read and the 201 with the original record have all been there since Phase 1. One measured caveat is recorded rather than fixed (D-168): a unique violation aborts its transaction, so `appendVerification` — which catches the violation instead of avoiding it — would break if it were ever called inside one. Nothing does, and a replay is an ordinary HTTP append.
 
+## What exists now — Failure fallback contract (P3-09)
+
+**A contract, not an engine.** `src/reliability/fallback.ts` turns what already happened — a submit outcome, a queue that refused a write, a search reporting itself unavailable — into a decision the caller acts on. No search engine, no adapter, no HTTP client, no notification renderer, and no scheduler were added.
+
+**Named failures are absorbed; everything else throws** (D-171). The absorbed set is written out one member at a time: a submit outcome, `QueueCapacityError`, `SanitizationRejectedError`, `QueueStorageError`, `UNAVAILABLE`. An owner mismatch, a delivery that threw where its contract says to return, and any unrecognised error propagate untouched. `catch (error) { carryOn() }` would satisfy the requirement and turn every bug in the codebase into silence, so an architecture test counts the catches against the re-throws and behaviour tests drive each bug class through.
+
+**`continueMainWork` is typed `true`.** There is no Memory failure that stops the work, so there is no branch — adding one means changing a type on purpose rather than writing a plausible `if`.
+
+**Filesystem detail stops at the queue's edge** (D-172). Each `fs` call is wrapped individually into a `QueueStorageError` carrying one of three operation kinds and nothing else: no path, no `errno`, no syscall, no OS message, and no `cause`. A Node filesystem error's message *is* the absolute path it failed on. Per-syscall rather than per-method, so only the filesystem can produce one; `ENOENT` on read and remove stay the "not a failure" answers they were.
+
+**The Problem's importance is the only importance** (D-173). `submitEvent` and `submitVerification` take `problemImportant`, required and undefaulted — a default is wrong both ways, since `false` silences notices somebody asked for and `true` invents ones they did not. No importance was invented for Events, and none derived from event type: the spec gives importance to a Problem and to nothing else.
+
+**Importance is a snapshot, kept on disk** (D-174, D-175). It is recorded when the write is made and never re-read, because the moment a queued write finally runs out of attempts is usually a moment the server is unreachable — that is why it ran out. A fallback contract that needs the Memory to be reachable is not one. The field made the queue format version `'2'`; leaving it at `'1'` would mean a reader could not tell "not important" from "written before the field existed". Three version numbers now coexist without sharing a constant: API `0.4.0`, export `"1"`, queue `"2"`.
+
+**A queued write is not a failure to report** (D-176). `DELIVERED` → `SAVED`. `QUEUED` and `AUTH_REQUIRED` → `PENDING`, silent even for an important Problem: there is a durable copy, it will be retried, and announcing it would interrupt somebody every time a laptop lost its network with news retracted a minute later. Only a permanent refusal, an exhausted retry, or a write the queue would not take produce a notice.
+
+**One notice kind, carrying nothing about the write** (D-177). `IMPORTANT_MEMORY_UNSAVED`, with the operation and an opaque handle. No cause breakdown — to the person it all means the same thing, and every distinction added here describes internals nobody asked about. No summary, no reason, no Problem id, no path, no error message; in the case that matters most the write was refused precisely because its content should not travel. No sentences either: an architecture test caps every string literal in the module at the length of the notice kind.
+
+**The same unsaved write stays recognisable** (D-178). `dedupKey` is the operation and the idempotency key — the logical write, not the file — so the notice given the instant it fails and the one found on disk a week later are identical. This module stores no acknowledgement; when somebody has been told enough is interface behaviour. `collectImportantUnsavedNotices` is what P3-07's refusal to delete a failed item was for, and answers `UNAVAILABLE` rather than guessing when the queue cannot be read.
+
+**A search that did not run is not one that found nothing** (D-179). Empty is `AVAILABLE([])`; unavailable sends the caller to ordinary investigation, silently. Collapsing the two would have an assistant conclude a problem is novel because a database was briefly away. `fallbackForSearch` reads an attempt rather than wrapping a function, so a future engine's bugs are not absorbed along with its outages.
+
+**The library answers; the caller works** (D-180). No `withMemoryFallback(mainWork, …)`. Continuation is proved by a caller-side sentinel, which is also what an adapter will look like.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -536,7 +560,10 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No import. Export proves its format is restorable; reading an artifact back is outside the Core MVP by the specification's own line (D-142)
 - No per-project or per-problem export, no streaming, no archive, no export job, no pagination
 - No HTTP client, no scheduler and no queue directory default. The retry queue ships an interface, a `drain` the caller drives, and a required path (D-151, D-155, D-158)
-- No fallback that sends a write the queue could not record (D-162), and no user-facing anything: the submit outcomes are mechanical, and what a person is told is P3-09's
+- No fallback that sends a write the queue could not record (D-162)
+- No notice text, no notification store and no acknowledgement. P3-09 returns a structured intent; wording, timing and dedup belong to an adapter (D-177, D-178)
+- No search engine. P3-09 defines the shape one must answer in and nothing more (D-179)
+- No workflow orchestration: the fallback answers a question and never runs the caller's work (D-180)
 - No enforcement of `memory_write_enabled` on an append. It is stored and settable; whether a replay may proceed against a Problem whose owner has since turned writes off is a rule for the adapter's delivery (D-160)
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
@@ -547,15 +574,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-09 — Failure fallback contract.
+P3-10 — Logging policy.
 
 Not started. See the private Phase 3 breakdown for the task.
 
 Notes for whoever picks this up:
-- The mechanical half exists. A submit answers `DELIVERED`, `QUEUED`, `AUTH_REQUIRED` or `PERMANENT_FAILURE` (D-169), and a queue holds every write that has not arrived, terminal ones included (D-156). Nothing has to be re-derived to know what happened
-- What is missing is what a caller does with that: not turning a Memory failure into a fatal error, and telling the person about important things that were not saved. The spec asks for *only* the important ones
-- A terminal item is a file in the queue directory. That is where "what was not saved" lives; nothing else records it
-- Search failure falls back to ordinary investigation, which is the other half of the same contract and has no code behind it yet
+- Two paths were closed early, in P3-03: Ajv names an offending property, and a JSON parse error quotes the bytes it choked on. Both are logged as codes rather than objects (D-128)
+- P3-09 deliberately dropped filesystem detail rather than carrying it for diagnostics (D-172). If operational diagnostics are wanted, they need somewhere safe to go before anything starts keeping the original error again
+- The redaction paths on the logger are dormant: Fastify's `req` serializer writes no headers, so nothing exercises them today (D-157 era). Whether that stays true is worth checking rather than assuming
+- Nothing in `src/reliability/` logs at all. What a queue or a fallback should record, if anything, is an open question this task inherits
 
 ## Core MVP milestone
 

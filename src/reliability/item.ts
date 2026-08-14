@@ -34,8 +34,16 @@ import type { EventType, VerificationType } from '../domain/enums.js';
 import type { OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 
-/** The version of the queue file format. Not the API or export version. */
-export const RETRY_QUEUE_SCHEMA_VERSION = '1';
+/**
+ * The version of the queue file format. Not the API or export version.
+ *
+ * Moved to `'2'` when `problem_important` was added. A required field is a new
+ * format, and calling it the old one would mean a reader could not tell whether
+ * the field's absence meant "not important" or "written before the field
+ * existed" — two answers with opposite consequences, since one of them
+ * silences a notice and the other invents one.
+ */
+export const RETRY_QUEUE_SCHEMA_VERSION = '2';
 
 /** The writes that may be queued. Exactly the ones the server deduplicates. */
 export const QUEUEABLE_OPERATIONS = ['appendEvent', 'appendVerification'] as const;
@@ -75,6 +83,15 @@ export interface VerificationIntentPayload {
 /**
  * A write that has not reached the server yet.
  *
+ * `problemImportant` is a snapshot of the Problem's `importance` as it stood
+ * when the write was made, not a property of the Event itself. There is no
+ * second notion of importance in this system: the spec gives one to a Problem,
+ * where a person can set it, and none to an Event. It is recorded here because
+ * the moment it is needed — a write that has finally run out of attempts,
+ * possibly days later and in a different process — is a moment when the server
+ * may well be the thing that is unreachable. A file that has to be explained by
+ * asking a server is not a file that works when the server is down.
+ *
  * `clientEventId` sits here rather than inside `payload`, and that placement is
  * the point rather than tidiness. It is the thing that makes a retry safe, so
  * it has exactly one home, is assigned before the first attempt by whoever
@@ -88,6 +105,7 @@ export type QueuedWrite =
       readonly ownerId: OwnerId;
       readonly problemId: ProblemId;
       readonly clientEventId: ClientEventId;
+      readonly problemImportant: boolean;
       readonly payload: EventIntentPayload;
     }
   | {
@@ -95,6 +113,7 @@ export type QueuedWrite =
       readonly ownerId: OwnerId;
       readonly problemId: ProblemId;
       readonly clientEventId: ClientEventId;
+      readonly problemImportant: boolean;
       readonly payload: VerificationIntentPayload;
     };
 
@@ -122,6 +141,7 @@ interface StoredItem {
   operation: string;
   problem_id: string;
   client_event_id: string;
+  problem_important: boolean;
   payload: unknown;
   enqueued_at: string;
   attempt_count: number;
@@ -137,6 +157,7 @@ export function serialiseQueueItem(item: QueueItem): string {
     operation: item.write.operation,
     problem_id: item.write.problemId,
     client_event_id: item.write.clientEventId,
+    problem_important: item.write.problemImportant,
     payload: item.write.payload,
     enqueued_at: item.enqueuedAt,
     attempt_count: item.attemptCount,
@@ -193,6 +214,12 @@ export function parseQueueItem(text: string): QueueItem | null {
   ) {
     return null;
   }
+  if (typeof stored.problem_important !== 'boolean') {
+    // Required, and not defaulted. Guessing `false` would silence a notice the
+    // person asked for; guessing `true` would invent ones they did not. A file
+    // that cannot answer is a file this build does not understand.
+    return null;
+  }
   if (typeof stored.enqueued_at !== 'string' || !ISO.test(stored.enqueued_at)) {
     return null;
   }
@@ -235,6 +262,7 @@ export function parseQueueItem(text: string): QueueItem | null {
     ownerId: stored.owner_id as OwnerId,
     problemId: stored.problem_id as ProblemId,
     clientEventId: stored.client_event_id as ClientEventId,
+    problemImportant: stored.problem_important,
     payload: stored.payload,
   } as QueuedWrite;
 

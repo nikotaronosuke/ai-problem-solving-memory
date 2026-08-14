@@ -40,6 +40,21 @@ export {
 } from './classify.js';
 export type { DeliveryContext, RetryDelivery } from './delivery.js';
 export {
+  collectImportantUnsavedNotices,
+  fallbackForSearch,
+  fallbackForSubmit,
+  MEMORY_NOTICE_KINDS,
+  MEMORY_WRITE_STATES,
+  submitWithFallback,
+  type MemoryNoticeIntent,
+  type MemoryNoticeKind,
+  type MemorySearchAttempt,
+  type MemoryWriteState,
+  type NoticeScanResult,
+  type SearchFallbackDecision,
+  type WriteFallbackDecision,
+} from './fallback.js';
+export {
   generateQueueItemId,
   parseQueueItem,
   QUEUEABLE_OPERATIONS,
@@ -64,4 +79,10 @@ export {
   type RetryQueue,
   type RetryQueueOptions,
 } from './queue.js';
-export { QueueCapacityError, type QueueLimits } from './store.js';
+export {
+  QUEUE_STORAGE_OPERATIONS,
+  QueueCapacityError,
+  QueueStorageError,
+  type QueueLimits,
+  type QueueStorageOperation,
+} from './store.js';

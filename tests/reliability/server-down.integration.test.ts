@@ -60,8 +60,10 @@ import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import {
+  collectImportantUnsavedNotices,
   createReliableWriteCoordinator,
   createRetryQueue,
+  fallbackForSubmit,
   type DeliveryContext,
   type DeliveryOutcome,
   type QueueItem,
@@ -288,6 +290,10 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
       ownerId,
       problemId,
       clientEventId: generateClientEventId(),
+      // Important on purpose: it makes the absence of a notice below a
+      // decision about queued writes rather than a consequence of the Problem
+      // being routine.
+      problemImportant: true,
       payload: {
         eventType: 'DISCOVERY',
         summary: 'found it while the server was down',
@@ -313,6 +319,7 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
         {
           ownerId: write.ownerId,
           problemId: write.problemId,
+          problemImportant: write.problemImportant,
           payload: write.payload,
         },
         enqueuedAt,
@@ -326,6 +333,19 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
     expect(submitted.outcome).toBe('QUEUED');
     expect(mainWorkFinished).toBe(true);
     const clientEventId = submitted.clientEventId;
+
+    // The P3-09 half, against the same real outage rather than a second copy
+    // of it: the caller is told to carry on, the write is pending rather than
+    // lost, and the person is told nothing — a queued write is the failure
+    // design working, and this Problem is marked important precisely so that
+    // silence is a decision rather than an accident.
+    const decision = fallbackForSubmit(submitted, 'appendEvent', true);
+    expect(decision.continueMainWork).toBe(true);
+    expect(decision.memoryState).toBe('PENDING');
+    expect(decision.noticeIntent).toBeNull();
+
+    // And nothing on disk is reported as unsaved while it is still in hand.
+    expect((await collectImportantUnsavedNotices(queue)).notices).toEqual([]);
 
     // Nothing reached the database.
     expect(await eventsFor(problemId)).toEqual([]);
@@ -379,6 +399,7 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
         ownerId,
         problemId: doomedId,
         clientEventId: generateClientEventId(),
+        problemImportant: false,
         payload: { eventType: 'DISCOVERY', summary: 'arrived after the delete' },
       },
       new Date('2026-08-14T10:00:00.000Z'),
@@ -424,6 +445,7 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
         ownerId,
         problemId,
         clientEventId,
+        problemImportant: false,
         payload: { verificationType: 'TEST', result: true, summary: 'checked while offline' },
       },
       new Date('2026-08-14T10:00:00.000Z'),
@@ -470,6 +492,7 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
         ownerId,
         problemId,
         clientEventId: generateClientEventId(),
+        problemImportant: false,
         payload: { eventType: 'FIX', summary: 'a note about the fix' },
       },
       new Date('2026-08-14T10:00:00.000Z'),

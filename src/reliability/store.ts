@@ -72,6 +72,59 @@ export interface StoredItems {
   readonly corruptCount: number;
 }
 
+/** Which kind of storage work failed. Closed, and free of any detail. */
+export const QUEUE_STORAGE_OPERATIONS = ['READ', 'WRITE', 'REMOVE'] as const;
+
+export type QueueStorageOperation = (typeof QUEUE_STORAGE_OPERATIONS)[number];
+
+/**
+ * Raised when the filesystem itself would not cooperate.
+ *
+ * A disk that is full, a directory that cannot be created, a rename that
+ * failed. These are ordinary infrastructure failures rather than bugs, and the
+ * point of naming them is so a caller can carry on with its own work instead of
+ * dying because a queue file could not be written.
+ *
+ * It carries the kind of operation and nothing else. No path, no `errno`, no
+ * syscall name, no message from the operating system, and deliberately no
+ * `cause`: a Node filesystem error's message is the absolute path it failed on,
+ * and an error that holds one travels wherever errors travel — into a log, into
+ * a report, into whatever an adapter shows somebody. Keeping the original
+ * around "just for diagnostics" is how that happens, so it is not kept. If
+ * operational diagnostics are wanted later, they are designed with somewhere
+ * safe to put them.
+ *
+ * Only calls into the filesystem are wrapped. Parsing, validation and this
+ * module's own logic are not, so a mistake in any of them still surfaces as
+ * itself rather than being reported as a disk problem.
+ */
+export class QueueStorageError extends Error {
+  readonly operation: QueueStorageOperation;
+
+  constructor(operation: QueueStorageOperation) {
+    super('Retry queue storage operation failed.');
+    this.name = 'QueueStorageError';
+    this.operation = operation;
+  }
+}
+
+/**
+ * Runs one filesystem call, turning any failure into a safe one.
+ *
+ * Wrapped as tightly as possible — one syscall per call — so that nothing but
+ * the filesystem can produce a `QueueStorageError`.
+ */
+async function storage<T>(operation: QueueStorageOperation, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof QueueStorageError) {
+      throw error;
+    }
+    throw new QueueStorageError(operation);
+  }
+}
+
 /** Raised when an item would take the queue past a limit it was given. */
 export class QueueCapacityError extends Error {
   readonly limit: 'maxItems' | 'maxItemBytes' | 'maxTotalBytes';
@@ -106,20 +159,22 @@ export function createQueueStore(directory: string): QueueStore {
     // on a shared machine the default would make it readable by everyone.
     // Windows ignores the mode, which is why the test for this is
     // platform-aware rather than skipped.
-    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await storage('WRITE', () => mkdir(directory, { recursive: true, mode: 0o700 }));
   }
 
   async function listFiles(): Promise<string[]> {
+    let entries: string[];
     try {
-      const entries = await readdir(directory);
-      return entries.filter((name) => name.endsWith(ITEM_SUFFIX));
+      entries = await readdir(directory);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        // Nothing has been queued yet. Not a failure.
+        // Nothing has been queued yet. Not a failure, and the one filesystem
+        // answer this module reads rather than wraps.
         return [];
       }
-      throw error;
+      throw new QueueStorageError('READ');
     }
+    return entries.filter((name) => name.endsWith(ITEM_SUFFIX));
   }
 
   return {
@@ -133,6 +188,9 @@ export function createQueueStore(directory: string): QueueStore {
         try {
           text = await readFile(join(directory, name), 'utf8');
         } catch {
+          // Deliberately not a storage failure. One unreadable file among many
+          // is the corrupt-item case, which the queue already survives; raising
+          // here would make a single damaged record look like a broken disk.
           // Vanished between the listing and the read, or unreadable. Either
           // way it is not an item, and it is not this call's business to fix.
           corruptCount += 1;
@@ -199,21 +257,19 @@ export function createQueueStore(directory: string): QueueStore {
 
       // Owner-only, and opened rather than written in one call so the contents
       // can be flushed before anything is renamed into place.
-      const handle = await open(
-        temporary,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC,
-        0o600,
+      const handle = await storage('WRITE', () =>
+        open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600),
       );
       try {
-        await handle.writeFile(serialised, 'utf8');
-        await handle.sync();
+        await storage('WRITE', () => handle.writeFile(serialised, 'utf8'));
+        await storage('WRITE', () => handle.sync());
       } finally {
-        await handle.close();
+        await storage('WRITE', () => handle.close());
       }
 
       // Atomic within the directory: a reader sees the previous file or this
       // one. See the note at the top for what this does and does not promise.
-      await rename(temporary, destination);
+      await storage('WRITE', () => rename(temporary, destination));
     },
 
     async remove(queueItemId: string): Promise<void> {
@@ -221,9 +277,10 @@ export function createQueueStore(directory: string): QueueStore {
         await unlink(pathFor(queueItemId));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          // Already gone, which is what was wanted.
           return;
         }
-        throw error;
+        throw new QueueStorageError('REMOVE');
       }
     },
   };

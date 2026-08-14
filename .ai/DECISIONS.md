@@ -1616,3 +1616,95 @@ So eligibility is one function — due, not due, or terminal — and both entry 
 The mapping to what a caller is told is conservative in one direction only. `NOT_DUE` becomes `QUEUED`, because the write really is on disk and really will be retried. Everything else unrecognised becomes `PERMANENT_FAILURE`, which promises nothing. Nothing but a delivery becomes `DELIVERED`: claiming a write arrived when it did not is the one answer that must never be given wrongly, and it is now asserted directly rather than left to a comment — a queue stub reports each refusal in turn and the mapping is checked against all of them.
 
 The wording in the coordinator was corrected at the same time. It described an Event as arriving "exactly once", which contradicts D-166 and is not what any of this provides. Delivery is at least once; what happens once is the observable effect on Memory.
+
+## D-171 — Only named failures are absorbed; everything else still throws (P3-09)
+
+The requirement is that a Memory failure does not become the caller's failure. The easy way to satisfy it is `catch (error) { carryOn() }`, and that turns every bug in this codebase into silence: an owner mismatch, a broken invariant, a delivery implementation that threw where its contract says to return an outcome — all indistinguishable from a server being briefly unreachable.
+
+So the absorbed set is named one member at a time: a submit outcome, `QueueCapacityError`, `SanitizationRejectedError`, `QueueStorageError`, and a search reporting itself unavailable. Anything else is re-thrown exactly as it arrived. `OwnerMismatchError` is listed explicitly in the code as *not* absorbed even though the final re-throw would handle it anyway, because it is the failure most likely to be reclassified as "a Memory problem" by somebody making a test pass.
+
+The line is not "did something go wrong" but "is this something the system already knows how to be wrong about". An architecture test counts the `catch` clauses and requires at least as many `throw error` statements, and behaviour tests drive an owner mismatch, a throwing delivery and an unrecognised error class through the fallback to confirm each comes out the other side.
+
+`continueMainWork` is typed `true` rather than `boolean`. There is no failure of the Memory that stops the work, so there is no branch to write, and adding one is a deliberate change to a type rather than a plausible-looking `if`.
+
+## D-172 — Filesystem detail stops at the queue's edge (P3-09)
+
+The queue store's `mkdir`, `open`, `write`, `sync`, `close`, `rename`, `readdir` and `unlink` calls are wrapped individually, and any failure becomes a `QueueStorageError` carrying one of three closed operation kinds and nothing else.
+
+Nothing else at all: no path, no `errno`, no syscall name, no message from the operating system, and deliberately no `cause`. A Node filesystem error's message *is* the absolute path it failed on, and an error holding one travels wherever errors travel — into a log, a report, whatever an adapter decides to show somebody. Keeping the original "just for diagnostics" is exactly how that happens. If operational diagnostics are wanted, they get designed with somewhere safe to put them, which is P3-10's question and not something to prejudge by leaving the raw error attached.
+
+The wrapping is per-syscall rather than per-method so that only the filesystem can produce one. Parsing, validation and this module's own logic are outside it, and a mistake in any of them still surfaces as itself instead of being reported as a disk problem.
+
+Two filesystem answers are read rather than wrapped, and both mean "not a failure": `ENOENT` from `readdir` is a queue that has not been written to yet, and `ENOENT` from `unlink` is an item that is already gone. A single unreadable file during a scan is also left as the corrupt-item case rather than raised — one damaged record is not a broken disk.
+
+The test uses a regular file where the queue directory should be. `mkdir` fails on it identically everywhere, with no permissions to arrange and nothing to skip on Windows.
+
+## D-173 — The Problem's importance is the only importance (P3-09)
+
+The spec asks that only *important* unsaved Memory be mentioned. It gives importance to a Problem — where a person sets it and an assistant may only suggest one — and gives none to an Event or a Verification.
+
+So no second notion was invented. `submitEvent` and `submitVerification` take `problemImportant`, named after where it comes from rather than as a property of the write. Deriving it instead — Events of certain types are important, Verifications always are — was considered and rejected: the spec says no such thing, and a rule like that would decide on a person's behalf what matters about their own work.
+
+It is required rather than optional. A default would be wrong in both directions: `false` silences notices somebody asked for, `true` invents ones they did not.
+
+## D-174 — Importance is a snapshot taken when the write was made (P3-09)
+
+The value recorded is the Problem's importance as the caller saw it at submission, and it is not re-read later.
+
+The alternative — ask the server what the importance is now, at the moment a notice would be given — fails exactly when it is needed. The moment a queued write finally runs out of attempts is often a moment the server is unreachable; that is usually *why* it ran out. A contract for handling Memory failure that requires the Memory to be reachable is not one.
+
+So the value lives in the queue file, and the file answers on its own after any restart. If somebody changes a Problem's importance afterwards, the queued write keeps the answer that was true when it was made. That is a different question from the standing rule about `memory_write_enabled`, which is about whether a write may happen *now* and rightly consults the present.
+
+## D-175 — The queue file format is version 2 (P3-09)
+
+Adding `problem_important` as a required field made a new format, so `RETRY_QUEUE_SCHEMA_VERSION` moved from `'1'` to `'2'`.
+
+Leaving the version alone and treating the field as optional was the tempting alternative and is worse than it looks. A reader meeting a file without the field could not tell "this write was not important" from "this file predates the field", and those have opposite consequences: one silences a notice, the other invents one. A version is what makes that question answerable.
+
+No migration and no backward read. Version 1 files fall through the parser as a format this build does not recognise, which means they are kept and skipped rather than deleted or guessed at — the behaviour already established for anything unreadable. No adapter has shipped, so no such file exists outside a developer's machine.
+
+Three version numbers now coexist and none of them share a constant: the API contract is `0.4.0`, an export document is `"1"`, and a queue file is `"2"`. They answer different questions for different readers and move for unrelated reasons.
+
+## D-176 — A queued write is not a failure to report (P3-09)
+
+`DELIVERED` is `SAVED`. `QUEUED` and `AUTH_REQUIRED` are `PENDING`, and neither says anything to the person even when the Problem is important. Only a permanent refusal, an exhausted retry, or a write the queue would not accept produce a notice.
+
+A queued write is the failure design working: there is a durable copy, it will be tried again, and a recovery path exists. Announcing it would interrupt somebody every time a laptop lost its network, with news that is usually retracted a minute later — and the spec asks for notice when an important Memory *could not be saved*, not when it has not been saved *yet*. The spec is also explicit that the system should be quiet by default.
+
+`AUTH_REQUIRED` is quiet for the same reason plus one more: it is fixed by replacing a credential, which is an adapter's business. An adapter that concludes it cannot recover one is free to escalate; this module does not decide that for it and does not know what a credential is.
+
+## D-177 — One notice, carrying nothing about the write (P3-09)
+
+There is one notice kind, `IMPORTANT_MEMORY_UNSAVED`, and it carries the kind, the operation, and an opaque handle for recognising repeats.
+
+Splitting it by cause — the queue was full, the payload held a secret, the server refused — is wrong in two directions at once. To the person it all means the same thing and calls for the same response: what you were told would be remembered was not. And every distinction added here travels outward, describing the internals of a system nobody asked about.
+
+Nothing from the write appears: no summary, no reason, no Problem identifier, no path, no error message. A notice is shown to a person, and in the case that matters most — a payload refused for holding a credential — the entire reason it failed is that its content should not travel.
+
+No sentence is built here either. Each assistant says things its own way, in its own language, at its own moment; a library producing English prose would have decided how a Japanese-speaking user is spoken to. An architecture test pins the field list and requires every string literal in the module to be no longer than `IMPORTANT_MEMORY_UNSAVED`, which a sentence could not be.
+
+## D-178 — The same unsaved write is recognisable without remembering it (P3-09)
+
+A notice carries `dedupKey`, which is the operation and the idempotency key joined — the logical write, not the file holding it. The operation is part of it because Events and Verifications deduplicate in separate tables on the server and can legitimately share a key.
+
+The same write therefore produces the same handle whether it is reported the instant it fails or found on disk a week later, which is what lets an adapter tell that a notice is one it has already given. This module stores no acknowledgement: no `notified_at`, no notification table, nothing that would make the queue file a record of what has been said as well as what has been delivered. Deciding when somebody has been told enough is interface behaviour and belongs with the adapter.
+
+A write that never became durable has no key. There is nothing on disk to find later, so there is nothing to recognise it as, and inventing a handle would imply otherwise.
+
+`collectImportantUnsavedNotices` is what P3-07's refusal to delete a failed item was for. A retry can exhaust itself days later in a process that started after the one that queued it; without the file there would be nothing left to tell anybody about. A queue that cannot be read answers `UNAVAILABLE` rather than raising, and deliberately does not claim there is unsaved important Memory — that would be a guess, and the honest answer is that nothing could be determined.
+
+## D-179 — A search that did not run is not a search that found nothing (P3-09)
+
+`MemorySearchAttempt` separates `AVAILABLE` — including an empty result — from `UNAVAILABLE`. Collapsing them would have an assistant conclude a problem is novel because a database was briefly away, which is the opposite of what the record is for.
+
+`UNAVAILABLE` means proceed as though there were no Memory to consult, and says nothing to the person. The spec lists what is worth interrupting somebody for and a failed search is not on it; "I could not check my notes", said at every failure, is noise around work that is proceeding perfectly well without them.
+
+There is no search engine and none was written. The type is the shape one will have to answer in, and it lives here rather than with the engine because the decision it encodes is about failure handling. The contract it imposes is the same one delivery already has: convert your own infrastructure failures into `UNAVAILABLE`, and let a bug stay a thrown error. `fallbackForSearch` takes an attempt rather than wrapping a function for exactly that reason — catching whatever an engine threw would absorb its bugs along with its outages, and a malformed query quietly becoming "no memory available" is a defect that never gets found.
+
+## D-180 — The library answers; the caller works (P3-09)
+
+The fallback returns a decision. It does not take the assistant's work as a callback and run it.
+
+`withMemoryFallback(mainWork, memoryOperation)` is the shape that suggests itself, and it would put workflow orchestration inside a module whose entire responsibility is remembering how problems were solved — making a Memory library the thing that decides whether real work happens. The boundary document is explicit that Memory is a specialised module within a context layer, not the layer that runs things.
+
+So the proof that work continues is a caller-side sentinel: ask, read `continueMainWork`, carry on. That demonstrates the requirement without either side reaching into the other, and it is what an adapter will actually look like.
