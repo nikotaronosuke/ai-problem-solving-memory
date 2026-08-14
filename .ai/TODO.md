@@ -350,13 +350,41 @@ A second was raised as a security blocker in review and corrected before P3-07. 
 
 Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 3 runtime dependencies. Repository operations 24 → 25, of which twelve are reads. API contract 0.3.0 → 0.4.0, operations 26 → 27. 2294 tests across 75 files.
 
-### P3-07 — NEXT
+### P3-07 — DONE
 
 Retry queue.
 
-Depends on P3-06, satisfied. See the private Phase 3 breakdown for the completion condition.
+No migration, no new dependency, no HTTP surface. One new directory, `src/reliability/`, which is deliberately not part of the Memory Server.
 
-A temporary queue for writes that fail to reach the Memory Server, distinguishing what should be retried from what should not, with basic backoff. `client_event_id` already exists on Events and Verifications and already deduplicates; P3-08 connects it to retry, so a queue that generated fresh keys on resend would defeat work that is already done. Nothing in P3-01 through P3-06 buffers a write — every path is synchronous and a failure reaches the caller — so this is the first component with state of its own.
+That placement is the task's main decision (D-151). E2E-7 asks that work continue *when the Memory Server is down*, and a queue inside the server never receives the request it was supposed to hold — it rescues one failure out of ten, the case where HTTP still answers and the database is briefly gone. So the queue is a client-side library, imported by nothing the server runs, with an architecture test that fails if that changes. It lives in this repository because the adapters that will use it are Phase 5 and Phase 6 and the knowledge it encodes is this project's; the task list placing it in Step 3, before any adapter exists, is a real tension and is recorded rather than reinterpreted.
+
+Two operations may be queued and no others (D-152): `appendEvent` and `appendVerification`, which are exactly the writes carrying `client_event_id` where the database keeps the first write. Delete must never be added. The key is assigned once before the first attempt, kept at the top level rather than inside the payload, and never regenerated (D-153) — a queue minting a fresh one per attempt would produce the duplicate the key exists to prevent.
+
+Every write is sanitized with the server's own policy before it reaches the disk (D-154). A queue file outlives the process, sits where an installer put it, and is read in an editor when things have gone wrong, so it is subject to the same rule as the database — for stronger reasons.
+
+Storage is one JSON file per item, written to a temporary file, flushed, and renamed into place (D-155). Not PostgreSQL, which shares the failure domain being worked around; not memory, which loses the Events on restart; not SQLite, which is a native module for a handful of small records. The fsync boundary is stated in the module rather than implied. The directory is a required option with no default anywhere.
+
+Only a success deletes anything (D-156). A permanent refusal and an exhausted retry both become terminal and stay on disk, because P3-09 cannot report what has been deleted; a full queue refuses the new item rather than evicting the oldest.
+
+No credential is ever written down (D-157), and the stored shape is eleven fields asserted whole. A rotated credential therefore still delivers what was queued before it. `401` spends no attempt and stops the drain. `owner_id` is a guard rather than authorisation.
+
+There is no timer (D-158). `drain` takes the moment as an argument, which is why a ten-minute backoff is tested by passing a later date and why `src/` still has no clock of its own. Classification reads a closed outcome and never a message; `500` retries, with the ambiguity written down rather than hidden.
+
+A `404` from a deleted Problem is permanent, the item is kept, and nothing is resurrected (D-159).
+
+Proved against a real server on a real port that is really stopped: the write fails as a transport failure, the caller's own work finishes without an exception, the item survives being read by a second queue instance on the same directory, the server comes back, an explicit drain delivers it, and the row in the database carries the key generated before the first attempt. A separate test revokes nothing and simply presents a different credential, which is refused as `AUTH_REQUIRED` and then delivered under the owner's real one.
+
+Fourteen deliberate mutations fail between 1 and 6 tests each: treating `503` as permanent, `400` and `404` as retryable, zeroing the backoff, never incrementing the attempt count, regenerating the key, dropping the max-attempts check, not removing a delivered item, removing the owner guard, skipping sanitization, adding a credential field, adding a raw error message, swapping the filesystem for memory, and importing the queue from the server's entry point.
+
+Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations. 2391 tests across 78 files.
+
+### P3-08 — NEXT
+
+Idempotent replay.
+
+Depends on P3-07, satisfied. See the private Phase 3 breakdown for the completion condition.
+
+The server half is already built and has been since Phase 1: `unique (owner_id, client_event_id)` on both append paths, `on conflict do nothing` then re-select, first write wins, and a replay that returns the original with the same status (D-058, D-063). P3-07 added a queue that keeps whatever key it was handed. What remains is the path that joins them — generate the key before the first attempt, send, queue on failure, replay — and an end-to-end proof that the same Event sent any number of times leaves exactly one row.
 
 ## BLOCKED
 
@@ -367,6 +395,14 @@ None currently documented.
 Docker publishes the local Supabase ports on all interfaces, not only loopback. Enabling fewer services reduced the published ports to three, but the binding address is a Docker daemon setting, not a repository one.
 
 Decided: not a blocker. The Docker daemon configuration is left unchanged, and the operating rule is to stop the local stack when it is not in use (`npm run supabase:stop`). Revisit only if the stack ever needs to run on an untrusted network.
+
+## STANDING RULE — a replay respects the Problem as it is now
+
+A delivery implementation replaying a queued write must respect the Problem's state at the time of the replay, not at the time of the enqueue (D-160).
+
+`memory_write_enabled` is stored and settable and is not enforced on an append; the spec treats it as a rule about whether an assistant should write rather than something the server refuses, and P3-07 did not change that. But an Event queued while writes were enabled and delivered after the owner turned them off is a write the owner asked not to happen, and a delivery that blindly resends is acting on a decision that has since been reversed. The same applies to a Problem that has been concluded or suppressed in the meantime.
+
+This belongs to the adapters in Phase 5 and Phase 6, and to whatever P3-08 and P3-09 settle about how a caller learns what happened to a queued write.
 
 ## STANDING RULE — anything derived from Memory joins the delete path
 
