@@ -28,7 +28,7 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 
 **JSON contract.** snake_case, shaped deliberately per response. Internal records are camelCase and are never serialised straight out, so an implementation detail cannot become the contract by accident.
 
-**Errors.** One envelope everywhere: `{ error: { code, message }, request_id }`. Codes are `INVALID_REQUEST`, `UNAUTHENTICATED`, `NOT_FOUND`, `VERSION_CONFLICT`, `INTERNAL_ERROR`. Fastify and Ajv error objects never reach a client, and an internal failure returns no stack, driver message or connection string.
+**Errors.** One envelope everywhere: `{ error: { code, message }, request_id }`. Codes are `INVALID_REQUEST`, `UNAUTHENTICATED`, `NOT_FOUND`, `VERSION_CONFLICT`, `EXPORT_BLOCKED`, `INTERNAL_ERROR`. The two 409s differ in what a caller should do: re-read a Problem, or remove a record holding a credential. Fastify and Ajv error objects never reach a client, and an internal failure returns no stack, driver message or connection string.
 
 **Auth.** Everything under `/v1` requires a credential. A `preHandler` on the `/v1` scope calls the request-context service, which verifies the presented credential and hands back an owner-scoped `MemoryRepository` — a handler never sees an owner id it could pass anywhere. Every distinct failure is one entry in the log and one indistinguishable 401 to the client, so the endpoint is not an existence oracle. Since P3-04 the credential is real; see *Credential separation* below.
 
@@ -440,6 +440,34 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **A gap the mutations found.** Replacing `runInTransaction` with a direct repository call passed every integration test: in the successful case there is no observable difference, and the tests only looked at successful deletes. A service-level test now pins that the delete runs inside a transaction, and it is the only thing that fails on that mutation.
 
+## What exists now — Export (P3-06)
+
+| Method | Path |
+| --- | --- |
+| GET | `/v1/export` |
+
+**Everything, in one document.** Eight collections — projects, environments, problems, events, verifications, relations, usage logs, change logs — with every column each table has, minus `owner_id`. That includes fields the rest of the API treats as read-only (`version`, `client_event_id`, the change log's version pair), because an export is the Memory rather than a view of the API (D-142).
+
+**Format only. No importer.** §25.9 excludes import from the Core MVP completion condition, and the Phase 3 Definition of Done asks that an owner's Memory can be exported. Re-importability is *proved* rather than implemented: an artifact is handed back to PostgreSQL, unpacked with SQL, and the restored owner is exported again and compared collection by collection. Raw SQL on purpose — a TypeScript restore helper would become the unreviewed specification for the real importer.
+
+**One owner id, at the top.** `source_owner_id` names the Memory the artifact came from; records carry none (D-144). It is not a credential and not an instruction: an owner id means nothing outside the install that issued it, and since P3-04 a request's owner comes from the credential. A restore chooses its own owner and writes it into the column.
+
+**Every other identifier survives** (D-145), `client_event_id` included, so a restored Memory still refuses a resent Event rather than duplicating it. Restoring beside the rows an artifact came from collides on the primary key, which is the right answer: silent second copies under fresh ids would turn one Memory into two that drift.
+
+**`schema_version` is `"1"` and is not the contract version** (D-143). P3-05 moved the contract 0.2.0 → 0.3.0 without changing the export by a byte; one number for both would have told every artifact holder to re-read their file.
+
+**One statement, one snapshot** (D-146). The whole document is built by a single SQL statement, so it describes one moment by definition — no transaction, no isolation level to remember, no lock, and no writer blocked. Eight separate reads would take eight snapshots, and a delete landing between the third and fourth produces an artifact describing a state that never existed.
+
+**Precision that JavaScript cannot hold.** Timestamps are formatted by PostgreSQL to six digits — a real stored `created_at` measured here ended `.015452`, and a JS `Date` would have written `.015`. Snapshots are embedded as JSON with their numbers intact, including ones past `Number.MAX_SAFE_INTEGER`. The document is fetched as text and the route sends those bytes with the compiled serialiser overridden: `JSON.parse` followed by `JSON.stringify` is not a round trip for this document, and the tests use the database's own text as the oracle so a broken export cannot agree with a broken expectation.
+
+**A Memory holding a credential is refused, not redacted** (D-147). `409 EXPORT_BLOCKED`, its own code rather than a borrowed 409 — a client reading `VERSION_CONFLICT` would look for a version to re-read. Redacting would make the artifact differ from the database and stop being a copy; exporting anyway would put a credential in the largest file this system produces. Only *confirmed* blocks; suspicion keeps, as at the write boundary. The response says something is there and nothing about where.
+
+**Exporting changes nothing** (D-148). No redaction written back, no invalidation, no flag, no deletion — asserted against the database before and after a refusal, and pinned by an architecture test that the export module contains no write of any kind.
+
+**Credentials are not in it** (D-149). No token, lookup, digest, client id, label or revocation state, and the module does not read those tables. An artifact carrying one would be a backup file that is also a key.
+
+**What the mutation proofs turned up.** Two facts about the surrounding system, neither of them export defects. A request body is parsed by `JSON.parse` before the server sees it, so a number too large for JavaScript cannot be *stored* through the API at all — the export is lossless with respect to what the database holds, which is the strongest claim available. And `AWS_SECRET_ACCESS_KEY=…` is not detected as a credential: `accesskey` and `secretkey` are exact names in the P3-02 vocabulary rather than suffixes, so any prefixed form is unrecognised. That is a detection gap belonging to P3-02, left alone here rather than changed inside an export task.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -454,7 +482,9 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No orphan cleanup. A Project or Environment left with no Problems stays; that is the rule, not a gap (D-136)
 - No record that a deletion happened. No tombstone, no delete audit table, and no `changed_by` on the request (D-137)
 - No server-side confirmation of user intent. A flag any client can send proves nothing; the responsibility sits with the adapter or UI (D-140)
-- No retrieval artifact, search index or derived cache — so nothing derived to delete. A phase that adds one must extend the delete path in the same change (D-141)
+- No retrieval artifact, search index or derived cache — so nothing derived to delete, and nothing derived to export. A phase that adds one must extend the delete path in the same change (D-141)
+- No import. Export proves its format is restorable; reading an artifact back is outside the Core MVP by the specification's own line (D-142)
+- No per-project or per-problem export, no streaming, no archive, no export job, no pagination
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
 - No client SDK or codegen. The document declares the one scheme the server implements and nothing more
@@ -464,15 +494,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-06 — Export.
+P3-07 — Retry queue.
 
 Not started. See the private Phase 3 breakdown for the task.
 
 Notes for whoever picks this up:
-- Export covers the same eight Memory tables the delete path knows about, with relationships preserved. `src/db/problem-deletion.ts` is the existing statement of what belongs to a Problem
-- P3-05 deliberately kept no record of a deletion. An export taken before a delete is the only copy that will exist afterwards, and D-034 already settled that export is not a precondition for deleting
-- The credential tables are not Memory and are not part of an export of one owner's memory
-- Contract version is 0.3.0 and moves when the `/v1` surface changes shape, not when the package does
+- `client_event_id` already exists on Events and Verifications and already deduplicates. P3-08 connects it to retry; P3-07 is the queue in front of it
+- Nothing in P3-01 through P3-06 buffers a write. Every path is synchronous, and a failure reaches the caller
+- The export carries `client_event_id`, so a restored Memory keeps its idempotency. A queue that generated fresh keys on retry would defeat that
+- Contract version is 0.4.0 and moves when the `/v1` surface changes shape; the export's `schema_version` is `"1"` and moves for its own reasons
 
 ## Core MVP milestone
 

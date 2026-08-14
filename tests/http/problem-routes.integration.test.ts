@@ -26,6 +26,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createVerificationService,
 } from '../../src/app/index.js';
@@ -78,6 +79,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
     appsCreated.push(app);

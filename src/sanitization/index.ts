@@ -20,6 +20,7 @@ export {
   type SanitizationSite,
 } from './policy.js';
 export {
+  createExportInspectionPolicy,
   createSecretDetectionPolicy,
   createSecretDetector,
   createSecretRedactor,

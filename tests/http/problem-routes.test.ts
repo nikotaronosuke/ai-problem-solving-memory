@@ -22,6 +22,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
@@ -123,6 +124,7 @@ function buildApp(service: ProblemService, authenticated = true) {
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
     problemDeleteService: createProblemDeleteService(),
+    exportService: createExportService(),
     logger: false,
   });
 }

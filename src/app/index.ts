@@ -8,6 +8,7 @@
 
 export {
   InvalidApplicationInputError,
+  ExportBlockedError,
   ProblemVersionConflictError,
   ResourceNotFoundError,
 } from './errors.js';
@@ -33,6 +34,7 @@ export {
   type CloseProblemCommand,
   type ProblemCloseService,
 } from './problem-close-service.js';
+export { createExportService, type ExportService } from './export-service.js';
 export {
   createProblemDeleteService,
   type DeleteProblemCommand,

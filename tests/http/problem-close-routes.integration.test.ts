@@ -31,6 +31,7 @@ import {
   createHealthService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createProblemService,
   createProblemStatusService,
@@ -87,6 +88,7 @@ describe.skipIf(databaseUrl === undefined)('Closing a problem', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
     appsCreated.push(app);

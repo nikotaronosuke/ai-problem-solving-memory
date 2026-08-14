@@ -37,6 +37,7 @@ import {
   createHealthService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createProblemService,
   createProblemStatusService,
@@ -118,6 +119,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
   }

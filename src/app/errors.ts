@@ -58,3 +58,22 @@ export class ProblemVersionConflictError extends Error {
     this.name = 'ProblemVersionConflictError';
   }
 }
+
+/**
+ * Raised when an export would carry a credential out of the system.
+ *
+ * Not a version conflict and not a bad request: the request is correct and the
+ * server is working. What is wrong is the state of the Memory — it holds
+ * something that must not leave in a file — and the owner can fix it, with the
+ * delete path P3-05 built.
+ *
+ * Carries nothing. No locator, no field, no category, no fragment of what was
+ * found. An error that named where the credential was would put a map to it in
+ * a response, and the response is exactly the thing being kept clean.
+ */
+export class ExportBlockedError extends Error {
+  constructor() {
+    super('Export refused: the memory holds a credential.');
+    this.name = 'ExportBlockedError';
+  }
+}
