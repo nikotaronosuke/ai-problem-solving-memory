@@ -60,7 +60,7 @@ export const OPENAPI_PATH = '/openapi.json';
  * Tying it to the package version would make every unrelated release look like
  * a contract change to anything watching this number.
  */
-export const API_CONTRACT_VERSION = '0.3.0';
+export const API_CONTRACT_VERSION = '0.4.0';
 
 /**
  * Groupings, for readers and generators that sort by them.
@@ -94,6 +94,7 @@ export const OPENAPI_TAGS = [
   { name: 'Usage', description: 'Records that past memory was drawn on.' },
   { name: 'Change History', description: 'How a problem changed, written by the service.' },
   { name: 'Memory Controls', description: 'How a problem should be used as memory.' },
+  { name: 'Export', description: 'The whole of an owner’s memory, as one portable document.' },
 ] as const;
 
 /**

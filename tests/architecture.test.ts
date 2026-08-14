@@ -684,6 +684,115 @@ describe('the delete path', () => {
   });
 });
 
+describe('the export path', () => {
+  it('reads Memory and nothing that grants access to it', async () => {
+    // The statement that runs, not the source that builds it: the tables are
+    // interpolated, so reading the file would check the generator's shape and
+    // miss what it produced.
+    const { MEMORY_EXPORT_STATEMENT } = await import('../src/db/memory-export.js');
+
+    const tables = [...MEMORY_EXPORT_STATEMENT.matchAll(/from\s+public\.(\w+)/gi)].map(
+      (match) => match[1],
+    );
+
+    // Exactly the eight Memory tables. Clients and credentials belong to the
+    // owner rather than to their memory, and an artifact carrying one would
+    // move access along with the data — a backup file that is also a key.
+    expect([...new Set(tables)].sort()).toEqual([
+      'change_logs',
+      'environments',
+      'events',
+      'problems',
+      'projects',
+      'relations',
+      'usage_logs',
+      'verifications',
+    ]);
+  });
+
+  it('never reaches the credential code', async () => {
+    const modules = (await readModules(SRC)).filter(
+      (module) => module.path === 'db/memory-export.ts' || module.path === 'app/export-service.ts',
+    );
+    expect(modules).toHaveLength(2);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        if (specifier.includes('/credentials/') || specifier.includes('/db/credentials')) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('scopes every collection to the owner', async () => {
+    const { MEMORY_EXPORT_STATEMENT } = await import('../src/db/memory-export.js');
+
+    // Eight subqueries, one per collection, and each of them filtered. The
+    // composite foreign keys make a cross-owner reference impossible in the
+    // first place, so an unscoped subquery would still produce a correct
+    // artifact for a single-owner database and a catastrophic one otherwise.
+    const scoped = [...MEMORY_EXPORT_STATEMENT.matchAll(/where\s+\w+\.owner_id\s*=\s*\$1/gi)];
+    const froms = [...MEMORY_EXPORT_STATEMENT.matchAll(/from\s+public\.\w+/gi)];
+
+    expect(froms).toHaveLength(8);
+    expect(scoped).toHaveLength(8);
+  });
+
+  it('builds the document in one statement, so it describes one moment', async () => {
+    const source = await readFile(join(SRC, 'db', 'memory-export.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // One `select`, holding all eight collections as subqueries. Splitting it
+    // into eight statements would give eight snapshots, and an artifact
+    // assembled across them can describe a state that never existed.
+    expect([...code.matchAll(/^\s*select json_build_object/gim)]).toHaveLength(1);
+
+    // And no transaction machinery, because a single statement needs none.
+    expect(code).not.toContain('begin');
+    expect(code).not.toContain('isolation level');
+    expect(code).not.toContain('for update');
+    expect(code).not.toContain('for share');
+  });
+
+  it('keeps the timestamps and the JSON away from the driver', async () => {
+    const source = await readFile(join(SRC, 'db', 'memory-export.ts'), 'utf8');
+
+    // The document is fetched as text. Asking for `json` would have the driver
+    // parse it, which rounds microseconds off every timestamp and precision
+    // off any large number in a snapshot — the two things this module exists
+    // to preserve.
+    expect(source).toContain(')::text as artifact');
+    expect(source).toContain('\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\'');
+  });
+
+  it('sends the artifact without re-serialising it', async () => {
+    const route = await readFile(join(SRC, 'http', 'export-routes.ts'), 'utf8');
+
+    // `JSON.parse` followed by `JSON.stringify` is not a round trip for this
+    // document, so the route overrides the schema-compiled serialiser and
+    // passes the text through.
+    expect(route).toContain('.serializer(');
+    expect(route).not.toContain('JSON.parse');
+    expect(route).not.toContain('JSON.stringify');
+  });
+
+  it('writes nothing', async () => {
+    const source = await readFile(join(SRC, 'db', 'memory-export.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Reading your own memory must not edit it — including when the export is
+    // refused for holding a credential, where the temptation to redact it in
+    // place is exactly the wrong instinct.
+    for (const write of ['insert into', 'update public.', 'delete from']) {
+      expect(code.toLowerCase()).not.toContain(write);
+    }
+  });
+});
+
 describe('contract generation', () => {
   it('is named in one transport module and nowhere else', async () => {
     const modules = await readModules(SRC);

@@ -31,6 +31,7 @@ import {
   USAGE_ACTIONS,
   VERIFICATION_TYPES,
 } from '../domain/enums.js';
+import { MEMORY_EXPORT_SCHEMA_VERSION } from '../domain/memory-export.js';
 
 export interface ProjectResource {
   readonly project_id: string;
@@ -603,4 +604,87 @@ export const EXPECTED_VERSION_SCHEMA = { type: 'integer', minimum: 1 } as const;
 export const EXPECTED_VERSION_QUERY_SCHEMA = {
   type: 'string',
   pattern: '^[1-9][0-9]{0,9}$',
+} as const;
+
+/**
+ * A record as it appears in an export, derived from what the API already
+ * describes.
+ *
+ * Derived rather than written out again, and that is the point. The eight
+ * resource schemas above already name every column of their table — checked
+ * against the catalog by a test — so restating seventy-seven fields here would
+ * create a second list to keep in step, and the one that fell behind would be
+ * the export: nothing reads it daily the way the API is read.
+ *
+ * One difference, and only one. `owner_id` is dropped, because an export
+ * carries it once at the top as `source_owner_id` rather than on every row.
+ */
+function exportRecordSchema(resource: {
+  readonly properties: Readonly<Record<string, unknown>>;
+  readonly required: readonly string[];
+}): Record<string, unknown> {
+  const properties = Object.fromEntries(
+    Object.entries(resource.properties).filter(([name]) => name !== 'owner_id'),
+  );
+
+  return {
+    type: 'object',
+    properties,
+    required: resource.required.filter((name) => name !== 'owner_id'),
+    additionalProperties: false,
+  };
+}
+
+/** One collection in an export: always present, empty rather than absent. */
+const exportCollection = (resource: Parameters<typeof exportRecordSchema>[0]) => ({
+  type: 'array',
+  items: exportRecordSchema(resource),
+});
+
+/**
+ * The whole export document.
+ *
+ * Describes the artifact for the generated contract. It does not serialise it:
+ * the route sends the database's own bytes, because parsing and restringifying
+ * would round microsecond timestamps and large snapshot numbers. See
+ * `src/http/export-routes.ts`.
+ */
+export const MEMORY_EXPORT_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    // Pinned as a constant. A change to the export format that forgets to move
+    // the version fails the contract test rather than reaching a reader who
+    // trusted it.
+    schema_version: { type: 'string', const: MEMORY_EXPORT_SCHEMA_VERSION },
+    // Microsecond precision, as the database holds it, so this is deliberately
+    // not `format: date-time` — the artifact's timestamps are exact, and
+    // describing them as an ordinary date-time invites a reader to normalise
+    // them.
+    exported_at: { type: 'string' },
+    // The Memory this artifact came from. Not a credential: presenting it
+    // authenticates nothing, and a restore decides its own owner.
+    source_owner_id: { type: 'string', format: 'uuid' },
+    projects: exportCollection(PROJECT_RESOURCE_SCHEMA),
+    environments: exportCollection(ENVIRONMENT_RESOURCE_SCHEMA),
+    problems: exportCollection(PROBLEM_RESOURCE_SCHEMA),
+    events: exportCollection(EVENT_RESOURCE_SCHEMA),
+    verifications: exportCollection(VERIFICATION_RESOURCE_SCHEMA),
+    relations: exportCollection(RELATION_RESOURCE_SCHEMA),
+    usage_logs: exportCollection(USAGE_LOG_RESOURCE_SCHEMA),
+    change_logs: exportCollection(CHANGE_LOG_RESOURCE_SCHEMA),
+  },
+  required: [
+    'schema_version',
+    'exported_at',
+    'source_owner_id',
+    'projects',
+    'environments',
+    'problems',
+    'events',
+    'verifications',
+    'relations',
+    'usage_logs',
+    'change_logs',
+  ],
+  additionalProperties: false,
 } as const;

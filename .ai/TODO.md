@@ -322,13 +322,39 @@ Two counts corrected from the pre-implementation investigation: `problems` has *
 
 Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 3 runtime dependencies. Repository operations 23 → 24. 2254 tests across 72 files.
 
-### P3-06 — NEXT
+### P3-06 — DONE
 
 Export.
 
-Depends on P3-05, satisfied. See the private Phase 3 breakdown for the completion condition.
+No migration. `GET /v1/export`, one new database module, one repository read, one service, one route, one new error code.
 
-JSON export with `schema_version`, covering Project, Environment, Problem, Event, Verification, Relation, UsageLog and ChangeLog with relationships preserved, re-importable into a clean environment. `src/db/problem-deletion.ts` already states what belongs to a Problem and is the natural reference for what an export of one has to carry. Credential tables are not Memory and are not part of it.
+The whole of an owner's Memory as one JSON document: eight collections carrying every column of their table minus `owner_id`, with `source_owner_id` once at the top (D-144). Import is not implemented and was not asked for — §25.9 excludes it from the Core MVP completion condition, and the completion condition here is that the *format* is restorable (D-142).
+
+That claim is proved rather than asserted. An artifact is handed back to PostgreSQL, unpacked with SQL into a second owner, and the restored owner is exported again and compared collection by collection. Raw SQL deliberately: a TypeScript restore helper would become the unreviewed specification for the real importer. The proof also removes the source rows first, so the artifact is shown to stand alone.
+
+Every identifier survives, `client_event_id` included, so a restored Memory keeps its idempotency (D-145). Restoring beside the rows it came from collides on the primary key, which is pinned as correct behaviour rather than worked around.
+
+`schema_version` is `"1"`, its own constant (D-143). P3-05 moved the API contract 0.2.0 → 0.3.0 without changing the export by a byte; sharing the number would have told every artifact holder their format had changed.
+
+One SQL statement builds the document (D-146). That is what makes it a snapshot — eight reads would take eight snapshots, and a delete between the third and fourth yields an artifact describing a state that never existed — and it is also what keeps the precision: timestamps formatted to six digits by PostgreSQL, snapshots embedded as JSON with numbers past `Number.MAX_SAFE_INTEGER` intact, the whole thing fetched as text and sent with the compiled serialiser overridden. The oracle in every precision test is the database's own text, so a broken export cannot agree with a broken expectation.
+
+A Memory holding a confirmed credential is refused with `409 EXPORT_BLOCKED` and not redacted (D-147): a redacted artifact stops being a copy of the database, and an exported one puts a credential in the largest file the system produces. Suspicion keeps, as at the write boundary. Exporting writes nothing back under any outcome (D-148), pinned by an architecture test that the module contains no write at all. Credentials are absent and unreachable (D-149).
+
+Thirteen deliberate mutations fail between 1 and 5 tests each: dropping `schema_version`, dropping a collection, dropping a field, unscoping a collection from its owner, mixing client rows in, removing the ordering, formatting timestamps to milliseconds, fetching the document as `json` so the driver parses it, re-serialising in the route, removing the secret guard, redacting instead of refusing, writing back during an export, and splitting the statement in two.
+
+The last is worth recording precisely. Splitting the snapshot is caught, but by the precision tests rather than by a consistency one — any split that routes the document through JavaScript damages the timestamps first. A split that somehow preserved precision would be caught only by the architecture test that pins the single statement. The concurrency tests prove the property holds; they cannot prove which mechanism provides it.
+
+Two findings came out of the work and neither was changed here. A request body is parsed by `JSON.parse` before the server sees it, so a number too large for JavaScript cannot be stored through the API at all — the export is lossless with respect to what the database holds, which is the strongest available claim. And `AWS_SECRET_ACCESS_KEY=…` is not detected: `accesskey` and `secretkey` are exact names in the P3-02 vocabulary rather than suffixes, so prefixed forms are unrecognised. That is a P3-02 detection gap, deliberately not fixed inside an export task.
+
+Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 3 runtime dependencies. Repository operations 24 → 25, of which twelve are reads. API contract 0.3.0 → 0.4.0, operations 26 → 27. 2294 tests across 75 files.
+
+### P3-07 — NEXT
+
+Retry queue.
+
+Depends on P3-06, satisfied. See the private Phase 3 breakdown for the completion condition.
+
+A temporary queue for writes that fail to reach the Memory Server, distinguishing what should be retried from what should not, with basic backoff. `client_event_id` already exists on Events and Verifications and already deduplicates; P3-08 connects it to retry, so a queue that generated fresh keys on resend would defeat work that is already done. Nothing in P3-01 through P3-06 buffers a write — every path is synchronous and a failure reaches the caller — so this is the first component with state of its own.
 
 ## BLOCKED
 
@@ -343,6 +369,8 @@ Decided: not a blocker. The Docker daemon configuration is left unchanged, and t
 ## STANDING RULE — anything derived from Memory joins the delete path
 
 A phase that adds a retrieval artifact, a search index, an embedding store or any cache derived from Memory content must extend the physical delete path and the Phase 3 delete end-to-end in the same change (D-141).
+
+The same applies to export: a derived store that is regenerated needs no place in an artifact, but one holding anything that cannot be rebuilt from the eight Memory tables does, and that is a decision to make deliberately rather than discover during a restore.
 
 Inside PostgreSQL this is partly self-enforcing: give the table a RESTRICT foreign key to `problems` like everything else, and a delete that forgets it fails rather than silently leaving rows. The literal foreign key inventory in `tests/db/integrity.integration.test.ts` fails first, which is the intended prompt to decide.
 

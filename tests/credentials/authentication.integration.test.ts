@@ -36,6 +36,7 @@ import {
   createHealthService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createProblemService,
   createProblemStatusService,
@@ -104,6 +105,7 @@ describe.skipIf(databaseUrl === undefined)('authenticating a request', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: {
         // The production options, not a copy of them. A log-leak test against
         // a logger configured differently from production proves nothing

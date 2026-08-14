@@ -78,3 +78,39 @@ export function createSecretDetectionPolicy(
     },
   };
 }
+
+/**
+ * The policy an export is checked against.
+ *
+ * A second policy rather than a flag on the first, because the two answer
+ * different questions. Writing asks "may this be stored?", and redacting is a
+ * good answer: the record is kept, minus the credential. Reading an export asks
+ * "may all of this leave?", and redacting is the wrong answer there — the
+ * artifact has to be a copy of the Memory, and one that silently differs from
+ * the database is not a copy. Restoring it would replace real content with
+ * markers.
+ *
+ * So the outcomes are only two. A confirmed credential refuses the export,
+ * which the caller can act on: the delete path exists, and removing the record
+ * that holds it is the fix. Everything else keeps, including `suspected` —
+ * withholding somebody's own Memory on a guess is a worse failure than the
+ * guess being right occasionally, and it is the same certainty line the write
+ * boundary draws.
+ *
+ * It lives here rather than in the export service for the reason the whole
+ * directory exists: what a credential looks like is a privacy rule, and a
+ * service that could ask the detector directly could also decide to disagree
+ * with it. An architecture test pins that nothing outside this directory names
+ * the detector at all.
+ */
+export function createExportInspectionPolicy(
+  detector: SecretDetector = createSecretDetector(),
+): SanitizationPolicy {
+  return {
+    inspect(text, at) {
+      return detector.detect(text, at)?.certainty === 'confirmed'
+        ? { kind: 'reject' }
+        : { kind: 'keep' };
+    },
+  };
+}

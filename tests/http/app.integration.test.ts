@@ -26,6 +26,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createRequestContextService,
   createVerificationService,
@@ -70,6 +71,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
 
@@ -153,6 +155,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
 
@@ -192,6 +195,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
 
@@ -227,6 +231,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
 

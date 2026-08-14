@@ -25,6 +25,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createVerificationService,
   InvalidApplicationInputError,
@@ -119,6 +120,7 @@ function buildApp(service: ProblemStatusService, authenticated = true) {
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
     problemDeleteService: createProblemDeleteService(),
+    exportService: createExportService(),
     logger: false,
   });
 }

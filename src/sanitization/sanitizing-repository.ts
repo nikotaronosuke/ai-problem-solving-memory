@@ -62,6 +62,11 @@ const READ_ONLY_OPERATIONS: ReadonlySet<string> = new Set([
   'listChangeLogs',
   'listUsageLogs',
   'listRelations',
+  // A read with no arguments at all. Listed anyway rather than left to the
+  // fail-closed default, because the default would call it a write, and an
+  // operation classified as a write that never writes makes the classification
+  // mean less each time it happens.
+  'exportOwnerMemory',
 ]);
 
 /** Whether an operation's arguments are inspected before it runs. */

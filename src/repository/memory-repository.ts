@@ -69,6 +69,7 @@ import {
   type CreateRelationInput,
   type RelationRecord,
 } from '../db/relations.js';
+import { exportOwnerMemory } from '../db/memory-export.js';
 import { deleteProblemAggregate, type DeleteProblemOutcome } from '../db/problem-deletion.js';
 import {
   appendVerification,
@@ -79,6 +80,7 @@ import {
 import type { FixKind, ProblemStatus } from '../domain/enums.js';
 import type { EnvironmentId } from '../domain/environment.js';
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
+import type { MemoryExportArtifact } from '../domain/memory-export.js';
 import type { ProblemId } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
 
@@ -188,6 +190,18 @@ export interface MemoryRepository {
    */
   deleteProblem(problemId: ProblemId, expectedVersion: number): Promise<DeleteProblemOutcome>;
 
+  /**
+   * The whole of this owner's Memory, as a portable document.
+   *
+   * A read, and the only one that answers with JSON text rather than records.
+   * The text is what carries microsecond timestamps and numbers larger than
+   * JavaScript holds, so it is handed on unparsed — see `MemoryExportArtifact`.
+   *
+   * Takes no argument. The owner is the one this repository is bound to, as
+   * with every other operation here.
+   */
+  exportOwnerMemory(): Promise<MemoryExportArtifact>;
+
   createRelation(input: CreateRelationInput): Promise<RelationRecord>;
   /**
    * Relations touching this problem, from either end.
@@ -250,6 +264,8 @@ export function createMemoryRepository(
 
     createRelation: (input) => createRelation(executor, context, input),
     listRelations: (problemId) => listRelations(executor, context, problemId),
+
+    exportOwnerMemory: () => exportOwnerMemory(executor, context),
 
     deleteProblem: (problemId, expectedVersion) =>
       deleteProblemAggregate(executor, context, problemId, expectedVersion),
