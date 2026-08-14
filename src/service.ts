@@ -13,6 +13,20 @@ import type { AppEnv } from './config/env.js';
 
 export const SERVICE_NAME = 'ai-problem-solving-memory';
 
+/**
+ * What the process says when it cannot start.
+ *
+ * Fixed text, and all of it: not the error, not its message, not a stack, not
+ * the variable that was wrong or the value it held. It lives here rather than
+ * in the entrypoint so that a test can read it without importing a module
+ * whose import *is* starting the server.
+ *
+ * Somebody who sees this line is at the machine, with the configuration in
+ * front of them. A line that quoted the configuration back would be the line
+ * that gets pasted into an issue.
+ */
+export const STARTUP_FAILURE_MESSAGE = 'memory server failed to start';
+
 export interface StartupSummary {
   readonly service: string;
   readonly nodeEnv: AppEnv['nodeEnv'];

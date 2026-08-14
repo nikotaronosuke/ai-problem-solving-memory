@@ -3,11 +3,12 @@
  *
  * Transport asks this; it does not ask the database. The distinction matters
  * because what a client is allowed to learn from a health check is a product
- * decision, not a driver detail — the reason a probe failed stays here, in the
- * log, and never reaches the response.
+ * decision, not a driver detail — and since P3-10 the same is true of what an
+ * operator is allowed to learn. The reason a probe failed reaches the log as
+ * one of a closed set of identifiers; the driver's own words reach nothing.
  */
 
-import { checkDatabaseConnection } from '../db/health.js';
+import { checkDatabaseConnection, type DatabaseHealthReason } from '../db/health.js';
 import type { DatabasePool } from '../db/pool.js';
 
 export type HealthStatus = 'ok' | 'unavailable';
@@ -15,12 +16,21 @@ export type HealthStatus = 'ok' | 'unavailable';
 export interface HealthReport {
   readonly status: HealthStatus;
   /**
-   * Why the check failed, for the server's own log.
+   * Round-trip time of the probe, in milliseconds.
    *
-   * Never returned to a client: a probe failure can carry a host name or a
-   * driver message, and neither is a client's business.
+   * Always known — a failed probe is still a probe that took a measurable
+   * amount of time, and how long a failure took to arrive is often the first
+   * useful thing about it. Server-produced, so it is safe to log.
    */
-  readonly detail?: string;
+  readonly latencyMs: number;
+  /**
+   * Why the check failed, for the server's own log. Absent when it did not.
+   *
+   * This used to be a free-text `detail` taken from the driver's message. It
+   * was measured carrying a database host, a port and an account name, so it
+   * is now one of a closed set. Never returned to a client either way.
+   */
+  readonly reason?: DatabaseHealthReason;
 }
 
 export interface HealthService {
@@ -34,10 +44,16 @@ export function createHealthService(pool: DatabasePool): HealthService {
       const health = await checkDatabaseConnection(pool);
 
       if (health.reachable) {
-        return { status: 'ok' };
+        return { status: 'ok', latencyMs: health.latencyMs };
       }
 
-      return { status: 'unavailable', detail: health.error ?? 'database unreachable' };
+      // `UNKNOWN` rather than a default that reads like a diagnosis: the probe
+      // reports what it recognised, and this layer does not improve on it.
+      return {
+        status: 'unavailable',
+        latencyMs: health.latencyMs,
+        reason: health.reason ?? 'UNKNOWN',
+      };
     },
   };
 }

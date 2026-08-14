@@ -27,10 +27,12 @@ import {
   createExportService,
   createProblemDeleteService,
   ProblemVersionConflictError,
+  REQUEST_CONTEXT_FAILURES,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type HealthReport,
   type HealthService,
+  type RequestContextFailure,
   type RequestContextService,
 } from '../../src/app/index.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
@@ -55,7 +57,7 @@ function contextServiceFor(ownerId: string): RequestContextService {
   };
 }
 
-function contextServiceFailing(internalReason: string): RequestContextService {
+function contextServiceFailing(internalReason: RequestContextFailure): RequestContextService {
   return {
     authenticate: () => Promise.reject(new RequestContextUnavailableError(internalReason)),
   };
@@ -63,7 +65,7 @@ function contextServiceFailing(internalReason: string): RequestContextService {
 
 function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> = {}) {
   return buildMemoryHttpApp({
-    healthService: healthServiceReturning({ status: 'ok' }),
+    healthService: healthServiceReturning({ status: 'ok', latencyMs: 0 }),
     requestContextService: contextServiceFor(OWNER_ID),
     // Real service, stubbed repository: these tests are about the transport
     // contract, and the routes it serves are covered in their own suite.
@@ -98,7 +100,7 @@ describe('GET /health', () => {
 
   it('needs no owner context', async () => {
     // The context service would throw if it were consulted.
-    const app = buildApp({ requestContextService: contextServiceFailing('should not be called') });
+    const app = buildApp({ requestContextService: contextServiceFailing('MISSING') });
 
     const response = await app.inject({ method: 'GET', url: '/health' });
 
@@ -111,7 +113,8 @@ describe('GET /health', () => {
     const app = buildApp({
       healthService: healthServiceReturning({
         status: 'unavailable',
-        detail: 'connect ECONNREFUSED 127.0.0.1:54322',
+        latencyMs: 4321,
+        reason: 'CONNECTION_FAILED',
       }),
     });
 
@@ -121,8 +124,8 @@ describe('GET /health', () => {
     expect(response.json()).toEqual({ status: 'unavailable' });
     // A probe that describes the deployment to the network is a probe that
     // helps someone map it.
-    expect(response.body).not.toContain('ECONNREFUSED');
-    expect(response.body).not.toContain('54322');
+    expect(response.body).not.toContain('CONNECTION_FAILED');
+    expect(response.body).not.toContain('4321');
 
     await app.close();
   });
@@ -160,12 +163,11 @@ describe('GET /v1/me', () => {
 });
 
 describe('unauthenticated requests', () => {
-  it.each([
-    ['unset', 'MEMORY_OWNER_ID is not set. See .env.example.'],
-    ['malformed', 'MEMORY_OWNER_ID is unusable. Not a usable owner id: it is not a UUID.'],
-    ['unknown', 'no owner 3f2504e0-4f89-41d3-9a0c-0305e82c3301 exists.'],
-  ])('answers identically when the owner is %s', async (_label, internalReason) => {
-    const app = buildApp({ requestContextService: contextServiceFailing(internalReason) });
+  // Every reason there is, rather than three chosen ones. The set is closed
+  // and exported, so a reason added later is covered here without anybody
+  // remembering to come back.
+  it.each(REQUEST_CONTEXT_FAILURES)('answers identically when the reason is %s', async (reason) => {
+    const app = buildApp({ requestContextService: contextServiceFailing(reason) });
 
     const response = await app.inject({ method: 'GET', url: '/v1/me' });
 
@@ -180,15 +182,9 @@ describe('unauthenticated requests', () => {
     await app.close();
   });
 
-  it('gives away nothing that separates the three failures', async () => {
-    const reasons = [
-      'MEMORY_OWNER_ID is not set. See .env.example.',
-      'MEMORY_OWNER_ID is unusable. Not a usable owner id: it is not a UUID.',
-      'no owner 3f2504e0-4f89-41d3-9a0c-0305e82c3301 exists.',
-    ];
-
+  it('gives away nothing that separates the failures', async () => {
     const bodies: string[] = [];
-    for (const reason of reasons) {
+    for (const reason of REQUEST_CONTEXT_FAILURES) {
       const app = buildApp({ requestContextService: contextServiceFailing(reason) });
       const response = await app.inject({ method: 'GET', url: '/v1/me' });
       // request_id differs per request, so compare the part that carries meaning.
@@ -200,6 +196,9 @@ describe('unauthenticated requests', () => {
     expect(new Set(bodies).size).toBe(1);
     expect(bodies[0]).not.toContain('MEMORY_OWNER_ID');
     expect(bodies[0]).not.toContain('3f2504e0');
+    for (const reason of REQUEST_CONTEXT_FAILURES) {
+      expect(bodies[0]).not.toContain(reason);
+    }
   });
 });
 

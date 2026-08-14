@@ -1747,3 +1747,83 @@ Unrecognised outcomes now fall to `UNKNOWN` as well, rather than to `PERMANENT_F
 What did not change: `PERMANENT_RESPONSE` and `RETRY_EXHAUSTED` still mean `PERMANENT_FAILURE`, still mean `UNSAVED`, and an important one still produces exactly one notice, findable again by the same handle after a restart.
 
 The general lesson is worth keeping separately from the fix. A value that means "we are being careful" is safe only while nothing acts on it. `PERMANENT_FAILURE` was a fine place to put uncertainty until something started telling people about it, and then the uncertainty had to be given a name of its own. Widening what a value means is a change to every mapping that already points at it.
+
+## D-184 — The operational log is an allowlist, not a filter (P3-10)
+
+The previous configuration was safe by subtraction: Fastify wrote what it wrote, and a list of redaction paths removed the parts anybody had thought of. Measuring it found five leaks, and none of them were on any list — the raw URL, so a credential in a 404 path or a query string was written verbatim; the `Host` header, which the caller also chooses; the remote address; the driver's message behind a failed health probe; and every `Error` handed to the logger.
+
+The direction is now inverted. A serializer builds a new object from named fields rather than removing fields from Fastify's, and every deliberate call site passes a closed set of keys. Adding a field is an edit to `createLoggerOptions` or to one of eleven call sites, which is where somebody will be thinking about the question — rather than something that starts happening because a framework changed what it collects.
+
+This is also why "secret masking" is not implemented as masking. Three surfaces need three different answers: a credential header is *omitted*, Memory text is *never put in*, and an operational diagnostic is made a *closed value* so there is nothing to mask. No `[REDACTED]` markers were used anywhere; a marker still reports that something was there.
+
+## D-185 — Fastify's request logging is kept, and its serializers are replaced (P3-10)
+
+Three options were compared against measurements. Extending redaction cannot work: redacting `req.url` removes the field entirely, so route identity is lost, and redaction cannot reach inside a string, so keeping the URL keeps the secret. Turning automatic logging off works, but `disableRequestLogging` is deprecated in Fastify 5.11.3 and removed in 6; the supported replacement, `logController`, is a *server* option rather than a logger option, which would move the policy out of the one function every leak test already runs as production configuration.
+
+Custom serializers keep the lifecycle — a start and a completion paired under one request id — while emitting `{ method, route, operation }`, `{ statusCode }` and `{ failure }`. No deprecation, no new dependency, and the whole policy stays inside `createLoggerOptions`.
+
+The route is the template (`/v1/problems/:problem_id/events`) or `UNMATCHED`. Templates are written in this repository; path parameters are not. That is the trade made deliberately: an operator can no longer see which problem a request touched, and in exchange the log cannot carry a problem id, an owner id, or whatever else a caller puts in a path.
+
+`operation` is `null` rather than absent for an unmatched route, so every logged request has the same three fields and an inventory test can state them exactly.
+
+One line is written that this policy does not shape: Fastify's own `Server listening at http://…` when a port is opened. It names the address this process was configured to bind — the same host and port the startup summary already prints, at a moment when nothing is listening and no caller has been able to influence anything. It is asserted explicitly rather than filtered out quietly.
+
+## D-186 — No error reaches the logger, and none could say anything if it did (P3-10)
+
+Pino's error serializer writes `type`, `message`, `stack`, everything reachable through `cause` — appended into the message as well as the stack — and every enumerable own property. Measured against real objects: a `pg` `DatabaseError` carries `detail`, and for a unique or check violation `detail` is the offending row (`Failing row contains (…)`), which for this schema is Memory prose. It also carries `table`, `column`, `constraint`, `internalQuery` and `where`. A Node filesystem error carries `path`, the absolute one.
+
+Two changes, and both were kept because either alone leaves something standing.
+
+The sink is closed: no call site passes an error. The four that did — the unhandled request handler, the application-refusal branch, shutdown failure and listen failure — now pass a closed `failure` value. Cleaning up error *producers* instead was considered and rejected: there are 44 `Error` subclasses in `src/`, and `pg`, Node and every future library are outside this repository entirely.
+
+The serializer is closed too, and takes no argument at all — a serializer that received the error could be edited into one that reports a field of it. It should never run, and exists for paths that are not this codebase's.
+
+The mutation results show why both were kept. Handing the error back to the logger while the serializer is in place produces *no leak*, and is caught only by the field-inventory and architecture tests. Removing the serializer while no call site passes an error produces no leak either. Removing both leaks everything. Neither layer was relied on, and neither is load-bearing alone.
+
+`InvalidApplicationInputError` is included even though every one of its seven call sites writes a fixed sentence today. Its constructor takes a `string`, and the reason not to log the message is that nothing stops the eighth call site from building one.
+
+## D-187 — A failed health probe reports a reason, not the driver's words (P3-10)
+
+`DatabaseHealth.error` was the driver's message, and the comment beside it said this described the failure "without echoing the connection string". True, and beside the point: measured against a real PostgreSQL it produced `connect ECONNREFUSED 127.0.0.1:54322`, `getaddrinfo ENOTFOUND <host>` and `password authentication failed for user "postgres"` — a port, a host and an account. Everything in a connection string except the password was being echoed anyway.
+
+It is now one of `CONNECTION_FAILED`, `AUTHENTICATION_FAILED`, `UNEXPECTED_PROBE_RESULT`, `UNKNOWN`, classified from `error.code` and never from message text. A classifier that reads messages depends on wording owned by libuv and by whichever locale it was built for, and is one refactor away from logging what it read.
+
+It falls to `UNKNOWN` rather than guessing. `pg`'s own connection timeout arrives as a plain `Error` with no code; calling that `CONNECTION_FAILED` on the strength of its wording is the thing being avoided.
+
+The HTTP contract did not move: `200 {status:'ok'}` and `503 {status:'unavailable'}`, with the reason never in the response. `latencyMs` became a required field of `HealthReport`, because a probe always measures one and how long a failure took to arrive is usually the first useful thing about it.
+
+This is why serializers alone were not enough. A prototype of the serializer change closed four of the five measured leaks and left this one open — an explicit call site handing a free string to a permitted field, which no serializer sees.
+
+## D-188 — The request id is the only identifier, and it is the server's (P3-10)
+
+`request_id` correlates a failing response with its log lines and is the whole of what an operator is given to join on. Fastify generates it; `requestIdHeader` defaults to `false` in Fastify 5, so a caller cannot supply one — verified at runtime rather than read from documentation, because a default is a thing that changes.
+
+Nothing else identifying is logged. Not `owner_id`, which on a single-person server is one value and appears in exports and change logs already; not `client_id` or `credential_id`, which belong to the credential separation P3-04 built; not `project_id`, `problem_id`, `event_id`, `verification_id` or `client_event_id`, which are Memory's own identifiers; and not the remote address or port, which on a loopback-by-default personal server identify nobody useful and are personal data in any deployment where they would.
+
+The test is necessity, not secrecy. An entity id is not a secret; it is simply not needed to answer "what happened to this request", and every identifier added to a log is one more thing a log holds.
+
+## D-189 — A server that cannot start says only that (P3-10)
+
+Configuration is read and the pool opened before a logger exists. A failure there was an uncaught exception, printed by Node with its message and its stack, and two of the errors reachable there quote their input: `EnvValidationError` reports the offending value, `UnsafeDatabaseTargetError` reports the database host. No serializer sees any of it, so "the logging policy covers this" would have been false.
+
+Startup now runs inside `main()`, whose caller prints a fixed sentence and sets a non-zero exit code. Nothing from the failure is printed — not the error, its message, its stack, the variable, or the value. A cleanup failure on the way out is not reported either.
+
+Proved by running the real entrypoint in a child process with a marked environment value, because there is no call site a source guard could look for here — only the absence of a boundary.
+
+## D-190 — An administrative command is not a monitoring log (P3-10)
+
+`credential:issue` prints a token, once, and must keep doing so; that is the command's result, handed to the person who ran it. `db:check` prints a host and a latency. `owner:bootstrap` prints an owner id. None of these accumulate unattended, and a policy that forbade them would be treating output as a category rather than by what it is for.
+
+The server process is held to one line: the startup summary — a service name, a Node version, an environment, a log level and the address about to be bound, decided by whoever started the process at a moment when there are no callers. It stays on `console.log` rather than moving to Pino, because moving it would not close the pre-logger failure path (D-189) and would mean it could not be printed before the logger exists.
+
+`db:check` did change: it printed the driver's message and now prints the closed reason (D-187).
+
+## D-191 — Nothing new logs, and no log becomes a store (P3-10)
+
+The operational logger is written from exactly two modules: the transport boundary, which knows what a request did, and the composition root, which knows about the process. Nothing below them logs — no service, no repository, no domain rule.
+
+`src/reliability/` stays logger-free. It holds payloads, queue file paths, idempotency keys and terminal reasons, which are precisely what P3-07 through P3-09 decided not to carry outward, and `QueueStorageError` keeps its three operation kinds and no `cause` (D-172, D-181). Where a client-side library's diagnostics go is the Adapter's question in Phase 5; answering it here would answer it for every caller.
+
+UsageLog and ChangeLog remain Memory data — rows an owner reads, exports and deletes. They are not mirrored into the process log, and process events are not written into them. The first would copy Memory content somewhere none of those operations reach; the second would make Memory the place operations get audited, which is the Global Audit warehouse the OS boundary addendum puts outside this module.
+
+No log table, no log endpoint, no retention, no rotation, no external sink. P3-10 is a policy about what may be emitted to stdout, and the runtime dependency count is unchanged at three.

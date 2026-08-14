@@ -23,6 +23,8 @@
 import Fastify, {
   type FastifyError,
   type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
   type FastifyServerOptions,
 } from 'fastify';
 
@@ -90,8 +92,18 @@ export interface MemoryHttpAppDependencies {
    * Defaults are set by the caller rather than here so that the composition
    * root owns the log level, and a test can silence output entirely.
    */
-  readonly logger?: FastifyServerOptions['logger'];
+  readonly logger?: MemoryHttpLogger;
 }
+
+/**
+ * What may be passed as the logger: Fastify's own options, or this module's.
+ *
+ * The two are listed separately because they are not compatible, and the
+ * incompatibility is deliberate — see `OperationalLoggerOptions`.
+ */
+export type MemoryHttpLogger =
+  | FastifyServerOptions['logger']
+  | (OperationalLoggerOptions & { stream?: { write(line: string): void } });
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -101,11 +113,56 @@ declare module 'fastify' {
 }
 
 /**
+ * ===========================================================================
+ * Operational logging policy (P3-10)
+ * ===========================================================================
+ *
+ * One rule, and everything below is a consequence of it:
+ *
+ *     the operational log carries what the server decided,
+ *     never what anybody sent it.
+ *
+ * The version of this that does not work is a list of dangerous things to
+ * remove. P3-10 began by measuring the previous configuration, and the leaks
+ * were not in a list anybody had thought to write: the raw URL — so a
+ * credential in a 404 path or a query string was logged verbatim — the `Host`
+ * header, which the caller also chooses, the remote address, the driver's
+ * message behind a failed health probe, which carried a database host, a port
+ * and an account name, and every `Error` handed to the logger, which Pino
+ * expands into its message, its stack, its `cause` and every enumerable
+ * property it happens to have. A `pg` unique or check violation carries the
+ * offending row in `detail` — `Failing row contains (…)` — which is Memory
+ * content, arriving in the log through the driver rather than through anything
+ * this codebase wrote.
+ *
+ * So the direction is inverted. Nothing reaches a log line unless a serializer
+ * or a call site names it, and both are closed sets written here. Adding a
+ * field is an edit to this file, which is where somebody will be thinking
+ * about the question.
+ *
+ * Fastify's automatic request lifecycle logging is kept. It is the thing that
+ * pairs a start with a completion under one request id, and turning it off
+ * would mean rebuilding that by hand — and `disableRequestLogging` is
+ * deprecated in Fastify 5 besides. What is replaced is its serializers.
+ */
+
+/**
  * Headers that must never reach a log line.
  *
  * Redaction is configured on the logger rather than left to call sites,
  * because the failure mode is silent: a credential logged once is a credential
  * in a file nobody thinks to check.
+ *
+ * Second line of defence, and honestly so: the request serializer below emits
+ * no headers at all, so in normal operation this removes nothing. It is here
+ * for the moment somebody widens that serializer — which is exactly when
+ * nobody re-derives which headers are credentials. It is deliberately not a
+ * growing dictionary of every header a vendor might use for a secret; that
+ * list has no end, and the serializer is what makes its length stop mattering.
+ *
+ * `remove: true` deletes the field rather than replacing it with a marker. A
+ * marker says a credential was there, and the shape of the log then depends on
+ * whether a request carried one.
  */
 export const REDACTED_LOG_PATHS = [
   'req.headers.authorization',
@@ -116,30 +173,152 @@ export const REDACTED_LOG_PATHS = [
 ] as const;
 
 /**
+ * What the server says happened.
+ *
+ * A small closed set, one member per place that logs deliberately. Not a
+ * logging framework and not a taxonomy with room to grow into one — the value
+ * of naming these at all is that a reader can grep for the name and find the
+ * single line that emits it.
+ */
+export const OPERATIONAL_LOG_EVENTS = [
+  'REQUEST_VALIDATION_FAILED',
+  'REQUEST_PARSE_FAILED',
+  'REQUEST_APPLICATION_REJECTED',
+  'SANITIZATION_REJECTED',
+  'AUTH_CONTEXT_UNAVAILABLE',
+  'EXPORT_BLOCKED',
+  'HEALTH_UNAVAILABLE',
+  'UNHANDLED_REQUEST_FAILURE',
+  'SERVER_SHUTDOWN',
+  'SERVER_SHUTDOWN_FAILURE',
+  'SERVER_START_FAILURE',
+] as const;
+
+export type OperationalLogEvent = (typeof OPERATIONAL_LOG_EVENTS)[number];
+
+/**
+ * How much a failure is allowed to say about itself.
+ *
+ * Two values, and the asymmetry between them is the point.
+ * `INVALID_APPLICATION_INPUT` names a decision this codebase made about a
+ * request. `UNEXPECTED` names the absence of one — something failed and the
+ * server has nothing safe to say about what. An operator finds the rest by
+ * request id, from a stack trace nobody put in a file.
+ */
+export const OPERATIONAL_FAILURES = ['UNEXPECTED', 'INVALID_APPLICATION_INPUT'] as const;
+
+export type OperationalFailure = (typeof OPERATIONAL_FAILURES)[number];
+
+/** What a request that matched no route is called in a log line. */
+export const UNMATCHED_ROUTE = 'UNMATCHED';
+
+/** Exactly what a request is allowed to look like in a log line. */
+export type LoggedRequest = {
+  /** The HTTP method. Chosen from a fixed set by the protocol, not by text. */
+  method: string;
+  /**
+   * The route template the request matched — `/v1/problems/:problem_id/events`
+   * — or `UNMATCHED`.
+   *
+   * The template is written in this repository and the parameters are not, so
+   * this identifies the endpoint without repeating anything the caller typed.
+   * That is the whole trade P3-10 makes: an operator loses the ability to see
+   * which problem id was involved, and gains a log that cannot carry one.
+   */
+  route: string;
+  /** The OpenAPI `operationId`, or `null` for a request that matched nothing. */
+  operation: string | null;
+};
+
+/** Exactly what a response is allowed to look like in a log line. */
+export type LoggedReply = {
+  statusCode: number;
+};
+
+/** Exactly what a failure is allowed to look like in a log line. */
+export type LoggedFailure = {
+  failure: OperationalFailure;
+};
+
+/**
+ * The request serializer.
+ *
+ * Builds a new object from three named fields rather than removing anything
+ * from Fastify's. A serializer that started with the real request and deleted
+ * the dangerous parts would inherit whatever Fastify adds next.
+ */
+function serializeRequest(request: FastifyRequest): LoggedRequest {
+  return {
+    method: request.method,
+    // `undefined` when nothing matched — Fastify's own types say so.
+    route: request.routeOptions.url ?? UNMATCHED_ROUTE,
+    // Absent for a 404, and `null` rather than an omitted key so that every
+    // logged request has the same three fields and an inventory test can say
+    // so exactly.
+    operation: request.routeOptions.schema?.operationId ?? null,
+  };
+}
+
+/** The response serializer. A status code is the whole of it. */
+function serializeReply(reply: FastifyReply): LoggedReply {
+  return { statusCode: reply.statusCode };
+}
+
+/**
+ * The error serializer.
+ *
+ * It takes no argument. That is not a stylistic choice: a serializer that
+ * received the error could be edited into one that reports a field of it,
+ * whereas this one has nothing to report from. Pino passes the error and this
+ * function ignores it, at the level of the function signature.
+ *
+ * It should also never run. Nothing in this codebase hands an `Error` to the
+ * logger any more — an architecture test enforces that — so this exists for
+ * the paths that are not this codebase's: a Fastify internal, a plugin, a
+ * future version that decides to log the error it just handled.
+ */
+function serializeFailure(): LoggedFailure {
+  return { failure: 'UNEXPECTED' };
+}
+
+/**
+ * The logging configuration the server runs with.
+ *
+ * Deliberately not assignable to Fastify's own logger type. Fastify declares
+ * that an error serializer returns `{ type, message, stack }` — all three
+ * required — and this one returns none of them. That is the difference P3-10
+ * exists to make, so it is stated here as a type of its own rather than bent
+ * into the shape of the thing it is replacing. `buildMemoryHttpApp` converts
+ * it in one place, which is the only cast in this module.
+ */
+export interface OperationalLoggerOptions {
+  level: string;
+  redact: { paths: string[]; remove: true };
+  serializers: {
+    req: (request: FastifyRequest) => LoggedRequest;
+    res: (reply: FastifyReply) => LoggedReply;
+    err: () => LoggedFailure;
+  };
+}
+
+/**
  * The logging options the server runs with.
  *
  * Assembled here rather than at the one call site so a test can run the real
  * configuration instead of rebuilding an equivalent one and proving only that
- * its own copy behaves. Nothing about redaction is worth asserting against a
- * list the assertion wrote itself.
- *
- * `remove: true` deletes the field rather than replacing it with a marker. A
- * marker says a credential was there, and the shape of the log then depends on
- * whether a request carried one.
- *
- * Worth being plain about the limit: today no serializer writes request
- * headers, so this removes nothing in practice. It is here for the moment one
- * does — a debug serializer added under pressure, an error path that dumps a
- * request — because that is exactly when nobody re-derives which headers are
- * credentials.
+ * its own copy behaves. Nothing about this is worth asserting against a
+ * configuration the assertion wrote itself, which is why the leak tests take
+ * this function and replace only the stream.
  */
-export function createLoggerOptions(level: string): {
-  level: string;
-  redact: { paths: string[]; remove: true };
-} {
+export function createLoggerOptions(level: string): OperationalLoggerOptions {
   return {
     level,
     redact: { paths: [...REDACTED_LOG_PATHS], remove: true },
+    serializers: {
+      req: serializeRequest,
+      res: serializeReply,
+      err: serializeFailure,
+    },
   };
 }
 
@@ -151,7 +330,11 @@ export function createLoggerOptions(level: string): {
  */
 export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): FastifyInstance {
   const app = Fastify({
-    logger: dependencies.logger ?? false,
+    // The one cast. Fastify's type requires an error serializer to return a
+    // message and a stack; this configuration's returns neither, on purpose,
+    // and Pino does not care at runtime. Narrowing it here keeps the assertion
+    // beside the reason for it instead of at every call site.
+    logger: (dependencies.logger ?? false) as NonNullable<FastifyServerOptions['logger']>,
     ajv: {
       customOptions: {
         // An unexpected field is a mistake worth reporting, not something to
@@ -191,7 +374,11 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     // were, both of which the server produced.
     if (error.validation !== undefined) {
       request.log.info(
-        { validationContext: error.validationContext, problems: error.validation.length },
+        {
+          event: 'REQUEST_VALIDATION_FAILED',
+          validationContext: error.validationContext,
+          validationProblemCount: error.validation.length,
+        },
         'request failed validation',
       );
       void reply
@@ -208,7 +395,10 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     // the message, so the message cannot be logged either.
     const statusCode = error.statusCode ?? 500;
     if (statusCode === 400) {
-      request.log.info({ statusCode }, 'request could not be parsed');
+      request.log.info(
+        { event: 'REQUEST_PARSE_FAILED', statusCode },
+        'request could not be parsed',
+      );
       void reply
         .code(ERROR_STATUS.INVALID_REQUEST)
         .send(buildErrorEnvelope('INVALID_REQUEST', request.id));
@@ -229,7 +419,10 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       // and `INVALID_REQUEST` would send it looking at a request that was
       // fine. Nothing about what was found is logged or returned — where the
       // credential sits is a map to it.
-      request.log.warn('export refused: the memory holds a credential');
+      request.log.warn(
+        { event: 'EXPORT_BLOCKED' },
+        'export refused: the memory holds a credential',
+      );
       void reply
         .code(ERROR_STATUS.EXPORT_BLOCKED)
         .send(buildErrorEnvelope('EXPORT_BLOCKED', request.id));
@@ -247,7 +440,15 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     }
 
     if (error instanceof InvalidApplicationInputError) {
-      request.log.info({ err: error }, 'request rejected by the application layer');
+      // The error itself is not logged, and neither is its message. Every call
+      // site that raises one writes a fixed sentence today, but the
+      // constructor takes a `string` and a future one need not — and Pino
+      // writes a message and a stack for any `Error` it is handed. What an
+      // operator gets is the decision: the application layer refused this.
+      request.log.info(
+        { event: 'REQUEST_APPLICATION_REJECTED', failure: 'INVALID_APPLICATION_INPUT' },
+        'request rejected by the application layer',
+      );
       void reply
         .code(ERROR_STATUS.INVALID_REQUEST)
         .send(buildErrorEnvelope('INVALID_REQUEST', request.id));
@@ -267,7 +468,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       // could have attached text to — so nothing available to log here is
       // something a caller sent or a policy wrote.
       request.log.warn(
-        { locator: error.locator, kind: error.kind },
+        { event: 'SANITIZATION_REJECTED', locator: error.locator, kind: error.kind },
         'request rejected by the sanitization boundary',
       );
       void reply
@@ -279,17 +480,26 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     if (error instanceof RequestContextUnavailableError) {
       // The internal reason is logged and discarded from the response, so the
       // client cannot tell an unknown owner from a malformed one.
-      request.log.warn({ reason: error.internalReason }, 'owner context unavailable');
+      request.log.warn(
+        { event: 'AUTH_CONTEXT_UNAVAILABLE', reason: error.internalReason },
+        'owner context unavailable',
+      );
       void reply
         .code(ERROR_STATUS.UNAUTHENTICATED)
         .send(buildErrorEnvelope('UNAUTHENTICATED', request.id));
       return;
     }
 
-    // Anything else is ours, not the client's. The full error goes to the log;
-    // the response says only that something failed. A stack trace, a driver
-    // message or a connection string in a response body is a leak.
-    request.log.error({ err: error }, 'unhandled error while serving request');
+    // Anything else is ours, not the client's — and since P3-10 it does not go
+    // to the log either. This branch receives whatever was thrown: a `pg`
+    // error whose `detail` is the offending row, a filesystem error whose
+    // message is an absolute path, a library error nobody here wrote. All of
+    // it was measured being written out in full. What is recorded is that a
+    // request failed unexpectedly, at this request id, on this route.
+    request.log.error(
+      { event: 'UNHANDLED_REQUEST_FAILURE', failure: 'UNEXPECTED' },
+      'unhandled error while serving request',
+    );
     void reply
       .code(ERROR_STATUS.INTERNAL_ERROR)
       .send(buildErrorEnvelope('INTERNAL_ERROR', request.id));
@@ -342,8 +552,18 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
         }
 
         // The reason stays in the log. A health probe that explains itself to
-        // the network describes the deployment to anyone who asks.
-        request.log.warn({ detail: report.detail }, 'health check reported unavailable');
+        // the network describes the deployment to anyone who asks — and the
+        // reason itself is now one of four identifiers rather than the
+        // driver's message, which was measured naming a host, a port and a
+        // database account.
+        request.log.warn(
+          {
+            event: 'HEALTH_UNAVAILABLE',
+            healthReason: report.reason ?? 'UNKNOWN',
+            latencyMs: report.latencyMs,
+          },
+          'health check reported unavailable',
+        );
         return reply.code(503).send({ status: 'unavailable' });
       },
     );
@@ -396,7 +616,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
           // rather than relying on a type assertion.
           const context = request.memoryContext;
           if (context === undefined) {
-            throw new RequestContextUnavailableError('preHandler did not establish a context');
+            throw new RequestContextUnavailableError('CONTEXT_NOT_ESTABLISHED');
           }
 
           // Read from the owner-scoped repository, never from a table.

@@ -81,6 +81,35 @@ export interface AuthenticatedRequestContext {
   runInTransaction<T>(work: (repository: MemoryRepository) => Promise<T>): Promise<T>;
 }
 
+/**
+ * Why no owner context could be established, for the server's own record.
+ *
+ * The five authentication failures, plus the two this layer adds. A closed set
+ * rather than a `string`: P3-04 established that the reason must not be built
+ * from what was presented, and P3-10 finished the job by removing the type's
+ * permission to be free text at all. The previous signature took a `string`,
+ * and one call site had already used it for a sentence — harmless in itself,
+ * and exactly the shape a caller-derived value would arrive in.
+ */
+export const REQUEST_CONTEXT_FAILURES = [
+  /** No credential was presented. */
+  'MISSING',
+  /** Presented, but not a Memory token. */
+  'MALFORMED',
+  /** Well-formed, but its selector matches no row. */
+  'UNKNOWN',
+  /** Selector matched, secret did not. */
+  'INVALID',
+  /** Matched a credential that has been revoked. */
+  'REVOKED',
+  /** The credential named an owner that is no longer there. */
+  'OWNER_UNAVAILABLE',
+  /** A handler ran without the hook that should have preceded it. */
+  'CONTEXT_NOT_ESTABLISHED',
+] as const;
+
+export type RequestContextFailure = (typeof REQUEST_CONTEXT_FAILURES)[number];
+
 /** Raised when no owner could be established for a request. */
 export class RequestContextUnavailableError extends Error {
   /**
@@ -92,9 +121,9 @@ export class RequestContextUnavailableError extends Error {
    * can influence eventually reaches a log, and a presented credential is the
    * most outside-influenced string there is.
    */
-  readonly internalReason: string;
+  readonly internalReason: RequestContextFailure;
 
-  constructor(internalReason: string) {
+  constructor(internalReason: RequestContextFailure) {
     super('No owner context could be established for this request.');
     this.name = 'RequestContextUnavailableError';
     this.internalReason = internalReason;

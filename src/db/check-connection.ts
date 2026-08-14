@@ -5,7 +5,9 @@
  * the only module here that connects on execution, and nothing imports it.
  *
  * It prints the host and round-trip time. It never prints the connection
- * string, which holds credentials.
+ * string, which holds credentials, and since P3-10 it does not print the
+ * driver's message either — that was measured carrying a port and an account
+ * name. What replaces it is the same closed reason the server logs.
  */
 
 import { loadEnv } from '../config/env.js';
@@ -23,7 +25,7 @@ try {
   if (health.reachable) {
     console.log(`database reachable | host=${config.host} | ${health.latencyMs}ms`);
   } else {
-    console.error(`database unreachable | host=${config.host} | ${health.error ?? 'unknown'}`);
+    console.error(`database unreachable | host=${config.host} | ${health.reason ?? 'UNKNOWN'}`);
     process.exitCode = 1;
   }
 } finally {
