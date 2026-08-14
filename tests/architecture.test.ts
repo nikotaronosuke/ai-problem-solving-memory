@@ -901,6 +901,7 @@ describe('the retry queue is not part of the server', () => {
       'owner_id',
       'payload',
       'problem_id',
+      'problem_important',
       'queue_item_id',
       'schema_version',
       'terminal_failure',
@@ -985,6 +986,71 @@ describe('the retry queue is not part of the server', () => {
     expect(coordinator).not.toContain('nextDelayMs');
     expect(coordinator).not.toContain('terminalFailure');
     expect(coordinator).not.toContain('attemptCount');
+  });
+
+  it('absorbs a named set of failures and nothing wider', async () => {
+    const source = await readFile(join(SRC, 'reliability', 'fallback.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Every `catch` here re-throws what it does not recognise. The easy way to
+    // make "a Memory failure never stops the caller" true is a catch that
+    // swallows everything, which would turn an owner mismatch, a broken
+    // invariant and a delivery that ignored its contract into silence.
+    const catches = [...code.matchAll(/catch \(error\) \{/g)];
+    expect(catches.length).toBeGreaterThan(0);
+    expect([...code.matchAll(/throw error;/g)].length).toBeGreaterThanOrEqual(catches.length);
+
+    // The absorbed set, named literally.
+    for (const absorbed of [
+      'QueueCapacityError',
+      'SanitizationRejectedError',
+      'QueueStorageError',
+    ]) {
+      expect(code).toContain(`error instanceof ${absorbed}`);
+    }
+  });
+
+  it('answers the caller rather than running the caller’s work', async () => {
+    const source = await readFile(join(SRC, 'reliability', 'fallback.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // No `withMemoryFallback(mainWork, …)`. A Memory library that took the
+    // assistant's work as a callback would be deciding whether real work
+    // happens, which is a long way from remembering how problems were solved.
+    expect(code).not.toContain('mainWork');
+    expect(code).not.toContain('withMemoryFallback');
+
+    // And `continueMainWork` is typed rather than computed: there is no
+    // failure of the Memory that stops the work, so there is no branch.
+    expect(code).toContain('readonly continueMainWork: true');
+    expect(code).not.toContain('continueMainWork: false');
+  });
+
+  it('says one thing to a person, and nothing about the write', async () => {
+    const { MEMORY_NOTICE_KINDS } = await import('../src/reliability/index.js');
+    const source = await readFile(join(SRC, 'reliability', 'fallback.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The spec names six occasions worth interrupting somebody for, and one
+    // concerns saving. Splitting it by cause would describe internals the
+    // person did not ask about.
+    expect([...MEMORY_NOTICE_KINDS]).toEqual(['IMPORTANT_MEMORY_UNSAVED']);
+
+    const intent = /interface MemoryNoticeIntent \{([\s\S]*?)\n\}/.exec(code)?.[1] ?? '';
+    const fields = [...intent.matchAll(/readonly (\w+)[?]?:/g)].map((match) => match[1]).sort();
+    expect(fields).toEqual(['dedupKey', 'kind', 'operation']);
+
+    // No sentence is built here. Each assistant says things its own way, in
+    // its own language, which is what an adapter is for — a library producing
+    // English prose would have decided how a Japanese-speaking user is spoken
+    // to. Every string in this module is an identifier or a closed value, and
+    // the longest is `IMPORTANT_MEMORY_UNSAVED`; a sentence would be longer
+    // than any of them.
+    expect(code).not.toContain('message');
+    const literals = [...code.matchAll(/'([^']*)'/g)].map((match) => match[1] ?? '');
+    expect(literals.length).toBeGreaterThan(0);
+    const longest = literals.reduce((left, right) => (right.length > left.length ? right : left));
+    expect(longest.length).toBeLessThanOrEqual('IMPORTANT_MEMORY_UNSAVED'.length);
   });
 
   it('inspects a write before it reaches the disk, using the boundary’s own policy', async () => {
