@@ -8,7 +8,7 @@ Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
 Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
-Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01, P3-02 done; P3-03 next)
+Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 … P3-03 done; P3-04 next)
 
 ## Source of truth
 
@@ -298,7 +298,7 @@ Read this to know what you are building on.
 
 **Layering.** domain ← service/API ← repository ← db ← PostgreSQL. `tests/architecture.test.ts` enforces it: the domain imports no driver, storage or vendor module and holds no SQL, and `pg` is named only in `db/config.ts`, `db/executor.ts` and `db/pool.ts`.
 
-**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 2096 tests across 66 files.
+**Test.** `tests/integration/phase1.integration.test.ts` runs one problem from first suspicion to confirmed fix through the repository, plus the negative cases. 2144 tests across 67 files.
 
 ## What exists now — Phase 2 end to end (P2-14)
 
@@ -366,6 +366,28 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Nothing new escapes.** The refusal is P3-01's: a safe locator and a key/value kind. The category is not published, the policy still has no name, and a real detector now drives the leak tests rather than a hand-written stub. A direct scan of every column of every table confirms no marker reached storage.
 
+## What exists now — Redaction (P3-03)
+
+`src/sanitization/secrets/`, now four modules. No route, no table, no repository operation, no new dependency.
+
+**Three components, one shared parser.** `patterns.ts` locates credentials and reports spans; `detector.ts` asks what a string *is* and throws the positions away; `redactor.ts` keeps the positions and replaces what they cover; `policy.ts` decides between storing the result and refusing. Detection and redaction reading the same rules is what stops them drifting — one recognising a form the other cannot handle would be silent in both directions (D-125).
+
+**Spans never leave the directory.** An offset and a length are information about a secret. `SecretFinding` is still two closed identifiers, and an architecture test pins that spans appear in exactly three files.
+
+**Partial redaction.** `"failed because API_KEY=abc123 was stale"` becomes `"failed because API_KEY=[REDACTED] was stale"`. The variable name survives, which is the part worth reading later. Every credential in a string goes, not the first — a `.env` paste holds several.
+
+**Whole-value replacement under a credential-named field.** `{"api_key":"secret"}` → `{"api_key":"[REDACTED]"}`. There is nothing around it to preserve.
+
+**Refusal where removal is not safe.** An unterminated PEM block has no knowable end, so it is refused rather than guessed at. A key is refused because a replacement can collide with a key already present and merge two fields silently (D-126).
+
+**Fail-closed post-check.** Redacted text is shown to the detector again, and if a confirmed credential survived the write is refused anyway. Partial removal is the worst available outcome: a record that reads as sanitised, still holding a credential, with the caller told it succeeded (D-127).
+
+**Idempotent.** The marker is itself a recognised placeholder, so redacted text run through again finds nothing. Records survive export, migration and retry unchanged.
+
+**`Set-Cookie` attributes are not cookies.** `Path=/`, `Max-Age` and `SameSite` describe how a browser should treat a cookie. Only the first pair is the credential; an earlier version read `Path=/` as a second cookie value and refused the whole string.
+
+**Two pre-sanitization log paths closed.** Ajv names the offending property on an `additionalProperties` failure, so logging the error object wrote a caller-chosen key into the operational log — before sanitization runs, since validation is first. Nothing from a validation error is logged now (D-128). The malformed-JSON branch got the same treatment defensively; Fastify 5 replaces the message and it was not observed to leak.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -373,26 +395,26 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
 - No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no search, embedding or retrieval, no AI adapter, no UI
-- No redaction. A confirmed credential is refused outright (P3-02), and nothing is masked, replaced or summarised — keeping the surrounding meaning while removing the value is P3-03's
-- No PII detector, no raw-conversation or raw-log classifier, no large-code threshold. P3-02 is secret detection only; an email address is kept, and that is a statement about secrets rather than a ruling on PII
+- No PII detector, no raw-conversation or raw-log classifier, no large-code threshold. P3-02 and P3-03 are about secrets only; an email address is kept, and that is a statement about secrets rather than a ruling on PII
 - No bare-secret detection. A credential with no context at all — pasted alone into a summary, nothing naming it — is not found, because the only way to find it would be to guess from shape (D-122)
+- No key redaction. A credential written into an object *key* is refused, not rewritten (D-126)
+- No general logging policy. Two specific pre-sanitization paths were closed in P3-03; the rest of P3-10 is untouched
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
 - No client SDK or codegen, and no authentication scheme. The document declares no security scheme because no client credential contract exists yet
 
 ## Immediate objective
 
-P3-03 — Redaction / reject policy.
+P3-04 — Credential separation.
 
 Not started.
 
 Notes for whoever picks this up:
-- The decision point is one function: `createSecretDetectionPolicy` in `src/sanitization/secrets/policy.ts`, which today maps `confirmed` to reject and everything else to keep. Neither the detector nor the boundary needs to move
-- `SanitizationOutcome` already has `replace`, and the traversal already applies it at any depth. What does not exist is any rule about what to replace text with, or how to keep a summary's meaning once the credential is gone
-- `suspected` findings are the open question P3-02 deliberately left. A credential-named field holding an ordinary word is either a documentation example or a weak password, and P3-02 declined to guess
-- Replacing an object *key* is refused by the boundary as unsupported (D-116). If P3-03 wants key redaction it has to decide what happens on a collision first
-- The completion condition names response, log and ChangeLog. All three already hold for a refusal; what is new is holding them for a *stored* redaction, where the value survives in the record in some form
-- Do not add a category-to-action table without evidence for it. P3-02 kept the action keyed on certainty alone, and treating `JWT` differently from `PRIVATE_KEY` should follow from a real requirement rather than from the categories happening to exist
+- The breakdown wants Memory content and client credentials managed separately, credentials revocable, and owner identity distinct from client identity
+- `createRequestContextService` is where an owner is established today, from `MEMORY_OWNER_ID`. P2-01 deliberately left that behind one function so a real credential resolver replaces it without touching a route (D-018 era)
+- The OpenAPI document declares no security scheme, on purpose: P3-02 refused to describe an authentication method that did not exist (D-110). P3-04 is what makes one exist, and the document should gain a scheme in the same change
+- Credentials must not land in Problem/Event content. The sanitization boundary already refuses or redacts what it recognises, but a credential *store* is a different thing from Memory content and should not share a table with it
+- Nothing in Phase 3 so far has added a migration. P3-04 probably needs one, which makes it the first schema change since P2-10
 
 ## Core MVP milestone
 

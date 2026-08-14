@@ -14,4 +14,6 @@ export {
   type SecretFinding,
 } from './finding.js';
 export { createSecretDetector, type SecretDetector } from './detector.js';
+export { createSecretRedactor, type SecretRedactor } from './redactor.js';
+export { REDACTION_MARKER } from './patterns.js';
 export { createSecretDetectionPolicy } from './policy.js';

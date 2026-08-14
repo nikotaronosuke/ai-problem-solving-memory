@@ -250,14 +250,33 @@ The detector is also the default policy, so all 1904 pre-existing tests ran thro
 
 Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2096 tests across 66 files.
 
-### P3-03 — NEXT
+### P3-03 — DONE
 Redaction / reject policy.
 
-Depends on P3-02, satisfied. See the private task breakdown for the completion condition.
+`src/sanitization/secrets/` gains `patterns.ts` and `redactor.ts`. No migration, no repository change, no route, no new dependency, and the P3-01 boundary is untouched.
 
-The decision point is `createSecretDetectionPolicy`, which today maps `confirmed` to reject. `SanitizationOutcome` already carries `replace` and the traversal already applies it, so what is missing is the rule, not the mechanism: what a redacted value becomes, and how much of a summary's meaning survives once the credential is gone.
+A shared parser locates credentials and reports spans; the detector throws the positions away, the redactor keeps them, and the policy decides (D-125). Spans never leave the directory — an architecture test pins that they appear in exactly three files, because an offset and a length are information about a secret.
 
-`suspected` findings are the question P3-02 left open on purpose. Key replacement is refused by the boundary as unsupported (D-116) and needs a collision rule before it can be allowed. And the completion condition names response, log and ChangeLog — all three hold for a refusal today; holding them for a *stored* redaction is the new work.
+Confirmed credentials in a value are redacted where that is safe: partial replacement in prose, whole-value replacement under a credential-named field, every occurrence rather than the first. Refused where it is not — an unterminated PEM block has no knowable end, and a key is refused because a replacement can collide with an existing key and merge two fields silently (D-126). Suspected findings are still kept.
+
+The redacted text is then shown to the detector again, and if a confirmed credential survived the write is refused anyway (D-127). Redaction is idempotent: the marker is itself a recognised placeholder.
+
+`Set-Cookie` attributes are no longer read as cookie values — only the first pair is the credential — which fixes a false positive that refused `Set-Cookie: sid=[REDACTED]; Path=/`.
+
+Two pre-sanitization log paths were closed. Ajv names the offending property on an `additionalProperties` failure, so logging the validation error wrote a caller-chosen key into the operational log before sanitization had run at all (D-128). The malformed-JSON branch got the same treatment defensively; Fastify 5 replaces that message and it was not observed to leak.
+
+Definition of Done verified against a real database: every marker absent from every column of every table, the redacted text present in its place, and absent from responses, the change log and the operational log. Six deliberate mutations — disabling partial redaction, redacting only the first of several, removing the post-check, restoring `Set-Cookie` attribute handling, and restoring both `{err}` log lines — fail between 1 and 20 of the new tests; the parse-error one does not, for the reason above.
+
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2144 tests across 67 files.
+
+### P3-04 — NEXT
+Credential separation.
+
+Depends on P3-03, satisfied. See the private task breakdown for the completion condition.
+
+Memory content and client credentials managed separately, credentials revocable, owner identity distinct from client identity. `createRequestContextService` is where an owner is established today and was deliberately left behind one function so a real resolver replaces it without touching a route. The OpenAPI document declares no security scheme on purpose (D-110); P3-04 is what makes one exist, and the document should gain it in the same change.
+
+Likely the first migration since P2-10: a credential store is not Memory content and should not share a table with it.
 
 ## BLOCKED
 

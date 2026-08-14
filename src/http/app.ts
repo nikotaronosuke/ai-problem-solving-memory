@@ -145,8 +145,20 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
   app.setErrorHandler((error: FastifyError, request, reply) => {
     // Schema validation failed. Fastify's own error object describes Ajv, not
     // this API, so only the code crosses the boundary.
+    //
+    // Nothing from the error itself is logged, and that is deliberate rather
+    // than cautious. Ajv reports an `additionalProperties` failure by naming
+    // the offending property, so logging the error object writes a
+    // caller-chosen key into the operational log — before sanitization has run
+    // at all, since validation happens first. A caller who puts a credential
+    // in a field name would have it refused and then recorded. What is logged
+    // instead is which part of the request failed and how many problems there
+    // were, both of which the server produced.
     if (error.validation !== undefined) {
-      request.log.info({ err: error }, 'request failed validation');
+      request.log.info(
+        { validationContext: error.validationContext, problems: error.validation.length },
+        'request failed validation',
+      );
       void reply
         .code(ERROR_STATUS.INVALID_REQUEST)
         .send(buildErrorEnvelope('INVALID_REQUEST', request.id));
@@ -154,9 +166,14 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     }
 
     // Malformed JSON and similar transport-level client mistakes.
+    //
+    // Same treatment, for the same reason and one that is easier to miss: a
+    // JSON parse error quotes the bytes it choked on. `Unexpected token 's',
+    // "{"a": sk9x}" is not valid JSON` puts a fragment of the request body in
+    // the message, so the message cannot be logged either.
     const statusCode = error.statusCode ?? 500;
     if (statusCode === 400) {
-      request.log.info({ err: error }, 'request could not be parsed');
+      request.log.info({ statusCode }, 'request could not be parsed');
       void reply
         .code(ERROR_STATUS.INVALID_REQUEST)
         .send(buildErrorEnvelope('INVALID_REQUEST', request.id));

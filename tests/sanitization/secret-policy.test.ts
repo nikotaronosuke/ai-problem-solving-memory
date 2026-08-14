@@ -23,6 +23,7 @@ import {
   type SanitizationSite,
   type SecretDetector,
   type SecretFinding,
+  type SecretRedactor,
 } from '../../src/sanitization/index.js';
 
 const AT_ROOT: FieldPath = [
@@ -37,13 +38,34 @@ function alwaysFinds(finding: SecretFinding | null): SecretDetector {
   return { detect: () => finding };
 }
 
+/**
+ * A detector shaped like a real one: it finds a credential, and once the
+ * redactor has been through it finds nothing left.
+ */
+function findsUntilRedacted(finding: SecretFinding): SecretDetector {
+  let asked = 0;
+  return {
+    detect: () => {
+      asked += 1;
+      return asked === 1 ? finding : null;
+    },
+  };
+}
+
+function alwaysRedactsTo(value: string | null): SecretRedactor {
+  return { redact: () => value };
+}
+
+const CONFIRMED: SecretFinding = { category: 'CREDENTIAL_ASSIGNMENT', certainty: 'confirmed' };
+
 describe('the policy asks a detector and acts on the answer', () => {
-  it('refuses a confirmed credential', () => {
+  it('redacts a confirmed credential the redactor could remove', () => {
     const policy = createSecretDetectionPolicy(
-      alwaysFinds({ category: 'CREDENTIAL_ASSIGNMENT', certainty: 'confirmed' }),
+      findsUntilRedacted(CONFIRMED),
+      alwaysRedactsTo('cleaned'),
     );
 
-    expect(policy.inspect('anything', SITE)).toEqual({ kind: 'reject' });
+    expect(policy.inspect('anything', SITE)).toEqual({ kind: 'replace', value: 'cleaned' });
   });
 
   it.each([
@@ -53,12 +75,47 @@ describe('the policy asks a detector and acts on the answer', () => {
     'COOKIE',
     'CREDENTIAL_ASSIGNMENT',
     'CREDENTIAL_FIELD',
-  ] as const)('refuses a confirmed %s whatever its category', (category) => {
-    // The action follows the certainty, not the category. P3-03 may well want
-    // to treat categories differently; nothing here has decided that it does.
-    const policy = createSecretDetectionPolicy(alwaysFinds({ category, certainty: 'confirmed' }));
+  ] as const)('treats a confirmed %s the same as any other category', (category) => {
+    // The action follows the certainty and what the redactor could do, never
+    // the category. There is no category-to-action table, because nothing has
+    // asked for one.
+    const policy = createSecretDetectionPolicy(
+      findsUntilRedacted({ category, certainty: 'confirmed' }),
+      alwaysRedactsTo('cleaned'),
+    );
+
+    expect(policy.inspect('anything', SITE)).toEqual({ kind: 'replace', value: 'cleaned' });
+  });
+
+  it('refuses when the redactor cannot remove it safely', () => {
+    // `null` is a refusal, never a shrug. A redactor that did its best and
+    // returned something would produce a write that succeeds, looks clean and
+    // still holds a credential.
+    const policy = createSecretDetectionPolicy(alwaysFinds(CONFIRMED), alwaysRedactsTo(null));
 
     expect(policy.inspect('anything', SITE)).toEqual({ kind: 'reject' });
+  });
+
+  it('refuses when a confirmed credential survives the redaction', () => {
+    // The fail-closed post-check, and the case it exists for: partial removal
+    // is worse than none, because the record then reads as sanitised.
+    const policy = createSecretDetectionPolicy(
+      alwaysFinds(CONFIRMED),
+      alwaysRedactsTo('still bad'),
+    );
+
+    expect(policy.inspect('anything', SITE)).toEqual({ kind: 'reject' });
+  });
+
+  it('refuses a confirmed credential written into an object key', () => {
+    // Replacing a key can collide with one already present and silently merge
+    // two fields, so the caller loses data without being told.
+    const policy = createSecretDetectionPolicy(
+      findsUntilRedacted(CONFIRMED),
+      alwaysRedactsTo('cleaned'),
+    );
+
+    expect(policy.inspect('anything', { path: AT_ROOT, kind: 'key' })).toEqual({ kind: 'reject' });
   });
 
   it('keeps a suspected one', () => {
@@ -78,15 +135,21 @@ describe('the policy asks a detector and acts on the answer', () => {
     expect(policy.inspect('anything', SITE)).toEqual({ kind: 'keep' });
   });
 
-  it('never redacts, replaces or summarises', () => {
-    // All of that is P3-03's. Doing any of it here would be inventing a policy
-    // nobody has designed, and a half-redaction is harder to undo than a
-    // refusal.
-    for (const certainty of ['confirmed', 'suspected'] as const) {
-      const policy = createSecretDetectionPolicy(alwaysFinds({ category: 'JWT', certainty }));
+  it('never asks the redactor about something it is keeping', () => {
+    let asked = false;
+    const policy = createSecretDetectionPolicy(
+      alwaysFinds({ category: 'CREDENTIAL_FIELD', certainty: 'suspected' }),
+      {
+        redact: () => {
+          asked = true;
+          return 'cleaned';
+        },
+      },
+    );
 
-      expect(policy.inspect('anything', SITE).kind).not.toBe('replace');
-    }
+    expect(policy.inspect('anything', SITE)).toEqual({ kind: 'keep' });
+    // Rewriting a documentation example would be worse than storing it.
+    expect(asked).toBe(false);
   });
 
   it('shows the detector the text and the site it was given', () => {
@@ -130,9 +193,22 @@ describe('the policy carries nothing outward', () => {
   it('returns a refusal with nothing attached to it', () => {
     const policy = createSecretDetectionPolicy();
 
-    const outcome = policy.inspect(`API_KEY=${secret}`, SITE);
+    // A key block with no end: detected, impossible to bound, so refused.
+    const outcome = policy.inspect(`-----BEGIN PRIVATE KEY-----\n${secret}`, SITE);
 
     expect(outcome).toEqual({ kind: 'reject' });
+    expect(JSON.stringify(outcome)).not.toContain(secret);
+  });
+
+  it('returns a replacement holding no part of what it removed', () => {
+    const policy = createSecretDetectionPolicy();
+
+    const outcome = policy.inspect(`failed because API_KEY=${secret} was stale`, SITE);
+
+    expect(outcome).toEqual({
+      kind: 'replace',
+      value: 'failed because API_KEY=[REDACTED] was stale',
+    });
     expect(JSON.stringify(outcome)).not.toContain(secret);
   });
 
@@ -140,13 +216,15 @@ describe('the policy carries nothing outward', () => {
     const policy = createSecretDetectionPolicy();
 
     try {
-      sanitizeValue({ snapshot: { api_key: secret } }, policy, AT_ROOT);
+      // A credential written into an object key. Keys are never redacted, so
+      // this is the path that still refuses.
+      sanitizeValue({ snapshot: { [`Bearer ${secret}`]: 1 } }, policy, AT_ROOT);
       expect.unreachable('the policy should have refused');
     } catch (error) {
       expect(error).toBeInstanceOf(SanitizationRejectedError);
       const rejected = error as SanitizationRejectedError;
 
-      expect(rejected.locator).toBe('appendEvent[0].<key>.<key>');
+      expect(rejected.locator).toBe('appendEvent[0].<key>.<redacted>');
       for (const rendered of [
         rejected.message,
         JSON.stringify(rejected),
