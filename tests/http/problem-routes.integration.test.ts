@@ -26,21 +26,19 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
-  createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
+import { createFixedRequestContextService } from '../support/request-context.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
-import { createTransactionRunner } from '../../src/db/transaction.js';
 import { CONFIDENCES, FRESHNESSES } from '../../src/domain/enums.js';
 import { generateEnvironmentId } from '../../src/domain/environment.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { generateProblemId } from '../../src/domain/problem.js';
 import { generateProjectId } from '../../src/domain/project.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
-import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -67,9 +65,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
-        [MEMORY_OWNER_ID_VAR]: ownerId,
-      }),
+      requestContextService: createFixedRequestContextService(pool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),

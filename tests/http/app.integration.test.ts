@@ -29,6 +29,12 @@ import {
   createRequestContextService,
   createVerificationService,
 } from '../../src/app/index.js';
+import { createFixedRequestContextService } from '../support/request-context.js';
+import {
+  createCredentialAuthenticator,
+  createCredentialRepository,
+} from '../../src/credentials/index.js';
+import { formatCredentialToken, generateCredentialToken } from '../../src/domain/credential.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
@@ -36,7 +42,6 @@ import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
 import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
-import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -52,9 +57,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
-        [MEMORY_OWNER_ID_VAR]: ownerId,
-      }),
+      requestContextService: createFixedRequestContextService(pool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -122,18 +125,20 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
   });
 
   it.each([
-    ['unset', {}],
-    ['malformed', { [MEMORY_OWNER_ID_VAR]: 'not-a-uuid' }],
-    // Well-formed but never created, so resolution reaches the database and
-    // finds nothing.
-    ['unknown', { [MEMORY_OWNER_ID_VAR]: generateOwnerId() }],
-  ])('refuses identically when the owner is %s', async (_label, source) => {
+    ['absent', undefined],
+    ['not a bearer scheme', 'Basic dXNlcjpwYXNz'],
+    ['a bearer with no token', 'Bearer'],
+    ['a token of the wrong shape', 'Bearer not-a-memory-token'],
+    // Well-formed, and selecting nothing: resolution reaches the database and
+    // finds no row.
+    ['well-formed but unissued', `Bearer ${formatCredentialToken(generateCredentialToken())}`],
+  ])('refuses identically when the credential is %s', async (_label, authorization) => {
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,
         createTransactionRunner(pool),
-        source,
+        createCredentialAuthenticator(createCredentialRepository(pool)),
       ),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
@@ -148,21 +153,31 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       logger: false,
     });
 
-    const response = await app.inject({ method: 'GET', url: '/v1/me' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      ...(authorization === undefined ? {} : { headers: { authorization } }),
+    });
 
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ error: { code: 'UNAUTHENTICATED' } });
-    // The owner id must not come back in the response, or an unknown-owner
-    // probe becomes an existence oracle.
+    // Nothing about why. Telling a caller that a credential exists but was
+    // revoked, or that a lookup matched but a secret did not, answers
+    // questions about credentials they do not hold.
     expect(response.body).not.toContain('MEMORY_OWNER_ID');
+    expect(response.body).not.toContain('mem_');
 
     await app.close();
   });
 
-  it('leaves health working when no owner is configured', async () => {
+  it('leaves health working when no credential is presented', async () => {
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {}),
+      requestContextService: createRequestContextService(
+        pool,
+        createTransactionRunner(pool),
+        createCredentialAuthenticator(createCredentialRepository(pool)),
+      ),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -196,13 +211,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
     );
     const app = buildMemoryHttpApp({
       healthService: createHealthService(ownPool),
-      requestContextService: createRequestContextService(
-        ownPool,
-        createTransactionRunner(ownPool),
-        {
-          [MEMORY_OWNER_ID_VAR]: ownerId,
-        },
-      ),
+      requestContextService: createFixedRequestContextService(ownPool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),

@@ -230,15 +230,22 @@ describe('the document itself', () => {
 
     expect(info.title).toBe('AI Problem-Solving Memory API');
     expect(info.version).toMatch(/^\d+\.\d+\.\d+$/);
+    // Moved by P3-04: `/v1` now requires a credential, which is a change to
+    // the surface rather than to the package.
+    expect(info.version).toBe('0.2.0');
   });
 
   it('says how a caller reaches it and what a 404 means', async () => {
     const description = (await documentPromise).info.description ?? '';
 
-    // The two things no single schema can show.
-    expect(description).toContain('owner-scoped');
+    // The things no single schema can show.
+    expect(description).toContain('Authorization: Bearer');
     expect(description).toContain('exactly as one that does not exist');
     expect(description).toContain('expected_version');
+    // The claim P3-02 had to make and P3-04 had to retire.
+    expect(description).not.toContain('no client-supplied credential exists yet');
+    // An owner id is still not a credential, and the document still says so.
+    expect(description).toContain('not a credential');
   });
 
   it('declares the tags it uses, and no others', async () => {
@@ -380,15 +387,61 @@ describe('the contract endpoint', () => {
   );
 });
 
-describe('no authentication is invented', () => {
-  it('declares no security scheme', async () => {
+describe('the authentication contract', () => {
+  it('declares exactly one scheme, and it is the one the server implements', async () => {
     const document = await documentPromise;
 
-    // There is no client credential contract yet. Publishing `BearerAuth` or
-    // `ApiKeyAuth` would describe an authentication method that does not
-    // exist, and a generated client would build a header nothing reads.
-    expect(document.components?.securitySchemes).toBeUndefined();
-    expect(document.security).toBeUndefined();
+    // P3-02 declared none, because none existed and a generated client would
+    // have built a header nothing reads. P3-04 built one, and this is the same
+    // rule pointing the other way: the document says what the server does.
+    const schemes = document.components?.securitySchemes ?? {};
+    expect(Object.keys(schemes)).toEqual(['memoryToken']);
+
+    const { description, ...shape } = schemes['memoryToken'] as Record<string, unknown>;
+    expect(shape).toEqual({ type: 'http', scheme: 'bearer', bearerFormat: 'MemoryToken' });
+    // Prose, so its wording is not pinned — only that a generator has
+    // something to show somebody holding a token.
+    expect(typeof description).toBe('string');
+  });
+
+  it('requires that scheme by default', async () => {
+    const document = await documentPromise;
+
+    // A default rather than a per-route declaration, so a route added without
+    // a thought about authentication is documented as requiring it.
+    expect(document.security).toEqual([{ memoryToken: [] }]);
+  });
+
+  it('protects every owner-scoped operation', async () => {
+    const document = await documentPromise;
+
+    const unprotected = operations(document)
+      .filter((entry) => entry.path.startsWith('/v1'))
+      .filter((entry) => (entry.operation['security'] as unknown[] | undefined)?.length === 0)
+      .map((entry) => `${entry.method} ${entry.path}`);
+
+    expect(unprotected).toEqual([]);
+  });
+
+  it('exempts the health probe and nothing else', async () => {
+    const document = await documentPromise;
+
+    // A probe that needed a credential could not answer during the failure it
+    // exists to report.
+    expect(operationById(document, 'healthCheck')['security']).toEqual([]);
+
+    const exempt = operations(document)
+      .filter((entry) => (entry.operation['security'] as unknown[] | undefined)?.length === 0)
+      .map((entry) => entry.operation.operationId);
+    expect(exempt).toEqual(['healthCheck']);
+  });
+
+  it('leaves the contract document itself outside authentication', async () => {
+    const document = await documentPromise;
+
+    // Unauthenticated at runtime and absent from its own paths. A client that
+    // cannot read the document cannot learn how to obtain a credential.
+    expect(document.paths[OPENAPI_PATH]).toBeUndefined();
   });
 
   it('never presents an owner id as a credential', async () => {

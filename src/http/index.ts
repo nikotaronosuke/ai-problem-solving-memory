@@ -8,6 +8,7 @@
 export {
   buildMemoryHttpApp,
   API_PREFIX,
+  createLoggerOptions,
   REDACTED_LOG_PATHS,
   type MemoryHttpAppDependencies,
 } from './app.js';

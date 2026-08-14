@@ -97,11 +97,23 @@ npm run check             # typecheck + lint + format + test
 npm run dev               # サーバーを起動（既定 127.0.0.1:3000）
 ```
 
+`/v1` へのアクセスには credential が必要です。`MEMORY_OWNER_ID` を知っているだけではアクセスできません（owner id は credential ではありません）。発行はローカルコマンドで行い、token は発行時に一度だけ表示されます。サーバーは digest しか保存しないため、失った token は再発行するほかありません。
+
+```bash
+npm run credential:issue -- --label "local development"
+```
+
 動作確認:
 
 ```bash
 curl http://127.0.0.1:3000/health
-curl http://127.0.0.1:3000/v1/me
+curl -H "Authorization: Bearer mem_..." http://127.0.0.1:3000/v1/me
+```
+
+credential の失効は id を指定します（token を指定しないのは、shell history に残さないためです）。
+
+```bash
+npm run credential:revoke -- --credential-id <uuid>
 ```
 
 使わないときは `npm run supabase:stop` で停止してください。

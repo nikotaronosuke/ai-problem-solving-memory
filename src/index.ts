@@ -27,9 +27,10 @@ import {
   createVerificationService,
 } from './app/index.js';
 import { resolveDatabaseConfig } from './db/config.js';
+import { createCredentialAuthenticator, createCredentialRepository } from './credentials/index.js';
 import { closePool, createPool } from './db/pool.js';
 import { createTransactionRunner } from './db/transaction.js';
-import { buildMemoryHttpApp, REDACTED_LOG_PATHS } from './http/index.js';
+import { buildMemoryHttpApp, createLoggerOptions } from './http/index.js';
 import { buildStartupSummary, formatStartupSummary } from './service.js';
 
 const env = loadEnv();
@@ -37,7 +38,11 @@ const pool = createPool(resolveDatabaseConfig({ nodeEnv: env.nodeEnv }));
 
 const app = buildMemoryHttpApp({
   healthService: createHealthService(pool),
-  requestContextService: createRequestContextService(pool, createTransactionRunner(pool)),
+  requestContextService: createRequestContextService(
+    pool,
+    createTransactionRunner(pool),
+    createCredentialAuthenticator(createCredentialRepository(pool)),
+  ),
   projectEnvironmentService: createProjectEnvironmentService(),
   problemService: createProblemService(),
   problemStatusService: createProblemStatusService(),
@@ -48,12 +53,10 @@ const app = buildMemoryHttpApp({
   changeLogService: createChangeLogService(),
   memoryControlService: createMemoryControlService(),
   problemCloseService: createProblemCloseService(),
-  logger: {
-    level: env.logLevel,
-    // Credentials must not survive into a log file, and the failure is silent
-    // if they do.
-    redact: { paths: [...REDACTED_LOG_PATHS], remove: true },
-  },
+  // Credentials must not survive into a log file, and the failure is silent
+  // if they do. Built by the http module so the configuration a test exercises
+  // is the configuration the server runs.
+  logger: createLoggerOptions(env.logLevel),
 });
 
 let shuttingDown = false;

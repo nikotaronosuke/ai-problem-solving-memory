@@ -1192,3 +1192,65 @@ The fix is the principle stated as code: a suspected verdict may only leave the 
 One consequence is worth naming because it looks like a change and is not. `{"session": "token=expired"}` is now confirmed and redacted: `session` is ambiguous, and a value containing `=` reads as credential-shaped, which is exactly the D-124 matrix — `{"session": "abc123def"}` was already confirmed on the same rule. The shadowing bug had been hiding that cell of the matrix, not softening it.
 
 The mutation proof for this one is the reason the lowercase markers from the fixture review exist: with the old ordering restored, the database sweep itself fails, showing the marker stored in plaintext rather than a unit expectation merely disagreeing.
+
+## D-130 — A credential belongs to a client, and the owner is reached by joining (P3-04)
+
+The credential table does not carry `owner_id`. It would be one column and it would make every query shorter, and that is precisely the argument to refuse it.
+
+Two copies of the same fact can disagree. A credential row whose `owner_id` says one thing and whose client says another is not a hypothetical once anything moves a client, backfills a column, or restores one table from a backup taken at a different moment — and the disagreement is silent, because both answers look authoritative. Whichever one the authentication path happens to read decides whose memory a request reaches.
+
+So there is one path to an owner: credential → client → owner, by join, every time. It is a little slower and it cannot be inconsistent with itself. The lookup runs once per request against a unique-indexed column, which is not where this system will be slow.
+
+The same reasoning is why revoking scopes by owner in the statement rather than by comparing an owner id the caller supplied: the check and the write are one operation, and there is no window between them.
+
+## D-131 — The server stores a digest and cannot reconstruct a token (P3-04)
+
+A token is `mem_<lookup>_<secret>`. The lookup is a public selector; the secret is 32 random bytes rendered base64url, and only its SHA-256 digest is stored.
+
+The split exists so the lookup can be indexed and searched while the secret never has to be. A scheme with one opaque value has to either index the secret itself or scan, and indexing a secret puts it in the clear in a second structure that nobody thinks about.
+
+The comparison is constant time. Both sides are 32 bytes by construction — the column is checked to be — so the lengths always agree and the timing says nothing about how much matched.
+
+That the digest is one-way is the property the whole scheme rests on, and it has a consequence worth stating plainly rather than treating as a limitation: a lost token is replaced, never recovered. There is no support path that reads a credential back out, because there is nothing to read.
+
+A mutation proved this needed a better test than it had. Replacing the digest with the secret's own bytes passed all fifty-two credential tests, because `to_jsonb` renders `bytea` as hex and no substring search for a base64url secret finds it. The test now decodes the column and compares against a digest computed from the standard library rather than by calling the function under test — the latter asserts only that hashing is self-consistent, which a reversible "digest" satisfies too.
+
+## D-132 — Knowing an owner's identifier is not holding a credential for it (P3-04)
+
+`MEMORY_OWNER_ID` established the HTTP request context from Phase 1 until this task. It no longer can, and no fallback was left for the case where no `Authorization` header is present.
+
+An owner id lives in `.env` files, in shell history, in process listings, in whatever a developer pasted into a chat. Accepting it as proof of identity would make all of those a password — one that cannot be rotated, cannot be revoked, and is printed in every response that carries `owner_id` because it is data.
+
+The tempting version of this change keeps the fallback for local development. That is the same bypass with a nicer name: it is production code, it is on the request path, and the condition guarding it is "the caller sent no credential", which is exactly what an unauthenticated request looks like.
+
+Thirty-eight test sites depended on the old path. They moved to an explicit double in `tests/support/`, documented as having no production equivalent. Keeping a production fallback to spare that work would have been trading the guarantee for the cost of a migration that took one pass.
+
+`MEMORY_OWNER_ID` remains what it always was for local tooling: bootstrap, and issuing and revoking credentials. It has no route into a request.
+
+## D-133 — Every request is verified against the database, and nothing is cached (P3-04)
+
+No process cache, no per-connection cache, no map keyed by lookup. The credential is read on every request.
+
+The cost is one indexed lookup. What it buys is that revocation means revocation: the next request fails, in the same process, with no restart and no expiry to wait out. A cache — even a short one — makes "revoked" mean "revoked within N seconds", and N is chosen by whoever tuned the cache rather than by the person whose credential leaked.
+
+This is also why revocation is a timestamp on the row rather than a deletion. A deleted credential and a credential that never existed are indistinguishable afterwards, and the question "was this revoked, and when" is one an operator will eventually need to answer. The authenticator checks it explicitly; removing that check leaves a revoked credential working, which is one of the mutations.
+
+## D-134 — The credential store is not Memory, and is not sanitized (P3-04)
+
+`CredentialRepository` is separate from `MemoryRepository`, is not owner-scoped, and does not pass through the sanitization boundary. Each of those is structural rather than stylistic.
+
+It cannot be owner-scoped: looking a credential up is what *decides* the owner, so there is no owner-scoped anything to run it through yet.
+
+And it must not be sanitized. The boundary exists to keep credentials out of what a person writes down. Pointing it at the credential store inverts that — it would inspect a SHA-256 digest for signs of a credential, which is wasted work at best, and at worst a policy deciding to redact the one column that has to survive verbatim. A sanitization policy that can refuse a write to the credential table is a policy that can lock an owner out of their own memory.
+
+An architecture test pins the separation: nothing in `src/repository/` may import credential code or name a credential, nothing in `src/credentials/` may reach the Memory repository or the HTTP layer, and `withSanitization` appears in exactly two files.
+
+## D-135 — The document declares the authentication it has, no more and no less (P3-04)
+
+P2-13 published no security scheme because none existed, and inventing `BearerAuth` would have produced generated clients sending a header nothing reads (D-110). P3-04 makes one exist, and the same rule now requires the opposite action: the document declares `memoryToken`, the one scheme the server implements.
+
+It is a document default rather than a per-route declaration, so a route added without a thought about authentication is documented as requiring it — the failure mode of per-route security is a new endpoint silently documented as public. `/health` is the only exemption, because a probe that needed a credential could not answer during the failure it exists to report. `/openapi.json` is unauthenticated and hidden from its own output: a client that cannot read the document cannot learn how to obtain a credential.
+
+The contract version moved 0.1.0 → 0.2.0. It describes the `/v1` surface, and requiring a credential is a change to that surface.
+
+Credential management is deliberately not in the document, because it is deliberately not in the API. Issuing and revoking are local commands. An endpoint that mints credentials has to decide what may call it, and that decision belongs to whoever administers the machine rather than to a request — the bootstrap problem does not get easier by being moved over HTTP.
