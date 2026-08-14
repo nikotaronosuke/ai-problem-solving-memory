@@ -428,13 +428,31 @@ Fourteen deliberate mutations fail between 1 and 5 tests each: throwing on an un
 
 Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations. 2477 tests across 81 files.
 
-### P3-10 — NEXT
+### P3-10 — DONE
 
 Logging policy.
 
-Depends on P3-09, satisfied. See the private Phase 3 breakdown for the completion condition.
+No migration, no dependency, no HTTP surface change. The operational log stopped being a filter and became an allowlist (D-184): a serializer builds a new object from named fields rather than removing fields from Fastify’s, and every deliberate call site passes a closed set of keys.
 
-Separating operational logs from Memory content, masking secrets, and keeping raw prompts and chain-of-thought out. Two specific paths were closed in P3-03 — Ajv naming an offending property, and a JSON parse error quoting the bytes it choked on (D-128) — and the general policy is what this task owes. P3-09 dropped filesystem detail rather than carrying it for diagnostics (D-172), so if operational diagnostics are wanted they need somewhere safe to go first. Nothing in `src/reliability/` logs at all today, which is a question this task inherits rather than an answer.
+Five leaks were measured against the previous configuration before anything changed — the raw URL, so a credential in a 404 path or a query string was written verbatim; the caller-chosen `Host`; the remote address and port; the driver’s message behind a failed health probe, naming a database host, a port and an account; and every `Error` handed to the logger, which Pino expands into message, stack, `cause` and every enumerable property. A `pg` unique or check violation carries the offending row in `detail`, which for this schema is Memory prose.
+
+Fastify’s lifecycle logging was kept and its serializers replaced (D-185): `{ method, route, operation }`, `{ statusCode }`, `{ failure }`. `disableRequestLogging` is deprecated in Fastify 5.11.3 and its replacement is a server option, which would have split the policy away from the one function every leak test runs as production configuration.
+
+Both the error sink and the error serializer are closed (D-186), and the mutations show why both: handing the error back with the serializer in place leaks nothing, removing the serializer with no call site passing an error leaks nothing, removing both leaks everything.
+
+Health reports a closed reason rather than the driver’s words (D-187) — the one leak a serializer cannot close, because it is an explicit call site handing a free string to a permitted field. `request_id` is the only identifier logged, and a caller cannot supply one (D-188). Startup failures before the logger exists now print one fixed sentence (D-189), proved by running the real entrypoint in a child process. Administrative CLI output stays what it was (D-190), and nothing new logs (D-191).
+
+Eighteen mutations fail between 1 and 7 tests each: the raw URL, the `Host`, the remote address, headers, the request body, the response body, the removed error serializer, the restored `{ err: error }`, both of those together, the driver message in health, the application refusal’s message, the sanitizer locator keeping a caller’s key, an auth reason carrying what was presented, `QueueStorageError` recovering its `cause`, a caller-chosen request id, the startup boundary printing its error, configuration read outside that boundary, and the removed not-found handler letting Fastify log the raw path itself.
+
+Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations, export schema "1", queue schema "2". 2542 tests across 83 files.
+
+### P3-11 — NEXT
+
+Security tests.
+
+Depends on P3-10, satisfied. See the private Phase 3 breakdown for the completion condition.
+
+Secret fixtures, owner crossing, delete residuals, retry duplication and malformed input, across the whole surface rather than a representative sample. P3-10 covered one entry point per log surface and built the apparatus — a twenty-marker fixture set and a field-inventory helper, both driven by the production `createLoggerOptions` — which P3-11 can reuse rather than rebuild. What it deliberately did not do is sweep all 27 operations, which is P3-11’s to do.
 
 ## BLOCKED
 

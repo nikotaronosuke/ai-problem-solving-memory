@@ -16,7 +16,13 @@ export {
   type DatabaseConfigInput,
 } from './config.js';
 export { closePool, createPool, type DatabasePool } from './pool.js';
-export { checkDatabaseConnection, type DatabaseHealth } from './health.js';
+export {
+  checkDatabaseConnection,
+  classifyDatabaseFailure,
+  DATABASE_HEALTH_REASONS,
+  type DatabaseHealth,
+  type DatabaseHealthReason,
+} from './health.js';
 export {
   ENUM_DOMAIN_BINDINGS,
   ENUM_DOMAIN_SCHEMA,

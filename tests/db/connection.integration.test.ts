@@ -33,7 +33,7 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
     const health = await checkDatabaseConnection(pool);
 
     expect(health.reachable).toBe(true);
-    expect(health.error).toBeUndefined();
+    expect(health.reason).toBeUndefined();
   });
 
   it('runs a query through the pool', async () => {
@@ -71,5 +71,73 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
       'usage_logs',
       'verifications',
     ]);
+  });
+});
+
+/**
+ * What a real failed probe reports (P3-10 §14).
+ *
+ * Against real drivers rather than stubs, because the thing being replaced was
+ * the driver's own message and a stub cannot produce one. Measured before the
+ * change, `HealthReport.detail` held `connect ECONNREFUSED 127.0.0.1:1`,
+ * `getaddrinfo ENOTFOUND <database host>` and
+ * `password authentication failed for user "postgres"` — a port, a host and an
+ * account, each of them on its way to an operational log.
+ */
+describe.skipIf(databaseUrl === undefined)('a database that will not answer', () => {
+  /** Everything in the report, as it would reach a log line. */
+  function asWritten(report: unknown): string {
+    return JSON.stringify(report);
+  }
+
+  it('reports a refused connection without the address it was refused at', async () => {
+    const unreachable = createPool({
+      poolConfig: {
+        connectionString: 'postgresql://memory:pw@127.0.0.1:1/memorydb',
+        connectionTimeoutMillis: 3_000,
+      },
+      host: '127.0.0.1',
+      isLocal: true,
+    });
+
+    const health = await checkDatabaseConnection(unreachable);
+
+    expect(health.reachable).toBe(false);
+    expect(health.reason).toBe('CONNECTION_FAILED');
+    expect(Object.keys(health).sort()).toEqual(['latencyMs', 'reachable', 'reason']);
+    expect(asWritten(health)).not.toContain('ECONNREFUSED');
+    expect(asWritten(health)).not.toContain('127.0.0.1');
+    expect(asWritten(health)).not.toContain(':1');
+
+    await closePool(unreachable);
+  });
+
+  it('reports a rejected account without naming it', async () => {
+    // A live server, reached and refused — which is the case that carries a
+    // user name in the driver's message.
+    const url = new URL(databaseUrl!);
+    url.username = 'p310_rejected_account';
+    url.password = 'p310-wrong-password';
+
+    const refused = createPool({
+      poolConfig: { connectionString: url.toString(), connectionTimeoutMillis: 3_000 },
+      host: url.hostname,
+      isLocal: true,
+    });
+
+    const health = await checkDatabaseConnection(refused);
+
+    expect(health.reachable).toBe(false);
+    // The server answered and refused, which is a different fact from nothing
+    // answering, and the classifier is expected to tell them apart. Accepting
+    // either would let the distinction rot without failing.
+    expect(health.reason).toBe('AUTHENTICATION_FAILED');
+    expect(Object.keys(health).sort()).toEqual(['latencyMs', 'reachable', 'reason']);
+    expect(asWritten(health)).not.toContain('p310_rejected_account');
+    expect(asWritten(health)).not.toContain('p310-wrong-password');
+    expect(asWritten(health)).not.toContain('password authentication failed');
+    expect(asWritten(health)).not.toContain(url.hostname);
+
+    await closePool(refused);
   });
 });

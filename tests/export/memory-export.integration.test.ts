@@ -874,22 +874,75 @@ export AWS_REGION=eu-west-1`,
       expect(response.statusCode).toBe(200);
       expect(response.body).not.toContain(secret);
     });
-  });
 
-  describe('nothing of the memory reaches the log', () => {
-    it('logs that a request was served and none of what it carried', async () => {
+    it('says only that a blocked export was blocked', async () => {
       const owner = await makeOwner();
       const seeded = await seed(owner);
+      const secret = `AKIA${randomUUID().replaceAll('-', '').toUpperCase().slice(0, 16)}`;
+      await writeHistoricalSecret(owner, seeded.problemId, `PASSWORD=${secret}`);
 
       const before = logLines.length;
-      const raw = await exportRaw(owner);
-      const written = logLines.slice(before).join('\n');
+      const response = await app.inject({ method: 'GET', url: '/v1/export', headers: auth(owner) });
+      expect(response.statusCode).toBe(409);
 
-      expect(raw).toContain(seeded.marker);
-      // The largest response in the system, and none of it in the log.
-      expect(written).not.toContain(seeded.marker);
-      expect(written).not.toContain('the symptoms as recorded');
-      expect(written).not.toContain('12345678901234567890');
+      const lines = logLines
+        .slice(before)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const blocked = lines.find((line) => line['event'] === 'EXPORT_BLOCKED');
+
+      // No locator, no category, no fragment of what was found. Where the
+      // credential sits is a map to it, and P3-06 refused to draw one in the
+      // response for the same reason.
+      expect(blocked).toBeDefined();
+      expect(Object.keys(blocked!).sort()).toEqual(
+        ['level', 'time', 'pid', 'hostname', 'reqId', 'event', 'msg'].sort(),
+      );
+      const written = lines.map((line) => JSON.stringify(line)).join('\n');
+      expect(written).not.toContain(secret);
+      expect(written).not.toContain('PASSWORD');
+      expect(written).not.toContain(seeded.problemId);
+      expect(written).not.toContain('symptoms');
+    });
+
+    describe('nothing of the memory reaches the log', () => {
+      it('logs that a request was served and none of what it carried', async () => {
+        const owner = await makeOwner();
+        const seeded = await seed(owner);
+
+        const before = logLines.length;
+        const raw = await exportRaw(owner);
+        const written = logLines.slice(before).join('\n');
+
+        expect(raw).toContain(seeded.marker);
+        // The largest response in the system, and none of it in the log.
+        expect(written).not.toContain(seeded.marker);
+        expect(written).not.toContain('the symptoms as recorded');
+        expect(written).not.toContain('12345678901234567890');
+      });
+
+      it('writes two lines for it, holding a route and a status', async () => {
+        const owner = await makeOwner();
+        await seed(owner);
+
+        const before = logLines.length;
+        await exportRaw(owner);
+        const lines = logLines
+          .slice(before)
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+        // Exporting an entire Memory is the request with the most to leak, and
+        // it is logged exactly like every other one. A field inventory rather
+        // than a marker sweep: this fails if a response body, a header or an
+        // error ever appears, whatever happens to be in it.
+        expect(lines).toHaveLength(2);
+        expect(lines[0]?.['req']).toEqual({
+          method: 'GET',
+          route: '/v1/export',
+          operation: 'exportOwnerMemory',
+        });
+        expect(lines[1]?.['res']).toEqual({ statusCode: 200 });
+        expect(Object.keys(lines[1]!)).not.toContain('err');
+      });
     });
   });
 
