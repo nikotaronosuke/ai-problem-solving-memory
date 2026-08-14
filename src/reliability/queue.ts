@@ -44,7 +44,26 @@ import {
   type QueuedWrite,
   type TerminalFailure,
 } from './item.js';
-import { createQueueStore, type QueueLimits, type QueueStore } from './store.js';
+import {
+  createQueueStore,
+  QueueCapacityError,
+  QueueStorageError,
+  type QueueLimits,
+  type QueueStore,
+} from './store.js';
+
+/**
+ * Whether a failure is the disk rather than a decision.
+ *
+ * `QueueCapacityError` is here as well as `QueueStorageError`, and the reason
+ * is easy to miss: the per-item size limit is checked on every write, not only
+ * on a new one. An item that grows past it while recording an attempt is a
+ * bookkeeping failure on a write that is already durable, not a write that was
+ * never taken.
+ */
+function isStorageFailure(error: unknown): boolean {
+  return error instanceof QueueStorageError || error instanceof QueueCapacityError;
+}
 import {
   createSecretDetectionPolicy,
   sanitizeValue,
@@ -54,6 +73,26 @@ import {
 /** What happened to one item during a drain. Closed, and free of detail. */
 export const DRAIN_OUTCOMES = [
   'DELIVERED',
+  /**
+   * The server took it; the file could not be removed afterwards.
+   *
+   * A separate answer from `DELIVERED` because the two leave the disk in
+   * different states, and the same answer as far as the Memory is concerned:
+   * the write is there. The item stays behind and will be delivered again,
+   * which the server refuses on the idempotency key — so the effect is still
+   * one row.
+   */
+  'DELIVERED_UNCLEARED',
+  /**
+   * Storage got in the way after the write was already durable.
+   *
+   * The attempt could not be read, or its result could not be written back.
+   * The item is on disk exactly as it was, so nothing is lost and nothing is
+   * decided; it is tried again later. Deliberately not a terminal state — an
+   * item whose terminal mark could not be written is not terminal, and
+   * pretending otherwise would stop something that was never stopped.
+   */
+  'QUEUE_UNAVAILABLE',
   'RESCHEDULED',
   'RETRY_EXHAUSTED',
   'PERMANENT_FAILURE',
@@ -170,6 +209,26 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
   });
 
   /**
+   * Records what an attempt decided, or says the disk would not take it.
+   *
+   * The item is already durable by the time any of this runs — that is what
+   * `enqueue` guarantees — so a failure here loses nothing. It leaves the item
+   * as it was, which is the honest description and also the safe one: it will
+   * be picked up again.
+   */
+  async function persist(item: QueueItem, outcome: DrainOutcome): Promise<DrainOutcome> {
+    try {
+      await store.write(item, options.limits, false);
+    } catch (error) {
+      if (isStorageFailure(error)) {
+        return 'QUEUE_UNAVAILABLE';
+      }
+      throw error;
+    }
+    return outcome;
+  }
+
+  /**
    * Whether an item may be attempted at all.
    *
    * The first of the two stages every attempt goes through, and the one a
@@ -217,7 +276,17 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
     const outcome: DeliveryOutcome = await delivery.deliver(item, context);
 
     if (outcome.kind === 'SUCCESS') {
-      await store.remove(item.queueItemId);
+      try {
+        await store.remove(item.queueItemId);
+      } catch (error) {
+        if (isStorageFailure(error)) {
+          // The server has the write. Failing to tidy up afterwards changes
+          // nothing about that, and reporting it as a failure to save would
+          // tell somebody their work was lost while it sits on the server.
+          return 'DELIVERED_UNCLEARED';
+        }
+        throw error;
+      }
       return 'DELIVERED';
     }
 
@@ -231,18 +300,12 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
     }
 
     if (decision === 'PERMANENT') {
-      await store.write(terminal(item, 'PERMANENT_RESPONSE'), options.limits, false);
-      return 'PERMANENT_FAILURE';
+      return persist(terminal(item, 'PERMANENT_RESPONSE'), 'PERMANENT_FAILURE');
     }
 
     const attemptCount = item.attemptCount + 1;
     if (attemptCount >= options.policy.maxAttempts) {
-      await store.write(
-        terminal({ ...item, attemptCount }, 'RETRY_EXHAUSTED'),
-        options.limits,
-        false,
-      );
-      return 'RETRY_EXHAUSTED';
+      return persist(terminal({ ...item, attemptCount }, 'RETRY_EXHAUSTED'), 'RETRY_EXHAUSTED');
     }
 
     const delay = nextDelayMs(
@@ -250,16 +313,14 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
       attemptCount,
       outcome.kind === 'HTTP_FAILURE' ? outcome.retryAfterMs : undefined,
     );
-    await store.write(
+    return persist(
       {
         ...item,
         attemptCount,
         nextAttemptAt: new Date(now.getTime() + delay).toISOString(),
       },
-      options.limits,
-      false,
+      'RESCHEDULED',
     );
-    return 'RESCHEDULED';
   }
 
   return {
@@ -297,7 +358,17 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
     },
 
     async attempt(queueItemId, now, context, delivery) {
-      const { items } = await store.read();
+      let items: readonly QueueItem[];
+      try {
+        ({ items } = await store.read());
+      } catch (error) {
+        if (isStorageFailure(error)) {
+          // The write was admitted before this ran, so it exists whether or
+          // not the queue can be read right now.
+          return 'QUEUE_UNAVAILABLE';
+        }
+        throw error;
+      }
       const item = items.find((candidate) => candidate.queueItemId === queueItemId);
       if (item === undefined) {
         // Delivered already, or removed by something else. Not an error: the

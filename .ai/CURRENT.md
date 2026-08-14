@@ -526,6 +526,10 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **`continueMainWork` is typed `true`.** There is no Memory failure that stops the work, so there is no branch — adding one means changing a type on purpose rather than writing a plausible `if`.
 
+**A filesystem failure means different things at different moments** (D-181). `enqueue` is the admission boundary: a failure there is a write that was never taken, and stays `UNSAVED`. After it, the queue decides by what happened — a file that could not be removed once the server had accepted the write is `SAVED`, and anything else is `PENDING` with the item untouched. A review found all of them reported as `UNSAVED`, which told somebody their work was lost while it sat on the server.
+
+**The kind of write and its importance are stated once each** (D-182). `submitEventWithFallback` and `submitVerificationWithFallback` take the caller's own input; the operation comes from which function was called. Passing either separately made an important Event describable as routine, which produces no notice at all — a mistake that type-checks and shows up only as something a person was never told.
+
 **Filesystem detail stops at the queue's edge** (D-172). Each `fs` call is wrapped individually into a `QueueStorageError` carrying one of three operation kinds and nothing else: no path, no `errno`, no syscall, no OS message, and no `cause`. A Node filesystem error's message *is* the absolute path it failed on. Per-syscall rather than per-method, so only the filesystem can produce one; `ENOENT` on read and remove stay the "not a failure" answers they were.
 
 **The Problem's importance is the only importance** (D-173). `submitEvent` and `submitVerification` take `problemImportant`, required and undefaulted — a default is wrong both ways, since `false` silences notices somebody asked for and `true` invents ones they did not. No importance was invented for Events, and none derived from event type: the spec gives importance to a Problem and to nothing else.

@@ -1010,6 +1010,32 @@ describe('the retry queue is not part of the server', () => {
     }
   });
 
+  it('states the write’s kind and importance once each', async () => {
+    const barrel = await readFile(join(SRC, 'reliability', 'index.ts'), 'utf8');
+    const source = await readFile(join(SRC, 'reliability', 'fallback.ts'), 'utf8');
+
+    // A review found the operation and the Problem's importance being given
+    // twice — once to the submission and once to the decision — which made it
+    // possible to submit an important Event and describe it as routine, or to
+    // submit an Event and describe it as a Verification. Neither fails at the
+    // time; both show up as a notice somebody never received.
+    //
+    // So the general helpers are private, and the public entry points take the
+    // caller's own input. The operation comes from which function was called.
+    expect(barrel).not.toContain('submitWithFallback');
+    expect(barrel).not.toContain('fallbackForSubmit');
+    expect(barrel).toContain('submitEventWithFallback');
+    expect(barrel).toContain('submitVerificationWithFallback');
+
+    for (const wrapper of ['submitEventWithFallback', 'submitVerificationWithFallback']) {
+      const signature =
+        new RegExp(`export function ${wrapper}\\(([\\s\\S]*?)\\): Promise`).exec(source)?.[1] ?? '';
+      expect(signature).not.toBe('');
+      expect(signature).not.toContain('operation');
+      expect(signature).not.toContain('problemImportant');
+    }
+  });
+
   it('answers the caller rather than running the caller’s work', async () => {
     const source = await readFile(join(SRC, 'reliability', 'fallback.ts'), 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');

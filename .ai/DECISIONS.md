@@ -1708,3 +1708,26 @@ The fallback returns a decision. It does not take the assistant's work as a call
 `withMemoryFallback(mainWork, memoryOperation)` is the shape that suggests itself, and it would put workflow orchestration inside a module whose entire responsibility is remembering how problems were solved — making a Memory library the thing that decides whether real work happens. The boundary document is explicit that Memory is a specialised module within a context layer, not the layer that runs things.
 
 So the proof that work continues is a caller-side sentinel: ask, read `continueMainWork`, carry on. That demonstrates the requirement without either side reaching into the other, and it is what an adapter will actually look like.
+
+## D-181 — A filesystem failure means different things at different moments (P3-09, after review)
+
+The fallback treated every `QueueStorageError` as a write that was never saved. Two of them are not.
+
+Measured before fixing. A delivery that succeeded, followed by a `unlink` that failed, produced `UNSAVED` and an `IMPORTANT_MEMORY_UNSAVED` notice — telling somebody their work was lost while it sat on the server. A delivery that failed, followed by an attempt count that could not be written back, produced the same answer — for a write that was already durable and would be retried.
+
+The same applies to `QueueCapacityError`, which is easy to miss: the per-item size limit is checked on *every* write, not only on a new one, so it can refuse an update to an item that is already on disk.
+
+The fix is to decide by the moment rather than by the exception. `enqueue` is the admission boundary: a failure there means nothing was taken, and those three errors still mean `UNSAVED`. After it, the queue converts storage failures into outcomes of its own, because by then what is true depends on what happened rather than on what broke:
+
+- delivery succeeded, the file could not be removed → `DELIVERED_UNCLEARED` → `SAVED`. The item stays behind and is delivered again later, which the server refuses on the idempotency key, so the effect is still one row.
+- anything else after admission → `QUEUE_UNAVAILABLE` → `PENDING`. The item is untouched and will be picked up again. Deliberately not terminal: an item whose terminal mark could not be written is not terminal, and recording it as one would stop something that was never stopped.
+
+No raw detail was added to make this possible. `QueueStorageError` still carries one of three operation kinds and nothing else — no path, no `errno`, no `cause` (D-172). The distinction is about where the call was made, which the queue already knows.
+
+## D-182 — The kind of write and its importance are stated once each (P3-09, after review)
+
+`submitWithFallback(submit, operation, problemImportant)` asked the caller to repeat two facts it had already given the coordinator. Both could disagree with it, and neither disagreement fails at the time.
+
+An important Event described as routine produces no notice — the person is simply never told about a write that was lost. An Event described as a Verification produces a notice naming the wrong operation and a `dedupKey` that will never match the one a later scan builds from the file, so the same failure is reported twice under different names.
+
+The public API is now `submitEventWithFallback` and `submitVerificationWithFallback`, each taking the coordinator and the caller's own input. The operation comes from which function was called; the importance comes from the input that the submission itself uses. The general helpers are private, so there is no signature that accepts either as a separate argument. An architecture test pins the barrel's exports and the two wrappers' parameter lists, because the whole class of mistake is one that type-checks.

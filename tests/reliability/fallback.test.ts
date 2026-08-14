@@ -17,7 +17,7 @@
  * in it, is what several of these assert.
  */
 
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,18 +31,20 @@ import {
   createReliableWriteCoordinator,
   createRetryQueue,
   fallbackForSearch,
-  fallbackForSubmit,
   MEMORY_NOTICE_KINDS,
   OwnerMismatchError,
   QueueCapacityError,
   QueueStorageError,
-  submitWithFallback,
+  submitEventWithFallback,
+  submitVerificationWithFallback,
   type DeliveryOutcome,
   type MemorySearchAttempt,
   type QueueItem,
   type ReliableWriteCoordinator,
   type RetryDelivery,
   type RetryQueue,
+  type SubmitOutcome,
+  type SubmitResult,
 } from '../../src/reliability/index.js';
 import { SanitizationRejectedError } from '../../src/sanitization/index.js';
 
@@ -63,6 +65,25 @@ function fake(outcome: DeliveryOutcome): RetryDelivery & { readonly seen: QueueI
       seen.push(item);
       return Promise.resolve(outcome);
     },
+  };
+}
+
+/** A coordinator that reports one submit outcome, or fails one way. */
+function coordinatorAnswering(
+  answer: SubmitOutcome | Error,
+): ReliableWriteCoordinator & { readonly seen: { problemImportant: boolean }[] } {
+  const seen: { problemImportant: boolean }[] = [];
+  const respond = (input: { problemImportant: boolean }): Promise<SubmitResult> => {
+    seen.push({ problemImportant: input.problemImportant });
+    return answer instanceof Error
+      ? Promise.reject(answer)
+      : Promise.resolve({ outcome: answer, clientEventId: randomUUID() as never });
+  };
+
+  return {
+    seen,
+    submitEvent: (input) => respond(input),
+    submitVerification: (input) => respond(input),
   };
 }
 
@@ -107,12 +128,14 @@ describe('carrying on when the Memory will not take a write', () => {
       ['QUEUED', 'PENDING'],
       ['AUTH_REQUIRED', 'PENDING'],
       ['PERMANENT_FAILURE', 'UNSAVED'],
-    ] as const)('turns %s into %s, and never stops the work', (outcome, memoryState) => {
+    ] as const)('turns %s into %s, and never stops the work', async (outcome, memoryState) => {
       for (const problemImportant of [true, false]) {
-        const decision = fallbackForSubmit(
-          { outcome, clientEventId: randomUUID() as never },
-          'appendEvent',
-          problemImportant,
+        const decision = await submitEventWithFallback(
+          coordinatorAnswering(outcome),
+          event(problemImportant),
+          AT,
+          { ownerId },
+          fake(SUCCESS),
         );
 
         expect(decision.continueMainWork).toBe(true);
@@ -124,11 +147,13 @@ describe('carrying on when the Memory will not take a write', () => {
     // needs replacing. None of the three is a Memory that could not be saved.
     it.each(['DELIVERED', 'QUEUED', 'AUTH_REQUIRED'] as const)(
       'says nothing about %s, even for an important Problem',
-      (outcome) => {
-        const decision = fallbackForSubmit(
-          { outcome, clientEventId: randomUUID() as never },
-          'appendEvent',
-          true,
+      async (outcome) => {
+        const decision = await submitEventWithFallback(
+          coordinatorAnswering(outcome),
+          event(true),
+          AT,
+          { ownerId },
+          fake(SUCCESS),
         );
 
         // A queued write is the failure design working: there is a durable
@@ -139,30 +164,74 @@ describe('carrying on when the Memory will not take a write', () => {
       },
     );
 
-    it('mentions an important write that will not be retried', () => {
-      const clientEventId = randomUUID();
-
-      const decision = fallbackForSubmit(
-        { outcome: 'PERMANENT_FAILURE', clientEventId: clientEventId as never },
-        'appendEvent',
-        true,
+    it('mentions an important write that will not be retried', async () => {
+      const decision = await submitEventWithFallback(
+        coordinatorAnswering('PERMANENT_FAILURE'),
+        event(true),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
       );
 
-      expect(decision.noticeIntent).toEqual({
-        kind: 'IMPORTANT_MEMORY_UNSAVED',
-        operation: 'appendEvent',
-        dedupKey: `appendEvent:${clientEventId}`,
-      });
+      expect(decision.noticeIntent?.kind).toBe('IMPORTANT_MEMORY_UNSAVED');
+      expect(decision.noticeIntent?.operation).toBe('appendEvent');
+      expect(decision.noticeIntent?.dedupKey?.startsWith('appendEvent:')).toBe(true);
     });
 
-    it('says nothing about a routine write that will not be retried', () => {
-      const decision = fallbackForSubmit(
-        { outcome: 'PERMANENT_FAILURE', clientEventId: randomUUID() as never },
-        'appendEvent',
-        false,
+    it('says nothing about a routine write that will not be retried', async () => {
+      const decision = await submitEventWithFallback(
+        coordinatorAnswering('PERMANENT_FAILURE'),
+        event(false),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
       );
 
       expect(decision.noticeIntent).toBeNull();
+    });
+
+    it('names the write by the call that made it, not by an argument', async () => {
+      // The importance and the kind of write are stated once each: importance
+      // by the caller, the operation by which function was used. There is no
+      // second place to say either, so no way for the two to disagree — a
+      // mismatch would silence a notice or attach the wrong handle to one, and
+      // neither shows up as a failure at the time.
+      const asEvent = await submitEventWithFallback(
+        coordinatorAnswering('PERMANENT_FAILURE'),
+        event(true),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
+      );
+      const asVerification = await submitVerificationWithFallback(
+        coordinatorAnswering('PERMANENT_FAILURE'),
+        verification(true),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
+      );
+
+      expect(asEvent.noticeIntent?.operation).toBe('appendEvent');
+      expect(asEvent.noticeIntent?.dedupKey?.startsWith('appendEvent:')).toBe(true);
+      expect(asVerification.noticeIntent?.operation).toBe('appendVerification');
+      expect(asVerification.noticeIntent?.dedupKey?.startsWith('appendVerification:')).toBe(true);
+    });
+
+    it('uses the importance it was given, once', async () => {
+      const answering = coordinatorAnswering('PERMANENT_FAILURE');
+
+      const decision = await submitEventWithFallback(
+        answering,
+        event(true),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
+      );
+
+      // The same value reached the submission and the decision. Passing it
+      // twice is what made an important Event describable as routine.
+      expect(answering.seen).toEqual([{ problemImportant: true }]);
+      expect(decision.noticeIntent).not.toBeNull();
     });
 
     it('offers exactly one kind of notice', () => {
@@ -183,11 +252,12 @@ describe('carrying on when the Memory will not take a write', () => {
       });
       const attempted = fake(SUCCESS);
 
-      const decision = await submitWithFallback(
-        () =>
-          createReliableWriteCoordinator(full).submitEvent(event(true), AT, { ownerId }, attempted),
-        'appendEvent',
-        true,
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(full),
+        event(true),
+        AT,
+        { ownerId },
+        attempted,
       );
 
       expect(decision.continueMainWork).toBe(true);
@@ -208,16 +278,12 @@ describe('carrying on when the Memory will not take a write', () => {
         policy: POLICY,
       });
 
-      const decision = await submitWithFallback(
-        () =>
-          createReliableWriteCoordinator(full).submitEvent(
-            event(false),
-            AT,
-            { ownerId },
-            fake(SUCCESS),
-          ),
-        'appendEvent',
-        false,
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(full),
+        event(false),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
       );
 
       expect(decision.continueMainWork).toBe(true);
@@ -228,25 +294,21 @@ describe('carrying on when the Memory will not take a write', () => {
     it('carries on when the payload holds a credential that cannot be removed', async () => {
       const attempted = fake(SUCCESS);
 
-      const decision = await submitWithFallback(
-        () =>
-          coordinator.submitEvent(
-            {
-              ownerId,
-              problemId,
-              problemImportant: true,
-              payload: {
-                eventType: 'DISCOVERY',
-                summary: 'a private key, whole',
-                reason: `-----BEGIN PRIVATE KEY-----\n${SECRET}`,
-              },
-            },
-            AT,
-            { ownerId },
-            attempted,
-          ),
-        'appendEvent',
-        true,
+      const decision = await submitEventWithFallback(
+        coordinator,
+        {
+          ownerId,
+          problemId,
+          problemImportant: true,
+          payload: {
+            eventType: 'DISCOVERY',
+            summary: 'a private key, whole',
+            reason: `-----BEGIN PRIVATE KEY-----\n${SECRET}`,
+          },
+        },
+        AT,
+        { ownerId },
+        attempted,
       );
 
       // The boundary did its job; from the caller's position the result is the
@@ -338,16 +400,12 @@ describe('carrying on when the Memory will not take a write', () => {
       });
       const attempted = fake(SUCCESS);
 
-      const decision = await submitWithFallback(
-        () =>
-          createReliableWriteCoordinator(broken).submitEvent(
-            event(true),
-            AT,
-            { ownerId },
-            attempted,
-          ),
-        'appendEvent',
-        true,
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(broken),
+        event(true),
+        AT,
+        { ownerId },
+        attempted,
       );
 
       expect(decision.continueMainWork).toBe(true);
@@ -367,16 +425,12 @@ describe('carrying on when the Memory will not take a write', () => {
         policy: POLICY,
       });
 
-      const decision = await submitWithFallback(
-        () =>
-          createReliableWriteCoordinator(broken).submitEvent(
-            event(false),
-            AT,
-            { ownerId },
-            fake(SUCCESS),
-          ),
-        'appendEvent',
-        false,
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(broken),
+        event(false),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
       );
 
       expect(decision.continueMainWork).toBe(true);
@@ -384,19 +438,139 @@ describe('carrying on when the Memory will not take a write', () => {
     });
   });
 
+  describe('a disk that fails after the write is already safe', () => {
+    // A review found the fallback calling every storage failure "unsaved".
+    // The filesystem can also fail *after* a write is durable, and after the
+    // server has accepted it, and those mean opposite things — one of them is
+    // a write that never happened and the other is a write that did.
+
+    /** Replaces a path with a directory, so the next operation on it fails. */
+    async function blockWith(name: string): Promise<void> {
+      await rm(join(directory, name), { force: true });
+      await mkdir(join(directory, name));
+    }
+
+    it('reports a write the server took, even when the file cannot be removed', async () => {
+      let delivered = false;
+      const delivering: RetryDelivery = {
+        async deliver(item) {
+          // The server has it. The queue file is about to become impossible to
+          // delete — a `unlink` on a directory fails everywhere.
+          await blockWith(`${item.queueItemId}.json`);
+          delivered = true;
+          return SUCCESS;
+        },
+      };
+
+      const decision = await submitEventWithFallback(
+        coordinator,
+        event(true),
+        AT,
+        { ownerId },
+        delivering,
+      );
+
+      expect(delivered).toBe(true);
+      // The Memory has the Event. Failing to tidy up afterwards is not a
+      // failure to save, and saying otherwise tells somebody their work was
+      // lost when it is sitting on the server.
+      expect(decision.continueMainWork).toBe(true);
+      expect(decision.memoryState).toBe('SAVED');
+      expect(decision.noticeIntent).toBeNull();
+    });
+
+    it('reports a queued write as pending when its bookkeeping cannot be saved', async () => {
+      const delivering: RetryDelivery = {
+        async deliver(item) {
+          // The delivery failed, and now the attempt count cannot be written
+          // back: `open` for writing a directory fails everywhere.
+          await mkdir(join(directory, `${item.queueItemId}.json.tmp`));
+          return DOWN;
+        },
+      };
+
+      const decision = await submitEventWithFallback(
+        coordinator,
+        event(true),
+        AT,
+        { ownerId },
+        delivering,
+      );
+
+      // There is a durable copy — the write was admitted before anything was
+      // attempted. Not being able to update its attempt count does not undo
+      // that, and "unsaved" would be a claim about a file that exists.
+      expect(decision.continueMainWork).toBe(true);
+      expect(decision.memoryState).toBe('PENDING');
+      expect(decision.noticeIntent).toBeNull();
+    });
+
+    it('reports a pending write when recording its outcome would exceed the size limit', async () => {
+      // The per-item size limit is checked on every write, not only on a new
+      // one, so it can refuse an update to an item that is already durable —
+      // a limit that has been lowered, or an item that has grown past it.
+      const submitted = await coordinator.submitEvent(event(true), AT, { ownerId }, fake(DOWN));
+      expect(submitted.outcome).toBe('QUEUED');
+
+      const [name] = await readdir(directory);
+      const exactSize = (await stat(join(directory, name ?? ''))).size;
+
+      // A queue over the same directory whose limit no longer admits the item
+      // it is holding.
+      const tight = createRetryQueue({
+        directory,
+        limits: { ...LIMITS, maxItemBytes: exactSize - 1 },
+        policy: POLICY,
+      });
+      const held = (await tight.list()).items[0];
+
+      const outcome = await tight.attempt(
+        held?.queueItemId ?? '',
+        new Date(held?.nextAttemptAt ?? AT),
+        { ownerId },
+        fake(DOWN),
+      );
+
+      // Not an admission failure: the write is on disk and untouched. Calling
+      // it unsaved would describe a file that exists, and marking it terminal
+      // would stop something that was never stopped.
+      expect(outcome).toBe('QUEUE_UNAVAILABLE');
+      const after = (await tight.list()).items[0];
+      expect(after?.terminalFailure).toBeNull();
+      expect(after?.attemptCount).toBe(held?.attemptCount);
+    });
+
+    it('still calls a write that never reached the disk unsaved', async () => {
+      // The other side of the same line, so the fix cannot be "call everything
+      // pending". Nothing was admitted here, so nothing exists to retry.
+      const blocked = join(directory, 'blocking-file');
+      await writeFile(blocked, 'not a directory', 'utf8');
+      const broken = createRetryQueue({ directory: blocked, limits: LIMITS, policy: POLICY });
+      const attempted = fake(SUCCESS);
+
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(broken),
+        event(true),
+        AT,
+        { ownerId },
+        attempted,
+      );
+
+      expect(decision.memoryState).toBe('UNSAVED');
+      expect(decision.noticeIntent?.kind).toBe('IMPORTANT_MEMORY_UNSAVED');
+      expect(attempted.seen).toHaveLength(0);
+    });
+  });
+
   describe('what it refuses to absorb', () => {
     it('lets an owner mismatch through', async () => {
       await expect(
-        submitWithFallback(
-          () =>
-            coordinator.submitEvent(
-              event(true),
-              AT,
-              { ownerId: randomUUID() as OwnerId },
-              fake(SUCCESS),
-            ),
-          'appendEvent',
-          true,
+        submitEventWithFallback(
+          coordinator,
+          event(true),
+          AT,
+          { ownerId: randomUUID() as OwnerId },
+          fake(SUCCESS),
         ),
       ).rejects.toBeInstanceOf(OwnerMismatchError);
     });
@@ -411,11 +585,7 @@ describe('carrying on when the Memory will not take a write', () => {
       };
 
       await expect(
-        submitWithFallback(
-          () => coordinator.submitEvent(event(true), AT, { ownerId }, broken),
-          'appendEvent',
-          true,
-        ),
+        submitEventWithFallback(coordinator, event(true), AT, { ownerId }, broken),
       ).rejects.toBeInstanceOf(TypeError);
     });
 
@@ -423,10 +593,12 @@ describe('carrying on when the Memory will not take a write', () => {
       class SomethingElse extends Error {}
 
       await expect(
-        submitWithFallback(
-          () => Promise.reject(new SomethingElse('not a Memory failure')),
-          'appendEvent',
-          true,
+        submitEventWithFallback(
+          coordinatorAnswering(new SomethingElse('not a Memory failure')),
+          event(true),
+          AT,
+          { ownerId },
+          fake(SUCCESS),
         ),
       ).rejects.toBeInstanceOf(SomethingElse);
     });
@@ -445,17 +617,26 @@ describe('carrying on when the Memory will not take a write', () => {
           kind: 'value',
         }),
       ]) {
-        const decision = await submitWithFallback(
-          () => Promise.reject(error),
-          'appendEvent',
-          false,
+        const decision = await submitEventWithFallback(
+          coordinatorAnswering(error),
+          event(false),
+          AT,
+          { ownerId },
+          fake(SUCCESS),
         );
         expect(decision.continueMainWork).toBe(true);
+        expect(decision.memoryState).toBe('UNSAVED');
       }
 
       for (const error of [new OwnerMismatchError(), new RangeError('nope'), new Error('nope')]) {
         await expect(
-          submitWithFallback(() => Promise.reject(error), 'appendEvent', false),
+          submitEventWithFallback(
+            coordinatorAnswering(error),
+            event(false),
+            AT,
+            { ownerId },
+            fake(SUCCESS),
+          ),
         ).rejects.toBe(error);
       }
     });
@@ -534,11 +715,15 @@ describe('carrying on when the Memory will not take a write', () => {
     });
 
     it('gives the same handle whether the failure is fresh or found later', async () => {
-      const attempted = fake(REFUSED);
-      const submitted = await coordinator.submitEvent(event(true), AT, { ownerId }, attempted);
-      expect(submitted.outcome).toBe('PERMANENT_FAILURE');
+      const immediate = await submitEventWithFallback(
+        coordinator,
+        event(true),
+        AT,
+        { ownerId },
+        fake(REFUSED),
+      );
+      expect(immediate.memoryState).toBe('UNSAVED');
 
-      const immediate = fallbackForSubmit(submitted, 'appendEvent', true);
       const found = await collectImportantUnsavedNotices(
         createRetryQueue({ directory, limits: LIMITS, policy: POLICY }),
       );
@@ -685,16 +870,12 @@ describe('carrying on when the Memory will not take a write', () => {
       // The shape an adapter will have: ask, then get on with it. The library
       // never receives the work as a callback — a Memory module that ran the
       // assistant's work would be deciding whether real work happens.
-      const decision = await submitWithFallback(
-        () =>
-          createReliableWriteCoordinator(full).submitEvent(
-            event(true),
-            AT,
-            { ownerId },
-            fake(SUCCESS),
-          ),
-        'appendEvent',
-        true,
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(full),
+        event(true),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
       );
 
       let mainWorkCompleted = false;

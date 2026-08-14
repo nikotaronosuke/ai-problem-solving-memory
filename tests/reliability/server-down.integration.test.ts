@@ -63,7 +63,7 @@ import {
   collectImportantUnsavedNotices,
   createReliableWriteCoordinator,
   createRetryQueue,
-  fallbackForSubmit,
+  submitEventWithFallback,
   type DeliveryContext,
   type DeliveryOutcome,
   type QueueItem,
@@ -315,7 +315,8 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
       // The production path, since P3-08: the coordinator makes the write
       // durable and then attempts it, so there is no hand-built item here and
       // no window between the failure and the record of it.
-      const result = await createReliableWriteCoordinator(queue).submitEvent(
+      const result = await submitEventWithFallback(
+        createReliableWriteCoordinator(queue),
         {
           ownerId: write.ownerId,
           problemId: write.problemId,
@@ -330,19 +331,19 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
       return result;
     })();
 
-    expect(submitted.outcome).toBe('QUEUED');
-    expect(mainWorkFinished).toBe(true);
-    const clientEventId = submitted.clientEventId;
-
     // The P3-09 half, against the same real outage rather than a second copy
     // of it: the caller is told to carry on, the write is pending rather than
     // lost, and the person is told nothing — a queued write is the failure
     // design working, and this Problem is marked important precisely so that
     // silence is a decision rather than an accident.
-    const decision = fallbackForSubmit(submitted, 'appendEvent', true);
-    expect(decision.continueMainWork).toBe(true);
-    expect(decision.memoryState).toBe('PENDING');
-    expect(decision.noticeIntent).toBeNull();
+    expect(submitted.continueMainWork).toBe(true);
+    expect(submitted.memoryState).toBe('PENDING');
+    expect(submitted.noticeIntent).toBeNull();
+    expect(mainWorkFinished).toBe(true);
+
+    // The key is read back off the queue, since the decision deliberately does
+    // not carry one.
+    const clientEventId = (await queue.list()).items[0]?.write.clientEventId ?? '';
 
     // And nothing on disk is reported as unsaved while it is still in hand.
     expect((await collectImportantUnsavedNotices(queue)).notices).toEqual([]);

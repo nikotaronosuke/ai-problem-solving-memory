@@ -42,10 +42,10 @@ export type { DeliveryContext, RetryDelivery } from './delivery.js';
 export {
   collectImportantUnsavedNotices,
   fallbackForSearch,
-  fallbackForSubmit,
   MEMORY_NOTICE_KINDS,
   MEMORY_WRITE_STATES,
-  submitWithFallback,
+  submitEventWithFallback,
+  submitVerificationWithFallback,
   type MemoryNoticeIntent,
   type MemoryNoticeKind,
   type MemorySearchAttempt,
