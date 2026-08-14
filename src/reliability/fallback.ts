@@ -95,8 +95,24 @@ export interface MemoryNoticeIntent {
   readonly dedupKey?: string;
 }
 
-/** Whether the Memory has the write, might still get it, or never will. */
-export const MEMORY_WRITE_STATES = ['SAVED', 'PENDING', 'UNSAVED'] as const;
+/**
+ * Whether the Memory has the write, might still get it, never will, or cannot
+ * be said either way.
+ *
+ * Four states, and keeping them apart is the point:
+ *
+ *   `SAVED`    the server took it
+ *   `PENDING`  there is a durable copy and a path by which it will be tried
+ *   `UNSAVED`  it will not be saved, and that is settled
+ *   `UNKNOWN`  none of the above can be shown
+ *
+ * `UNKNOWN` exists because collapsing it into any of the others is a claim
+ * about somebody's work that this module cannot support. It arises most often
+ * when another queue instance over the same directory delivered the write and
+ * removed the file — a good outcome — but it can also mean the file was
+ * removed by something else, and neither can be told from the other here.
+ */
+export const MEMORY_WRITE_STATES = ['SAVED', 'PENDING', 'UNSAVED', 'UNKNOWN'] as const;
 
 export type MemoryWriteState = (typeof MEMORY_WRITE_STATES)[number];
 
@@ -153,6 +169,11 @@ const unsaved = (
  * is fixed by replacing a credential, which is an adapter's business. An
  * adapter that concludes it cannot recover one may decide to escalate; this
  * module does not decide that for it, and does not know what a credential is.
+ *
+ * `UNSAVED` is reserved for the settled case. A write whose fate cannot be
+ * established is `UNKNOWN` and produces no notice: the spec asks that somebody
+ * be told when an important Memory could not be saved, and "we cannot tell"
+ * is not that.
  */
 function fallbackForSubmit(
   result: SubmitResult,
@@ -166,6 +187,16 @@ function fallbackForSubmit(
   }
   if (outcome === 'QUEUED' || outcome === 'AUTH_REQUIRED') {
     return { continueMainWork: true, memoryState: 'PENDING', noticeIntent: null };
+  }
+  if (outcome === 'UNKNOWN') {
+    // Silent, deliberately, and even for an important Problem. The only thing
+    // there is to tell somebody is that an important Memory *could not be
+    // saved*, and that is not what this says — the usual cause is another
+    // queue instance having saved it. A second notice kind meaning "something
+    // happened and we are not sure what" would be noise about the internals of
+    // a system nobody asked about, and would fire most often when everything
+    // had in fact worked.
+    return { continueMainWork: true, memoryState: 'UNKNOWN', noticeIntent: null };
   }
 
   // Permanently refused, or out of attempts. The item stays on disk, so the

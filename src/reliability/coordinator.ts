@@ -68,8 +68,31 @@ export const SUBMIT_OUTCOMES = [
   'QUEUED',
   /** The credential was refused. The item is on disk, with no attempt spent. */
   'AUTH_REQUIRED',
-  /** The server refused it, or the attempts ran out. The item is on disk. */
+  /**
+   * The server refused it, or the attempts ran out. The item is on disk.
+   *
+   * Confirmed: something said no, or the retries were spent. This is the
+   * answer a caller may act on as "it will not be saved", which since P3-09
+   * means it is also the answer somebody may be told about.
+   */
   'PERMANENT_FAILURE',
+  /**
+   * Nothing here can say what happened to it.
+   *
+   * The honest answer when the item cannot be found where it was left. The
+   * ordinary reason is another queue instance over the same directory having
+   * delivered it and removed the file — supported concurrency, and a write
+   * that is safely stored. But an item can also vanish because something else
+   * removed it, or because its file stopped being readable, and those are not
+   * the same thing at all.
+   *
+   * So none of the other four are claimed. It is not `DELIVERED`, because
+   * nothing here saw it arrive. It is not `PERMANENT_FAILURE`, because nothing
+   * refused it. It is not `QUEUED`, because there is no file to promise a
+   * retry from. Saying so plainly is better than picking whichever wrong
+   * answer is least often wrong.
+   */
+  'UNKNOWN',
 ] as const;
 
 export type SubmitOutcome = (typeof SUBMIT_OUTCOMES)[number];
@@ -238,6 +261,14 @@ export function createReliableWriteCoordinator(queue: RetryQueue): ReliableWrite
  * can now do: neither will be tried again, and both are still on disk for
  * P3-09 to report.
  *
+ * What may *not* join them is `NOT_FOUND`. It looked harmless while
+ * `PERMANENT_FAILURE` only promised "not delivered" — but P3-09 gave that
+ * answer teeth: it now means the write is confirmed lost, and an important one
+ * is reported to the person. An item that is missing has very often been
+ * delivered by another queue instance over the same directory, which P3-08
+ * supports on purpose; calling that a failure to save tells somebody their
+ * work is gone while it sits on the server.
+ *
  * The rest are answers a fresh submission should never see, and each is mapped
  * to whichever true statement is safest rather than to a guess:
  *
@@ -278,7 +309,18 @@ function toSubmitOutcome(outcome: AttemptOutcome): SubmitOutcome {
       return 'QUEUED';
     case 'AUTH_REQUIRED':
       return 'AUTH_REQUIRED';
-    default:
+    // Confirmed: something refused the write, or its attempts ran out, or it
+    // had already stopped before this call. The item is on disk either way.
+    case 'PERMANENT_FAILURE':
+    case 'RETRY_EXHAUSTED':
+    case 'TERMINAL':
       return 'PERMANENT_FAILURE';
+    // `NOT_FOUND` is an item that is not where it was left, and `OWNER_MISMATCH`
+    // cannot happen — the owner is checked before the write is enqueued.
+    // Anything unrecognised lands here too, which is the safe direction: an
+    // outcome this build does not know is not evidence of anything, and the
+    // answer that claims nothing is the only one that cannot be wrong.
+    default:
+      return 'UNKNOWN';
   }
 }
