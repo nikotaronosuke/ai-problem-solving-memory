@@ -245,6 +245,14 @@ export function createReliableWriteCoordinator(queue: RetryQueue): ReliableWrite
  * says. It cannot happen here — an item is due the moment it is enqueued — but
  * if it ever did, the write really is on disk and really will be retried.
  *
+ * `DELIVERED_UNCLEARED` and `QUEUE_UNAVAILABLE` are the filesystem failing
+ * after the write was already admitted, and they are mapped by what is true of
+ * the Memory rather than by what is true of the disk. The first means the
+ * server accepted the write and the file could not be removed; the second means
+ * nothing was decided and the item is untouched. Neither is a write that was
+ * never taken, and calling either one unsaved would tell somebody their work
+ * was lost on the strength of a failure that happened afterwards.
+ *
  * `TERMINAL` and `NOT_FOUND` both mean nothing further will happen to the item
  * through this path. `OWNER_MISMATCH` cannot occur, because the owner is
  * checked before the write is enqueued.
@@ -255,10 +263,18 @@ export function createReliableWriteCoordinator(queue: RetryQueue): ReliableWrite
  */
 function toSubmitOutcome(outcome: AttemptOutcome): SubmitOutcome {
   switch (outcome) {
+    // `DELIVERED_UNCLEARED` is the server having taken the write and only the
+    // tidying up having failed. What the caller needs to know is whether the
+    // Memory has it, and it does.
     case 'DELIVERED':
+    case 'DELIVERED_UNCLEARED':
       return 'DELIVERED';
+    // `QUEUE_UNAVAILABLE` is storage getting in the way after the write was
+    // already durable: the item is on disk and will be tried again, which is
+    // exactly what `QUEUED` means.
     case 'RESCHEDULED':
     case 'NOT_DUE':
+    case 'QUEUE_UNAVAILABLE':
       return 'QUEUED';
     case 'AUTH_REQUIRED':
       return 'AUTH_REQUIRED';
