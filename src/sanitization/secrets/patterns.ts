@@ -83,6 +83,31 @@ const AMBIGUOUS_NAMES: ReadonlySet<string> = new Set([
   'auth',
 ]);
 
+/**
+ * Compounds that stay strong when something is put in front of them.
+ *
+ * Real credential variables are almost never bare. They are named after who
+ * issues them — `AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `STRIPE_API_KEY` — so
+ * a vocabulary of exact names recognises the word and misses every use of it.
+ * A review found exactly that: `AWS_SECRET_ACCESS_KEY=…` read as ordinary
+ * prose, because `accesskey` and `secretkey` were exact names and
+ * `awssecretaccesskey` matches neither.
+ *
+ * A suffix belongs here when the compound has no ordinary reading, which is the
+ * same test the strong names themselves pass. That is a judgement per word
+ * rather than a rule, and three were deliberately left out:
+ *
+ * `accesskey` stays an exact name. On its own it is a credential often enough
+ * to keep, but "access key" has an ordinary reading — HTML gives every element
+ * an `accessKey`, and menus and shortcuts use the word the same way. As a
+ * suffix it would make `menuAccessKey` a credential. Nothing is lost for AWS:
+ * the secret half is `SECRET_ACCESS_KEY`, which is covered below, and the
+ * `ACCESS_KEY_ID` half is a public identifier rather than a secret.
+ *
+ * `pwd` stays an exact name because `OLDPWD` is a directory, not a password.
+ *
+ * `passwd` stays an exact name because names ending in it tend to be paths.
+ */
 const STRONG_SUFFIXES: readonly string[] = [
   'password',
   'passphrase',
@@ -94,6 +119,14 @@ const STRONG_SUFFIXES: readonly string[] = [
   'sessiontoken',
   'privatekey',
   'credential',
+  // Added after the review. `secret` alone is ambiguous — a field may hold a
+  // boolean saying something is secret — but "secret key" and "secret access
+  // key" name a credential and nothing else, in any prefixed form.
+  'secretkey',
+  'secretaccesskey',
+  // A security token is a credential wherever it appears under a name. Bare
+  // `token` stays ambiguous, so `AWS_SECURITY_TOKEN` was reading as one.
+  'securitytoken',
 ];
 
 const AMBIGUOUS_SUFFIXES: readonly string[] = ['token', 'secret'];

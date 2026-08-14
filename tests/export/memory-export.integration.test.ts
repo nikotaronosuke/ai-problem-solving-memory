@@ -696,6 +696,91 @@ describe.skipIf(databaseUrl === undefined)('exporting an owner’s memory', () =
       );
     }
 
+    /**
+     * The canonical AWS pair, in the three shapes a stored one takes.
+     *
+     * Added after a review found that `AWS_SECRET_ACCESS_KEY=…` was not
+     * recognised at all: `accesskey` and `secretkey` were exact names in the
+     * vocabulary rather than suffixes, so every prefixed form — which is every
+     * real one — read as ordinary prose. The export inspects with the same
+     * detector, so a Memory holding one was exported in full.
+     *
+     * These are integration tests rather than detector unit tests on purpose.
+     * The unit tests next to the detector say what it recognises; these say
+     * what leaves the process, which is the property that was actually broken.
+     */
+    it.each([
+      [
+        'an assignment in prose',
+        (secret: string) => `deploy failed until I set AWS_SECRET_ACCESS_KEY=${secret}`,
+      ],
+      ['a bare assignment', (secret: string) => `AWS_SECRET_ACCESS_KEY=${secret}`],
+      [
+        'an exported shell variable',
+        (secret: string) =>
+          `export AWS_SECRET_ACCESS_KEY=${secret}
+export AWS_REGION=eu-west-1`,
+      ],
+    ])('refuses an export carrying an AWS secret as %s', async (_shape, write) => {
+      const owner = await makeOwner();
+      const seeded = await seed(owner);
+      const secret = `wJalrXUtnFEMI/K7MDENG/${randomUUID().replaceAll('-', '').slice(0, 18)}`;
+      await writeHistoricalSecret(owner, seeded.problemId, write(secret));
+
+      const before = logLines.length;
+      const response = await app.inject({ method: 'GET', url: '/v1/export', headers: auth(owner) });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: { code: 'EXPORT_BLOCKED' } });
+      expect(response.body).not.toContain(secret);
+      expect(response.body).not.toContain('[REDACTED]');
+
+      const written = logLines.slice(before).join('\n');
+      expect(written).not.toContain(secret);
+      expect(written).not.toContain('AWS_SECRET_ACCESS_KEY');
+    });
+
+    it('refuses one written into an environment snapshot key', async () => {
+      const owner = await makeOwner();
+      const seeded = await seed(owner);
+      const secret = `wJalrXUtnFEMI/K7MDENG/${randomUUID().replaceAll('-', '').slice(0, 18)}`;
+
+      // Under its own name, as a snapshot of the conditions would record it.
+      await pool.query(
+        `update public.environments
+            set snapshot = snapshot || jsonb_build_object('AWS_SECRET_ACCESS_KEY', $3::text)
+          where owner_id = $1 and environment_id = $2`,
+        [owner.ownerId, seeded.environmentId, secret],
+      );
+
+      const response = await app.inject({ method: 'GET', url: '/v1/export', headers: auth(owner) });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.body).not.toContain(secret);
+    });
+
+    it('leaves the row exactly as it was after refusing an AWS secret', async () => {
+      const owner = await makeOwner();
+      const seeded = await seed(owner);
+      const secret = `wJalrXUtnFEMI/K7MDENG/${randomUUID().replaceAll('-', '').slice(0, 18)}`;
+      await writeHistoricalSecret(owner, seeded.problemId, `AWS_SECRET_ACCESS_KEY=${secret}`);
+
+      const snapshot = await pool.query(
+        `select to_jsonb(p) as row from public.problems p where owner_id = $1 and problem_id = $2`,
+        [owner.ownerId, seeded.problemId],
+      );
+
+      expect(
+        (await app.inject({ method: 'GET', url: '/v1/export', headers: auth(owner) })).statusCode,
+      ).toBe(409);
+
+      const after = await pool.query(
+        `select to_jsonb(p) as row from public.problems p where owner_id = $1 and problem_id = $2`,
+        [owner.ownerId, seeded.problemId],
+      );
+      expect(after.rows).toEqual(snapshot.rows);
+    });
+
     it('refuses the export rather than redacting it', async () => {
       const owner = await makeOwner();
       const seeded = await seed(owner);

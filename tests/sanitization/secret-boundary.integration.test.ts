@@ -74,6 +74,12 @@ const SECRET = {
   ].join('\n'),
   inProse:
     'We fixed it by setting refresh_token=fake-Kk1Jq5T-0123456789abcdef in the deploy environment.',
+  // Named after the provider that issues it, which is how a real credential
+  // variable is written and what a vocabulary of exact names missed until a
+  // review caught it.
+  awsAssignment: 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/fakeLl2Mv6Y0123456789',
+  awsValue: 'wJalrXUtnFEMI/K7MDENG/fakeMm3Wn7Z0123456789',
+  awsSecurityToken: 'AWS_SECURITY_TOKEN=fake-Nn4Rt8A-0123456789abcdef',
 } as const;
 
 /**
@@ -109,6 +115,9 @@ const MARKERS = [
   'Ii9Pu2N',
   'Jj0Sx8V',
   'Kk1Jq5T',
+  'Ll2Mv6Y',
+  'Mm3Wn7Z',
+  'Nn4Rt8A',
   'zorbak',
   'plimth',
   'vandrel',
@@ -513,6 +522,19 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
       [
         'a credential-named field several levels down',
         { snapshot: { a: { b: { c: { access_token: SECRET.fieldValue } } } } },
+      ],
+      // The provider-prefixed forms. `AWS_SECRET_ACCESS_KEY` read as ordinary
+      // prose until a review found it: `accesskey` and `secretkey` were exact
+      // names in the vocabulary, and `awssecretaccesskey` matches neither.
+      ['an AWS secret written as an assignment', { snapshot: { notes: SECRET.awsAssignment } }],
+      [
+        'an AWS secret under its own variable name',
+        { snapshot: { AWS_SECRET_ACCESS_KEY: SECRET.awsValue } },
+      ],
+      ['a session token from a provider', { snapshot: { notes: SECRET.awsSecurityToken } }],
+      [
+        'an AWS secret in an event summary',
+        { snapshot: { notes: `the build needs ${SECRET.awsAssignment} exported` } },
       ],
     ])('strips a credential from %s', async (_label, payload) => {
       const response = await app.inject({

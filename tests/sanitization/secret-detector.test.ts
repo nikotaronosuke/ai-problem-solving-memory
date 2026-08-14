@@ -312,6 +312,99 @@ describe('ordinary content is not a credential', () => {
   });
 });
 
+describe('a credential named after who issued it', () => {
+  // Real credential variables are almost never bare. They carry the name of
+  // the provider in front — `AWS_SECRET_ACCESS_KEY`, not `secret_access_key` —
+  // and a vocabulary of exact names recognises the word while missing every
+  // use of it. A review found that `AWS_SECRET_ACCESS_KEY=…` was read as
+  // ordinary prose, which meant an export carried it out in full.
+  const AWS_SECRET = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+
+  it.each([
+    ['an assignment on its own', `AWS_SECRET_ACCESS_KEY=${AWS_SECRET}`],
+    ['an assignment inside prose', `deploy failed until I set AWS_SECRET_ACCESS_KEY=${AWS_SECRET}`],
+    ['an exported shell variable', `export AWS_SECRET_ACCESS_KEY=${AWS_SECRET}`],
+    ['lowercase', `aws_secret_access_key=${AWS_SECRET}`],
+    ['hyphenated', `aws-secret-access-key=${AWS_SECRET}`],
+    ['a colon, as in yaml', `aws_secret_access_key: ${AWS_SECRET}`],
+  ])('reads %s as a confirmed credential', (_shape, text) => {
+    expect(detect(text)).toEqual({ category: 'CREDENTIAL_ASSIGNMENT', certainty: 'confirmed' });
+  });
+
+  it.each([
+    ['AWS_SECRET_ACCESS_KEY'],
+    ['aws_secret_access_key'],
+    ['MY_SECRET_KEY'],
+    ['hmac_secret_key'],
+    ['AWS_SECURITY_TOKEN'],
+    ['provider_security_token'],
+  ])('reads a value under %s as a confirmed credential', (field) => {
+    expect(detect(AWS_SECRET, under('snapshot', field))).toEqual({
+      category: 'CREDENTIAL_FIELD',
+      certainty: 'confirmed',
+    });
+  });
+
+  it('does not read a name written with spaces as an assignment', () => {
+    // Not part of this correction, and worth being explicit about rather than
+    // leaving as an apparent oversight. The assignment parser takes an
+    // identifier — letters, digits, underscore, dot, hyphen — because a rule
+    // that accepted spaces around `=` would read "the access key = whatever we
+    // agreed" out of ordinary prose. `AWS SECRET ACCESS KEY = …` is therefore
+    // not an assignment here, and the structured-field rule is what covers the
+    // same credential when it sits under a name.
+    expect(detect(`AWS SECRET ACCESS KEY = ${AWS_SECRET}`)).toBeNull();
+  });
+
+  it('refuses the name itself when it is written as a key', () => {
+    // A caller can put anything in a key, including the credential. The name
+    // is not the secret, so this is about the value under it — but the key
+    // path is inspected too, and the field rule is what sees it.
+    expect(detect(AWS_SECRET, under('snapshot', 'AWS_SECRET_ACCESS_KEY'))).not.toBeNull();
+  });
+
+  it.each([['REDACTED'], ['[REDACTED]'], ['rotated'], ['expired'], ['unknown']])(
+    'still reads AWS_SECRET_ACCESS_KEY=%s as not holding one',
+    (value) => {
+      // A stronger name does not change what the content rules say. Someone who
+      // already removed the value, or who is describing the state of a
+      // credential rather than holding one, is recording something worth
+      // keeping.
+      expect(detect(`AWS_SECRET_ACCESS_KEY=${value}`)).toBeNull();
+    },
+  );
+
+  it('leaves the public half of an AWS pair alone', () => {
+    // An access key id is the identifier, not the secret — AWS publishes it in
+    // its own examples. Treating it as a credential would refuse a perfectly
+    // ordinary note about which account something ran under.
+    expect(detect('AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE')).toBeNull();
+    expect(detect('AKIAIOSFODNN7EXAMPLE', under('snapshot', 'AWS_ACCESS_KEY_ID'))).toBeNull();
+  });
+
+  it.each([
+    ['menuAccessKey', 'S'],
+    ['buttonAccessKey', 'Enter'],
+    ['element_access_key', 'x'],
+    ['OLDPWD', '/home/someone/work'],
+    ['keyboardShortcut', 'ctrl+k'],
+  ])('does not turn ordinary %s into a credential', (field, value) => {
+    // The reason `accesskey` was not made a suffix. HTML gives every element
+    // an `accessKey`, menus and shortcuts use the word the same way, and
+    // `OLDPWD` is a directory. A rule that caught the AWS variable by
+    // suffixing `accesskey` or `pwd` would refuse all of these.
+    expect(detect(value, under('snapshot', field))).toBeNull();
+  });
+
+  it('does not widen what a bare ambiguous name means', () => {
+    // `secret` on its own still gets a say from the value, because a field
+    // called `secret` may hold a boolean. Only the compounds moved.
+    expect(detect('true', under('snapshot', 'secret'))).toBeNull();
+    expect(detect('false', under('snapshot', 'isSecret'))).toBeNull();
+    expect(detect('300', under('snapshot', 'sessionLength'))).toBeNull();
+  });
+});
+
 describe('the strongest evidence wins, whatever order the parsers run in', () => {
   // The regression from the third review. A value like `token=morning` under
   // `api_key` contains a suspected-looking inline assignment, and an earlier

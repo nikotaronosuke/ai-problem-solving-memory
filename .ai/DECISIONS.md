@@ -1391,3 +1391,33 @@ Export is likewise not a precondition for deleting (D-034 settled that) and dele
 A credential is how an owner reaches their Memory, not part of it. An artifact carrying one would move access along with the data: a backup file that is also a key, sitting wherever backups sit. Since P3-04 the two are separate boundaries with separate repositories, and this is the first operation that could have quietly rejoined them.
 
 Two architecture tests hold it: the statement that actually runs reads exactly the eight Memory tables, and neither the export module nor the export service may import credential code. The first inspects the generated SQL rather than the source that builds it, because the table names are interpolated and reading the file would check the generator's shape instead of what it produced.
+
+## D-150 — A credential is named after who issued it, so strong compounds work as suffixes (P3-06, after review)
+
+`AWS_SECRET_ACCESS_KEY=…` was not recognised as a credential. Not weakly recognised — invisible, in all three shapes: as an assignment in prose, as a bare assignment, and as a value under its own name in an environment snapshot. It was reproduced before anything was changed, with a real credential, a real database and real HTTP: `GET /v1/export` answered 200 and the secret was in the body.
+
+The cause is a shape in the vocabulary rather than a missing word. `accesskey`, `secretkey` and `securitytoken` were all present, as *exact* names. `normaliseName('AWS_SECRET_ACCESS_KEY')` is `awssecretaccesskey`, which equals none of them and ends with no strong suffix, so it fell through to `none` — the same answer an ordinary sentence gets.
+
+That is the general bug and the reason the fix is not one word. Real credential variables are almost never bare: they carry the issuer in front. A vocabulary of exact names recognises the term and misses every use of it, and this would have recurred for the next provider.
+
+So three compounds became suffixes, chosen one at a time against the test the strong names already state — no ordinary reading:
+
+- `secretaccesskey`, which is what actually catches the AWS variable. "Secret access key" names a credential and nothing else.
+- `secretkey`, so `MY_SECRET_KEY` and `HMAC_SECRET_KEY` are covered too. Bare `secret` stays ambiguous, because a field called `secret` may hold a boolean; the compound does not have that reading.
+- `securitytoken`, so `AWS_SECURITY_TOKEN` stops being merely ambiguous. Bare `token` stays ambiguous, as before.
+
+Three were deliberately left as exact names, and this is where the correction could have done harm:
+
+**`accesskey`** is the obvious one-line fix and is wrong. "Access key" has an ordinary reading: HTML gives every element an `accessKey`, and menus and shortcuts use the word the same way, so as a suffix it would make `menuAccessKey` a credential. Nothing is lost by leaving it out — the secret half of an AWS pair is `SECRET_ACCESS_KEY`, and the `ACCESS_KEY_ID` half is a public identifier that AWS prints in its own examples. Treating that as a credential would refuse an ordinary note about which account something ran under.
+
+**`pwd`** is left exact because `OLDPWD` is a directory.
+
+**`passwd`** is left exact because names ending in it tend to be paths.
+
+Regression tests hold both directions: the AWS forms are confirmed, and `menuAccessKey`, `buttonAccessKey`, `element_access_key`, `OLDPWD` and a bare `secret` holding `true` are not. Adding `accesskey` as a suffix fails two of them, which is the point of writing them down.
+
+Nothing else moved. `SecretFinding` is unchanged, no category was added, no value or offset appears in a finding, and the placeholder and status rules are untouched — `AWS_SECRET_ACCESS_KEY=REDACTED` and `=rotated` still read as somebody describing a credential rather than holding one.
+
+One limit is worth recording rather than leaving to be rediscovered: `AWS SECRET ACCESS KEY = …`, written with spaces, is still not an assignment. The parser takes an identifier, because a rule that accepted spaces around `=` would read "the access key = whatever we agreed" out of ordinary prose. The structured-field rule covers the same credential when it sits under a name.
+
+The mutation proof is what makes this more than a unit test. Removing the correction fails 21 tests, and five of them are the real export: `GET /v1/export` returns 200 with the raw secret in the body. Removing only `secretaccesskey` still fails those five. The detection gap and the egress it opened are pinned separately.
