@@ -86,15 +86,27 @@ export function createSecretDetector(): SecretDetector {
       if (assignments.some((found) => found.certainty === 'confirmed')) {
         return { category: 'CREDENTIAL_ASSIGNMENT', certainty: 'confirmed' };
       }
+
+      // The caller's own structure. A key naming a credential is a statement
+      // about the value under it, which is how `{"api_key": "abcdef"}` is
+      // recognised without the value having any recognisable form of its own.
+      //
+      // Consulted BEFORE any suspected verdict is allowed out, and that
+      // ordering is a review fix rather than a preference. The certainty is
+      // the strongest evidence available for this string at this site, not
+      // whichever parser happened to answer first: `{"api_key":
+      // "token=morning"}` contains a suspected-looking inline assignment, and
+      // an earlier version returned that suspicion immediately — never asking
+      // the structure, which says `api_key` and confirms it. A weaker verdict
+      // must not shadow a stronger one.
+      const structured = structuredFieldCertainty(text, at);
+      if (structured === 'confirmed') {
+        return { category: 'CREDENTIAL_FIELD', certainty: 'confirmed' };
+      }
+
       if (assignments.length > 0) {
         return { category: 'CREDENTIAL_ASSIGNMENT', certainty: 'suspected' };
       }
-
-      // Then the caller's own structure. A key naming a credential is a
-      // statement about the value under it, which is how
-      // `{"api_key": "abcdef"}` is recognised without the value having any
-      // recognisable form of its own.
-      const structured = structuredFieldCertainty(text, at);
       if (structured !== null) {
         return { category: 'CREDENTIAL_FIELD', certainty: structured };
       }
