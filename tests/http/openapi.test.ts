@@ -26,6 +26,7 @@ import {
   createEventService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createProblemService,
   createProblemStatusService,
@@ -67,6 +68,7 @@ function buildApp() {
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
     problemDeleteService: createProblemDeleteService(),
+    exportService: createExportService(),
     logger: false,
   });
 }
@@ -215,6 +217,8 @@ const EXPECTED_OPERATIONS: readonly (readonly [string, string, string])[] = [
 
   ['listChangeLogs', 'GET', '/v1/problems/{problem_id}/change-logs'],
 
+  ['exportOwnerMemory', 'GET', '/v1/export'],
+
   ['updateMemoryControl', 'PATCH', '/v1/problems/{problem_id}/memory-control'],
 
   ['closeProblem', 'POST', '/v1/problems/{problem_id}/close'],
@@ -233,9 +237,10 @@ describe('the document itself', () => {
 
     expect(info.title).toBe('AI Problem-Solving Memory API');
     expect(info.version).toMatch(/^\d+\.\d+\.\d+$/);
-    // Moved by P3-05: the surface gained an operation that destroys data,
-    // which is a change to the contract rather than to the package.
-    expect(info.version).toBe('0.3.0');
+    // Moved by P3-06: the surface gained the export. The export's own
+    // `schema_version` is a different number for a different question and does
+    // not move with this one.
+    expect(info.version).toBe('0.4.0');
   });
 
   it('says how a caller reaches it and what a 404 means', async () => {
@@ -272,8 +277,8 @@ describe('the operation inventory', () => {
     );
   });
 
-  it('counts twenty-six operations', async () => {
-    expect(operations(await documentPromise)).toHaveLength(26);
+  it('counts twenty-seven operations', async () => {
+    expect(operations(await documentPromise)).toHaveLength(27);
   });
 
   it('gives every operation a unique name', async () => {
@@ -360,6 +365,7 @@ describe('the contract endpoint', () => {
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: false,
     });
 
@@ -739,12 +745,17 @@ describe('the request contracts', () => {
 });
 
 describe('the error contract', () => {
-  it('documents the five machine codes and no others', async () => {
+  it('documents the six machine codes and no others', async () => {
     const schema = responseSchema(await documentPromise, 'getProblem', '404');
     const error = property(schema, 'error');
 
     expect(property(error, 'code')['enum']).toEqual([...ERROR_CODES]);
-    expect(ERROR_CODES).toHaveLength(5);
+    // Six since P3-06. `EXPORT_BLOCKED` was added rather than borrowed: a
+    // client reading `VERSION_CONFLICT` would go looking for a version to
+    // re-read, and `INVALID_REQUEST` would send it to inspect a request that
+    // was correct. The count is literal so a code cannot be added without
+    // somebody deciding a caller genuinely needs to act differently.
+    expect(ERROR_CODES).toHaveLength(6);
   });
 
   it('documents one envelope, identical everywhere it appears', async () => {

@@ -29,6 +29,7 @@ import {
   createHealthService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   createProblemService,
   createProblemStatusService,
@@ -153,6 +154,7 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
       problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
       logger: {
         level: 'trace',
         stream: {

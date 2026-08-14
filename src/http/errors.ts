@@ -21,6 +21,8 @@ export const ERROR_CODES = [
   'NOT_FOUND',
   /** The problem changed since the caller last read it. */
   'VERSION_CONFLICT',
+  /** The Memory holds a credential, so it cannot be exported. */
+  'EXPORT_BLOCKED',
   /** Something went wrong that the client cannot act on. */
   'INTERNAL_ERROR',
 ] as const;
@@ -52,6 +54,7 @@ const MESSAGES: Record<ErrorCode, string> = {
   UNAUTHENTICATED: 'No owner context could be established for this request.',
   NOT_FOUND: 'Not found.',
   VERSION_CONFLICT: 'Problem version conflict.',
+  EXPORT_BLOCKED: 'Export refused: this memory holds a credential.',
   INTERNAL_ERROR: 'Internal server error.',
 };
 
@@ -60,6 +63,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   UNAUTHENTICATED: 401,
   NOT_FOUND: 404,
   VERSION_CONFLICT: 409,
+  EXPORT_BLOCKED: 409,
   INTERNAL_ERROR: 500,
 };
 

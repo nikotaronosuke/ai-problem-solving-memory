@@ -121,6 +121,11 @@ const OPERATIONS: readonly { name: keyof MemoryRepository; inspected: boolean; a
     },
     { name: 'listRelations', inspected: false, args: [UUID] },
 
+    // A read with no arguments at all, so there is nothing to inspect even in
+    // principle. Classified rather than left to the fail-closed default, which
+    // would call it a write.
+    { name: 'exportOwnerMemory', inspected: false, args: [] },
+
     // Stores nothing, inspected all the same. See the note above the table.
     { name: 'deleteProblem', inspected: true, args: [UUID, 1] },
   ] as const;
@@ -198,11 +203,11 @@ describe('the operation inventory', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('classifies thirteen operations as inspected and eleven as reads', () => {
+  it('classifies thirteen operations as inspected and twelve as reads', () => {
     const inspected = OPERATIONS.filter((operation) => operation.inspected);
 
     expect(inspected).toHaveLength(13);
-    expect(OPERATIONS).toHaveLength(24);
+    expect(OPERATIONS).toHaveLength(25);
   });
 });
 

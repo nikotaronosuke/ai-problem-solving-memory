@@ -28,6 +28,11 @@ export type { CreateRelationInput, RelationRecord } from '../db/relations.js';
 export type { CreateUsageLogInput, UsageLogRecord } from '../db/usage-logs.js';
 export type { ChangeLogRecord, CreateChangeLogInput } from '../db/change-logs.js';
 export type { DeleteProblemOutcome } from '../db/problem-deletion.js';
+export { MEMORY_EXPORT_COLLECTIONS } from '../db/memory-export.js';
+export {
+  MEMORY_EXPORT_SCHEMA_VERSION,
+  type MemoryExportArtifact,
+} from '../domain/memory-export.js';
 
 // The failures a caller has to handle. Mapping stays in the database layer;
 // these are re-exported so the caller need not reach past this boundary.

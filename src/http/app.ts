@@ -31,6 +31,7 @@ import type {
   ChangeLogService,
   MemoryControlService,
   ProblemCloseService,
+  ExportService,
   ProblemDeleteService,
   EventService,
   HealthService,
@@ -44,6 +45,7 @@ import type {
 } from '../app/index.js';
 import {
   InvalidApplicationInputError,
+  ExportBlockedError,
   ProblemVersionConflictError,
   RequestContextUnavailableError,
   ResourceNotFoundError,
@@ -55,6 +57,7 @@ import { registerEventRoutes } from './event-routes.js';
 import { registerMemoryControlRoutes } from './memory-control-routes.js';
 import { registerOpenApi } from './openapi.js';
 import { registerProblemCloseRoutes } from './problem-close-routes.js';
+import { registerExportRoutes } from './export-routes.js';
 import { registerProblemDeleteRoutes } from './problem-delete-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
@@ -80,6 +83,7 @@ export interface MemoryHttpAppDependencies {
   readonly memoryControlService: MemoryControlService;
   readonly problemCloseService: ProblemCloseService;
   readonly problemDeleteService: ProblemDeleteService;
+  readonly exportService: ExportService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -215,6 +219,20 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
     // inspecting a driver error, so PostgreSQL stays out of the HTTP contract.
     if (error instanceof ResourceNotFoundError) {
       void reply.code(ERROR_STATUS.NOT_FOUND).send(buildErrorEnvelope('NOT_FOUND', request.id));
+      return;
+    }
+
+    if (error instanceof ExportBlockedError) {
+      // The request was right and the server is working; what is wrong is the
+      // state of the Memory. Its own code rather than a borrowed one: a client
+      // that read `VERSION_CONFLICT` here would look for a version to re-read,
+      // and `INVALID_REQUEST` would send it looking at a request that was
+      // fine. Nothing about what was found is logged or returned — where the
+      // credential sits is a map to it.
+      request.log.warn('export refused: the memory holds a credential');
+      void reply
+        .code(ERROR_STATUS.EXPORT_BLOCKED)
+        .send(buildErrorEnvelope('EXPORT_BLOCKED', request.id));
       return;
     }
 
@@ -389,6 +407,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       registerProjectRoutes(scope, dependencies.projectEnvironmentService);
       registerProblemRoutes(scope, dependencies.problemService);
       registerProblemDeleteRoutes(scope, dependencies.problemDeleteService);
+      registerExportRoutes(scope, dependencies.exportService);
       registerProblemStatusRoutes(scope, dependencies.problemStatusService);
       registerEventRoutes(scope, dependencies.eventService);
       registerVerificationRoutes(scope, dependencies.verificationService);

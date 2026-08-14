@@ -56,8 +56,10 @@ Every failure shares one envelope, and a client branches on `error.code`:
 { "error": { "code": "VERSION_CONFLICT", "message": "..." }, "request_id": "..." }
 ```
 
-The five codes are `INVALID_REQUEST` (400), `UNAUTHENTICATED` (401),
-`NOT_FOUND` (404), `VERSION_CONFLICT` (409) and `INTERNAL_ERROR` (500).
+The six codes are `INVALID_REQUEST` (400), `UNAUTHENTICATED` (401),
+`NOT_FOUND` (404), `VERSION_CONFLICT` (409), `EXPORT_BLOCKED` (409) and
+`INTERNAL_ERROR` (500). The two 409s share a status and differ in what a caller
+should do: re-read a problem, or remove a record that holds a credential.
 Messages are fixed text and carry no detail; the detail is in the server log,
 under `request_id`.
 
@@ -158,6 +160,116 @@ the client knew the field existed.
 Success is `204` with no body: the Problem is deliberately not echoed back,
 since a caller removing a mis-saved credential should not receive it one more
 time. Deleting again is `404`. A stale version is `409`.
+
+## Taking your memory with you
+
+`GET /v1/export` returns everything belonging to the credential's owner as one
+JSON document. No parameters: there is one thing to ask for here, and who is
+asking is settled by the credential.
+
+```json
+{
+  "schema_version": "1",
+  "exported_at": "2026-08-14T07:37:29.381865Z",
+  "source_owner_id": "…",
+  "projects": [],
+  "environments": [],
+  "problems": [],
+  "events": [],
+  "verifications": [],
+  "relations": [],
+  "usage_logs": [],
+  "change_logs": []
+}
+```
+
+Every collection key is always present. An owner with nothing recorded gets
+eight empty arrays rather than a shorter document, so a reader never has to
+tell "nothing recorded" from "this export does not cover problems". Within each
+collection, records are oldest first with the identifier breaking ties, so two
+exports of the same data are the same bytes and a diff between two exports
+means something.
+
+Each record carries every column its table has, minus `owner_id`. That includes
+fields the rest of the API treats as read-only — `version`, `client_event_id`,
+the change log's version pair — because an export is not a view of the API. It
+is the Memory, in a form you can keep.
+
+### `source_owner_id`, and why it is not on every record
+
+Ownership is a property of the export rather than of each record, so the owner
+appears once at the top. It says which Memory this artifact came from.
+
+It is **not a credential**: presenting it authenticates nothing. Nor is it
+something a restore has to honour. An owner id is issued by this server and
+means nothing anywhere else, so restoring into another install means giving the
+records to whichever owner that install issued a credential for. Every _other_
+identifier is preserved exactly — the relations, usage logs and change logs
+refer to them, and remapping would mean rebuilding the whole reference graph.
+
+### `schema_version` is not the API contract version
+
+It describes the format of the document and moves when that format changes.
+The API contract version describes the `/v1` surface and moves when a route
+does. Sharing one number would tell whoever holds an artifact that its format
+had changed because an unrelated endpoint was added, and the only safe response
+to that is to re-read the whole file.
+
+### What it does not contain
+
+Nothing about clients or credentials: no token, no lookup, no digest, no client
+identifier, no revocation state. A credential is how an owner reaches their
+memory, not part of it, and an artifact carrying one would move access along
+with the data — a backup file that is also a key.
+
+Nothing belonging to anyone else, and nothing derived. There is no retrieval
+artifact or search index yet; when there is, it is regenerated rather than
+carried, and this document is the source it would be regenerated from.
+
+### A memory holding a credential cannot be exported
+
+If the Memory still contains a confirmed credential — written before the
+sanitization boundary existed, or by a path that predates it — the response is
+`409 EXPORT_BLOCKED` and no document is produced.
+
+It is not redacted on the way out. An artifact that silently differs from the
+database is no longer a copy of it, and restoring one would replace real
+content with markers. It is not exported either: this is the largest single
+egress in the system, into a file whose travels nobody tracks. So it is
+refused, and the way forward is to delete the record that holds it — the same
+`DELETE /v1/problems/{problem_id}` described above — and export again.
+
+Only _confirmed_ credentials block. Something that merely looks suspicious —
+an ambiguous field name with an ordinary word under it — exports normally,
+because withholding somebody's own memory on a guess is a worse failure than
+the guess occasionally being right.
+
+The response says that something is there and nothing about where. Naming the
+record would put a map to the credential in a response that travels wherever
+the caller's logs do.
+
+### Exporting changes nothing
+
+Reading your own memory does not edit it. A refused export writes nothing back:
+no redaction, no invalidation, no flag, no deletion. Exporting is also not a
+precondition for deleting, and deleting does not export first.
+
+### Precision
+
+Timestamps carry microseconds, as PostgreSQL stores them —
+`2026-08-14T07:37:29.381865Z`, not `…29.381Z`. Environment snapshots and change
+log payloads are embedded as JSON with their numbers intact, including numbers
+larger than a JavaScript integer can hold.
+
+That is worth knowing if you process an artifact: `JSON.parse` followed by
+`JSON.stringify` is **not** a round trip for this document. It rounds the
+timestamps to milliseconds and large numbers to the nearest representable
+value. Tools that need to preserve the file exactly should treat it as text.
+
+One asymmetry follows from the same fact, in the other direction: a request
+body is parsed before the server sees it, so a number too large for JavaScript
+cannot be _stored_ through the API in the first place. The export preserves
+what the database holds.
 
 ## Not found means one thing
 

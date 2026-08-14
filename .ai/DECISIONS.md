@@ -1308,3 +1308,86 @@ The completion condition mentions search derivatives and caches. None exist: ele
 What was added instead is a test pinning the exact set of foreign keys pointing into `problems` — seven of them, since `relations` and `usage_logs` contribute two each. A new reference fails that test, and whoever adds it has to decide whether the delete path takes it too. Combined with RESTRICT, forgetting is not silent in either direction: the test fails first, and if it somehow does not, the delete does.
 
 The rule for later phases, recorded here and in the task list: **a phase that adds a retrieval artifact, a search index or any cache derived from Memory must extend the physical delete path and the Phase 3 delete end-to-end in the same change.** Anything living outside PostgreSQL — a vector store, an external search index — cannot be reached by a foreign key, so its delete integration has to be written deliberately when it is introduced.
+
+## D-142 — Export is the format, not a migration tool (P3-06)
+
+The task is a JSON export of one owner's Memory and a demonstration that the format can be read back into a clean environment. It is not an importer, and that is the specification's own line rather than a scoping convenience: §25.9 says import exists as an optional Phase 1 feature and is *excluded from the Core MVP completion condition*, and the Phase 3 Definition of Done says only that an owner's Memory can be exported.
+
+So there is no import endpoint, no bulk import command, no restore tool. The re-importability claim is proved instead — an artifact is handed back to PostgreSQL, unpacked with SQL, and the restored owner is exported again and compared. That proof deliberately uses raw SQL rather than a TypeScript helper. A helper written to make a test pass becomes the de-facto specification for the real importer, and it would be a specification nobody reviewed.
+
+The unit is the owner's whole Memory, matching the spec's `export owner Memory` and the `export_memory` operation, which takes no argument. Per-project and per-problem exports were not built: a project-scoped export would cut cross-project relations in half, and deciding what to do about that is a design question no requirement has asked yet.
+
+## D-143 — The export format has its own version (P3-06)
+
+`schema_version` is `"1"`, a constant of its own, and deliberately not the API contract version.
+
+The two move for different reasons, and the evidence is one task old: P3-05 added a route and took the contract from 0.2.0 to 0.3.0 while changing nothing about what an export contains. Had they shared a constant, everybody holding an artifact would have been told its format had changed, and the only safe response to that is to re-read the whole file.
+
+A plain counter rather than semver. Semver promises three axes of compatibility; a reader of an artifact has one question — can I read this — and answering it with three numbers invites the other two to be interpreted. A string rather than a number so a future `"2-draft"` needs no type change.
+
+## D-144 — The owner appears once, and a restore chooses its own (P3-06)
+
+Every record in the export omits `owner_id`. The envelope carries `source_owner_id`, once.
+
+The repetition argument is the small half: the same UUID on every row of a large file says nothing new. The real one is that it would read as though ownership were a property of each record, and it is not — it is a property of the export.
+
+`source_owner_id` says which Memory the artifact came from. It is not a credential, and it is not an instruction to a restore. An owner id is issued by this server and means nothing anywhere else; since P3-04 a request's owner comes from the credential presented, so a restore into another install gives the records to whoever that install issued a credential for. Requiring the UUID to match would make Memory portability depend on owner identity, which are different things.
+
+Nothing is lost by the omission. Restoring to the original owner just means writing `source_owner_id` into the column, which is what the proof does with a different owner.
+
+## D-145 — Every other identifier is preserved exactly (P3-06)
+
+Project, environment, problem, event, verification, relation, usage log and change log identifiers all survive, as does `client_event_id`.
+
+Remapping would mean rebuilding the whole reference graph: relations name two Problems, usage logs name two, change logs name one, and a restore would have to hold a translation table and rewrite each. That is importer work, and this task is not building an importer — a format that *needs* one to be interpreted is not portable, it is a private encoding.
+
+Preserving `client_event_id` matters separately. It is the idempotency key, so a restored Memory still refuses a resent Event instead of duplicating it; an export that dropped it would silently remove that property from every restored record.
+
+One consequence is worth naming because it looks like a bug: restoring an artifact into a database that still holds the rows it came from fails on the primary key. That is the right answer. A restore that made second copies under fresh identifiers would turn one Memory into two that drift apart, with nothing to say which was real.
+
+## D-146 — The document is built by one statement and never parsed on the way out (P3-06)
+
+The whole export is one SQL statement returning text, rather than eight queries and an object literal. Two properties come from that, and neither could be had cheaply otherwise.
+
+**Consistency.** An artifact has to describe one moment: every Problem it names with its events, every relation pointing at a Problem also in the file. Eight statements under the default isolation level take eight snapshots, so a delete landing between the third and fourth produces a document describing a state that never existed. A single statement sees one snapshot by definition — no transaction, no isolation level anybody has to remember to set, and no lock, so an export blocks no writer.
+
+**Precision.** Two kinds of value cannot survive JavaScript, and both are ordinary here:
+
+- `timestamptz` keeps microseconds; a JS `Date` keeps milliseconds. A real stored `created_at` measured during this work ended `.015452`, and anything passing through the driver's `Date` would have written `.015`.
+- `jsonb` keeps numbers as `numeric`. `JSON.parse` turns 12345678901234567890 into 12345678901234567000, and an environment snapshot is whatever the conditions were — a build number, a nanosecond clock.
+
+So PostgreSQL formats the timestamps to six digits, embeds the snapshots as JSON, and hands over the finished document as `text`. The route sends those bytes with the schema-compiled serialiser overridden, because `JSON.parse` followed by `JSON.stringify` is not a round trip for this document. The response schema still describes the shape for the contract; it no longer decides the bytes.
+
+That also keeps the largest body in the system away from `fast-json-stringify`, which reports a type mismatch by quoting the offending value — an error that would reach the unhandled branch and put Memory content in an operational log. The general question of what serialisation errors may say belongs to P3-10 and is untouched.
+
+One asymmetry follows and is not a defect: a request body is parsed before the server sees it, so a number too large for JavaScript cannot be *stored* through the API at all. The export is lossless with respect to what the database holds.
+
+## D-147 — A Memory holding a credential is not exported, and not redacted either (P3-06)
+
+Three options existed and two were rejected.
+
+Redacting on the way out breaks what the export is for. The completion condition is that the format can be restored into a clean environment; an artifact that silently differs from the database is not a copy of it, and restoring one would replace real content with markers.
+
+Exporting it anyway ignores what an export is. Every other operation answers one request about one record; this hands over everything, into a file that goes into a backup, a cloud drive, an email.
+
+So a confirmed credential refuses the export with `EXPORT_BLOCKED`. The owner can act on that: the delete path exists, and it was built one task earlier. Only *confirmed* blocks — the same certainty line P3-02 drew — because withholding somebody's own Memory on a suspicion is a worse failure than the suspicion occasionally being right.
+
+`EXPORT_BLOCKED` is its own code rather than a borrowed one. It shares 409 with a version conflict because both mean the request met a state it cannot proceed against, but a client reading `VERSION_CONFLICT` would go looking for a version to re-read, and `INVALID_REQUEST` would send it to inspect a request that was correct. The response carries nothing about what was found: naming the record would put a map to the credential in a message that travels wherever the response does.
+
+The policy lives in `src/sanitization/`, beside the write policy, not in the export service. What a credential looks like is that directory's to know — an architecture test pins that nothing outside it names the detector — and a service able to ask the detector directly could also decide to disagree with it.
+
+## D-148 — Exporting does not change the Memory (P3-06)
+
+Reading your own data must not edit it. Finding a credential during an export does not redact it in place, invalidate the Problem, suppress it, or delete it; the refusal leaves the database byte-identical, and a test asserts that against `to_jsonb` before and after.
+
+An architecture test pins that the export module contains no `insert`, `update` or `delete` at all. The temptation this guards against is specific: the moment the export discovers a credential is exactly the moment fixing it in place looks helpful, and a read operation that quietly rewrites the caller's memory is a worse surprise than the refusal.
+
+Export is likewise not a precondition for deleting (D-034 settled that) and deleting does not export first.
+
+## D-149 — Credentials are not part of a Memory, so they are not in its export (P3-06)
+
+`clients` and `client_credentials` are absent from the artifact — no token, no lookup, no digest, no client id, no label, no revocation state — and the export module does not read those tables at all.
+
+A credential is how an owner reaches their Memory, not part of it. An artifact carrying one would move access along with the data: a backup file that is also a key, sitting wherever backups sit. Since P3-04 the two are separate boundaries with separate repositories, and this is the first operation that could have quietly rejoined them.
+
+Two architecture tests hold it: the statement that actually runs reads exactly the eight Memory tables, and neither the export module nor the export service may import credential code. The first inspects the generated SQL rather than the source that builds it, because the table names are interpolated and reading the file would check the generator's shape instead of what it produced.

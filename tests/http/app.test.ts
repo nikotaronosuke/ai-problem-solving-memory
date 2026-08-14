@@ -24,6 +24,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createExportService,
   createProblemDeleteService,
   ProblemVersionConflictError,
   RequestContextUnavailableError,
@@ -77,6 +78,7 @@ function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> =
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
     problemDeleteService: createProblemDeleteService(),
+    exportService: createExportService(),
     logger: false,
     ...overrides,
   });
@@ -207,8 +209,12 @@ describe('error envelope', () => {
 
     // Codes are added when a caller genuinely needs to act differently.
     // VERSION_CONFLICT earns its place: the response tells a client to
-    // re-read and try again, which no other code says.
+    // re-read and try again, which no other code says. EXPORT_BLOCKED earns
+    // its own for the same test — it says the request was fine and the Memory
+    // has to change, which sends a caller to the delete path rather than back
+    // to their request or to a version.
     expect([...ERROR_CODES].sort()).toEqual([
+      'EXPORT_BLOCKED',
       'INTERNAL_ERROR',
       'INVALID_REQUEST',
       'NOT_FOUND',
@@ -216,6 +222,10 @@ describe('error envelope', () => {
       'VERSION_CONFLICT',
     ]);
     expect(ERROR_STATUS.VERSION_CONFLICT).toBe(409);
+    // The same status as a version conflict, and deliberately a different
+    // code: 409 says the request met a state it cannot proceed against, and
+    // which state that is, is what the code carries.
+    expect(ERROR_STATUS.EXPORT_BLOCKED).toBe(409);
 
     await app.close();
   });
