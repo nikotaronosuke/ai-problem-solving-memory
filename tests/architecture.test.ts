@@ -428,7 +428,31 @@ describe('sanitization boundary', () => {
       'sanitization/secrets/detector.ts',
       'sanitization/secrets/finding.ts',
       'sanitization/secrets/index.ts',
+      'sanitization/secrets/patterns.ts',
       'sanitization/secrets/policy.ts',
+      'sanitization/secrets/redactor.ts',
+    ]);
+  });
+
+  it('keeps credential offsets out of everything but the detector and redactor', async () => {
+    const modules = await readModules(SRC);
+
+    const users = modules
+      .filter((module) =>
+        /\bSpan\b|findJwtSpans|findAssignmentValues|replaceSpans/.test(module.source),
+      )
+      .map((module) => module.path)
+      .sort();
+
+    // A span is an offset and a length, which is information about a secret:
+    // how long it is, and where it appeared. `SecretFinding` is two closed
+    // identifiers precisely so nothing of that shape can travel into an error
+    // or a log, and this is what keeps spans from leaking past the two files
+    // that need them.
+    expect(users).toEqual([
+      'sanitization/secrets/detector.ts',
+      'sanitization/secrets/patterns.ts',
+      'sanitization/secrets/redactor.ts',
     ]);
   });
 
