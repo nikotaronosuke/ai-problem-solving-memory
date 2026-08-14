@@ -22,6 +22,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
   type CreateProblemCommand,
@@ -121,6 +122,7 @@ function buildApp(service: ProblemService, authenticated = true) {
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
+    problemDeleteService: createProblemDeleteService(),
     logger: false,
   });
 }
@@ -552,7 +554,9 @@ describe('PATCH /v1/problems/:problem_id', () => {
 
 describe('routes that do not exist', () => {
   it.each([
-    ['DELETE', `/v1/problems/${PROBLEM_ID}`],
+    // DELETE left this list in P3-05, which is the one method here that ever
+    // will: a Problem can now be removed, and its route lives in its own file
+    // because the operation is destructive and shares nothing with the rest.
     ['PUT', `/v1/problems/${PROBLEM_ID}`],
     ['POST', `/v1/problems`],
   ])('%s %s is not served', async (method, url) => {

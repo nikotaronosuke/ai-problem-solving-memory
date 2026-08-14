@@ -29,6 +29,7 @@ import {
   createHealthService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createProblemService,
   createProblemStatusService,
   createProjectEnvironmentService,
@@ -121,6 +122,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
       logger: false,
     });
     appsCreated.push(app);
@@ -388,6 +390,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
         changeLogService: createChangeLogService(),
         memoryControlService: createMemoryControlService(),
         problemCloseService: createProblemCloseService(),
+        problemDeleteService: createProblemDeleteService(),
         logger: {
           level: 'trace',
           stream: {

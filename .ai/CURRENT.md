@@ -412,17 +412,49 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Two findings came from the mutation proofs, and both fixed a test.** Storing the secret's own bytes in place of a digest passed every credential test, because `to_jsonb` renders `bytea` as hex and no search for a base64url secret matches it; the test now decodes the column and compares against a digest computed from the standard library rather than from the function under test. And removing the `Authorization` redaction path changed nothing observable, because Fastify's `req` serializer never writes headers — dormant defence for the moment one does, pinned structurally, with the reason written down instead of a behavioural test that would pass either way.
 
+## What exists now — Physical delete (P3-05)
+
+| Method | Path |
+| --- | --- |
+| DELETE | `/v1/problems/{problem_id}?expected_version=N` |
+
+**One unit: a Problem and everything referring to it.** The Problem, its events, verifications and change log, plus every relation and usage log naming it — including the ones pointing *in* from a Problem that survives (D-136). Not a search for a string: an operation that hunted for a secret would have to accept the secret as a parameter, which means sending a credential in order to remove one.
+
+**Physical, not soft.** No `deleted_at`, no `DELETED` status, no tombstone, and no record that the Problem existed (D-137). A soft delete would need every read, list and append to remember to exclude the row, and the one that forgot would serve the content the delete existed to remove. With the row gone, every path already answers 404 — the same 404 as a Problem that never existed and one belonging to somebody else.
+
+**Six statements, one transaction, leaves first.** `change_logs`, `events`, `verifications`, `usage_logs` (both foreign keys in one statement), `relations` (both ends in one statement), then `problems` with the version predicate. Every statement names the owner. The order lives in `src/db/problem-deletion.ts` and nowhere else, because it is a fact about the foreign key graph rather than a product decision.
+
+**RESTRICT is the guard.** No cascade was added and none will be (D-139). If a later table references `problems` and is not added to the delete path, the final statement fails on the foreign key and the transaction rolls back: the omission is loud rather than silent. That failure is deliberately *not* reported as a version conflict — it is a programming mistake, and dressing it as a stale version would hide the bug behind a plausible retry.
+
+**`expected_version` is required, and guards less than it looks.** It catches a change to the Problem — an edit, a transition, a conclusion. It does not catch an appended Event or Verification, because appending does not move the Problem's version (D-140). A delete decided at version 5 can remove an event that arrived afterwards. Stated plainly rather than implied, because requiring the token and describing it as protecting the aggregate would claim a guarantee the code does not give.
+
+**The row lock does less than it appears to.** Correctness comes from the version predicate on the last statement, which holds with or without a lock. The lock adds determinism — a concurrent writer waits rather than causing five statements' work to roll back. A concurrent append is blocked either way, since deleting the Problem locks its row moments later, which is why removing the lock fails no behavioural test and is pinned by an architecture test.
+
+**Nothing else in the request.** No `changed_by` (the history it would go into is being deleted), no owner or client id (they come from the credential), no confirmation flag. Any client that can send the delete can send `confirm: true`, so the flag would record that the client knew about the flag. Explicit user intent is the caller's responsibility — an adapter or the Phase 8 UI — and faking it at the server would make a real requirement look satisfied.
+
+**204, with nothing in the body.** The deleted Problem is not echoed back: a caller removing a mis-saved credential should not receive it one more time in a response something may log. Deleting again is 404; a stale version is 409; another owner's Problem is 404 at every version.
+
+**Project and Environment survive.** Deliberately, even when the deleted Problem was the last one using them (D-136). An Environment is a moment in time other Problems may name; a Project outlives the problems found in it. Clients and credentials are a different boundary entirely and no foreign key connects them to a Problem.
+
+**Historical secrets, proved gone.** The acceptance test writes a credential marker into every free-text surface with raw SQL — simulating data written before the P3-02 boundary existed, since the boundary would refuse it today — then deletes through real HTTP and sweeps every Memory table with `to_jsonb`. The marker is asserted present first, so the sweep cannot pass by finding nothing. Another owner holding the same string keeps it, which is what makes this a Problem delete rather than a purge.
+
+**A gap the mutations found.** Replacing `runInTransaction` with a direct repository call passed every integration test: in the successful case there is no observable difference, and the tests only looked at successful deletes. A service-level test now pins that the delete runs inside a transaction, and it is the only thing that fails on that mutation.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
-- No delete anywhere, no Environment update, no Relation or UsageLog update or delete, no MCP, no search, embedding or retrieval, no AI adapter, no UI
+- No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no search, embedding or retrieval, no AI adapter, no UI
 - No PII detector, no raw-conversation or raw-log classifier, no large-code threshold. P3-02 and P3-03 are about secrets only; an email address is kept, and that is a statement about secrets rather than a ruling on PII
 - No bare-secret detection. A credential with no context at all — pasted alone into a summary, nothing naming it — is not found, because the only way to find it would be to guess from shape (D-122)
 - No key redaction. A credential written into an object *key* is refused, not rewritten (D-126)
 - No general logging policy. Two specific pre-sanitization paths were closed in P3-03; the rest of P3-10 is untouched
+- No orphan cleanup. A Project or Environment left with no Problems stays; that is the rule, not a gap (D-136)
+- No record that a deletion happened. No tombstone, no delete audit table, and no `changed_by` on the request (D-137)
+- No server-side confirmation of user intent. A flag any client can send proves nothing; the responsibility sits with the adapter or UI (D-140)
+- No retrieval artifact, search index or derived cache — so nothing derived to delete. A phase that adds one must extend the delete path in the same change (D-141)
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
 - No client SDK or codegen. The document declares the one scheme the server implements and nothing more
@@ -432,15 +464,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-05.
+P3-06 — Export.
 
 Not started. See the private Phase 3 breakdown for the task.
 
 Notes for whoever picks this up:
-- P3-04 left `clientId` on the request context, consulted by nothing. If a task needs per-client behaviour, the decision has a place to be made without rethreading authentication
-- The credential store is deliberately outside the sanitization boundary and outside `MemoryRepository`; an architecture test pins both, and merging them is not a refactor
-- `tests/support/request-context.ts` is a test double with no production equivalent, and is documented as such. Anything that makes it look like a supported way to build a context is a mistake
-- The OpenAPI contract is at 0.2.0 and gains a version when the `/v1` surface changes shape, not when the package does
+- Export covers the same eight Memory tables the delete path knows about, with relationships preserved. `src/db/problem-deletion.ts` is the existing statement of what belongs to a Problem
+- P3-05 deliberately kept no record of a deletion. An export taken before a delete is the only copy that will exist afterwards, and D-034 already settled that export is not a precondition for deleting
+- The credential tables are not Memory and are not part of an export of one owner's memory
+- Contract version is 0.3.0 and moves when the `/v1` surface changes shape, not when the package does
 
 ## Core MVP milestone
 

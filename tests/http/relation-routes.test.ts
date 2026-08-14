@@ -21,6 +21,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createEventService,
   createProblemService,
   createProblemStatusService,
@@ -111,6 +112,7 @@ function buildApp(service: RelationService, authenticated = true) {
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
+    problemDeleteService: createProblemDeleteService(),
     logger: false,
   });
 }

@@ -26,6 +26,7 @@ import {
   createEventService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createProblemService,
   createProblemStatusService,
   createProjectEnvironmentService,
@@ -65,6 +66,7 @@ function buildApp() {
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
+    problemDeleteService: createProblemDeleteService(),
     logger: false,
   });
 }
@@ -195,6 +197,7 @@ const EXPECTED_OPERATIONS: readonly (readonly [string, string, string])[] = [
   ['listProblems', 'GET', '/v1/projects/{project_id}/problems'],
   ['getProblem', 'GET', '/v1/problems/{problem_id}'],
   ['updateProblem', 'PATCH', '/v1/problems/{problem_id}'],
+  ['deleteProblem', 'DELETE', '/v1/problems/{problem_id}'],
 
   ['appendEvent', 'POST', '/v1/problems/{problem_id}/events'],
   ['listEvents', 'GET', '/v1/problems/{problem_id}/events'],
@@ -230,9 +233,9 @@ describe('the document itself', () => {
 
     expect(info.title).toBe('AI Problem-Solving Memory API');
     expect(info.version).toMatch(/^\d+\.\d+\.\d+$/);
-    // Moved by P3-04: `/v1` now requires a credential, which is a change to
-    // the surface rather than to the package.
-    expect(info.version).toBe('0.2.0');
+    // Moved by P3-05: the surface gained an operation that destroys data,
+    // which is a change to the contract rather than to the package.
+    expect(info.version).toBe('0.3.0');
   });
 
   it('says how a caller reaches it and what a 404 means', async () => {
@@ -269,8 +272,8 @@ describe('the operation inventory', () => {
     );
   });
 
-  it('counts twenty-five operations', async () => {
-    expect(operations(await documentPromise)).toHaveLength(25);
+  it('counts twenty-six operations', async () => {
+    expect(operations(await documentPromise)).toHaveLength(26);
   });
 
   it('gives every operation a unique name', async () => {
@@ -356,6 +359,7 @@ describe('the contract endpoint', () => {
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
       logger: false,
     });
 

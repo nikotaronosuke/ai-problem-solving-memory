@@ -27,6 +27,7 @@ export type { AppendVerificationInput, VerificationRecord } from '../db/verifica
 export type { CreateRelationInput, RelationRecord } from '../db/relations.js';
 export type { CreateUsageLogInput, UsageLogRecord } from '../db/usage-logs.js';
 export type { ChangeLogRecord, CreateChangeLogInput } from '../db/change-logs.js';
+export type { DeleteProblemOutcome } from '../db/problem-deletion.js';
 
 // The failures a caller has to handle. Mapping stays in the database layer;
 // these are re-exported so the caller need not reach past this boundary.
