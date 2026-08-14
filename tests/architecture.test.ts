@@ -952,6 +952,19 @@ describe('the retry queue is not part of the server', () => {
     expect(code).not.toContain('drain');
   });
 
+  it('decides whether an item may be attempted in one place', async () => {
+    const source = await readFile(join(SRC, 'reliability', 'queue.ts'), 'utf8');
+
+    // Two stages, both shared: whether an item may be attempted, and then the
+    // attempt. A review found `attempt` skipping the first, which let a caller
+    // holding an item id resend a write the server had permanently refused, or
+    // ignore a backoff that was still running. One definition, used by both
+    // entry points, is what makes "stopped means stopped" true however an item
+    // is reached.
+    expect([...source.matchAll(/function eligibility\(/g)]).toHaveLength(1);
+    expect([...source.matchAll(/eligibility\(item, now\)/g)].length).toBeGreaterThanOrEqual(2);
+  });
+
   it('decides an outcome in one place, shared by the first attempt and a retry', async () => {
     const source = await readFile(join(SRC, 'reliability', 'queue.ts'), 'utf8');
     const coordinator = await readFile(join(SRC, 'reliability', 'coordinator.ts'), 'utf8');
@@ -963,9 +976,15 @@ describe('the retry queue is not part of the server', () => {
     // which is the property the whole queue rests on.
     expect([...source.matchAll(/classifyDeliveryOutcome\(/g)]).toHaveLength(1);
     expect([...source.matchAll(/processItem\(/g)].length).toBeGreaterThanOrEqual(3);
+
+    // The coordinator reads the answer and translates it. It does not classify
+    // a failure, compute a delay, or decide that an item has stopped — it names
+    // those outcomes in its mapping, which is a different thing from producing
+    // them.
     expect(coordinator).not.toContain('classifyDeliveryOutcome');
     expect(coordinator).not.toContain('nextDelayMs');
-    expect(coordinator).not.toContain('TERMINAL');
+    expect(coordinator).not.toContain('terminalFailure');
+    expect(coordinator).not.toContain('attemptCount');
   });
 
   it('inspects a write before it reaches the disk, using the boundary’s own policy', async () => {

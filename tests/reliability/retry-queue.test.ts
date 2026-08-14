@@ -314,6 +314,129 @@ describe('a queue of writes that have not reached the server', () => {
     });
   });
 
+  describe('attempting one item by id', () => {
+    // `attempt` is a public method, so it has to hold the same guarantees a
+    // sweep does. A review found it did not: it went straight to delivery,
+    // which meant a caller holding a queue item id could resend a write the
+    // server had permanently refused, or ignore a backoff that was still
+    // running. Whether the coordinator happens to call it correctly is beside
+    // the point — an exported method is used by whoever has it.
+
+    it('delivers a fresh item, which is what a first attempt is', async () => {
+      const item = await queue.enqueue(eventWrite(), AT);
+      const delivery = scripted(SUCCESS);
+
+      const outcome = await queue.attempt(item.queueItemId, AT, context, delivery);
+
+      expect(outcome).toBe('DELIVERED');
+      expect(delivery.seen).toHaveLength(1);
+    });
+
+    it('will not attempt an item whose next try is still in the future', async () => {
+      await queue.enqueue(eventWrite(), AT);
+      await queue.drain(AT, context, scripted(DOWN));
+      const waiting = (await queue.list()).items[0];
+      expect(waiting?.nextAttemptAt).toBe(later(POLICY.baseDelayMs).toISOString());
+
+      const delivery = scripted(SUCCESS);
+      const outcome = await queue.attempt(
+        waiting?.queueItemId ?? '',
+        later(POLICY.baseDelayMs - 1),
+        context,
+        delivery,
+      );
+
+      // Not sent. A backoff that only applies when the sweep happens to be
+      // what runs is not a backoff.
+      expect(delivery.seen).toHaveLength(0);
+      expect(outcome).toBe('NOT_DUE');
+
+      const unchanged = (await queue.list()).items[0];
+      expect(unchanged?.attemptCount).toBe(waiting?.attemptCount);
+      expect(unchanged?.nextAttemptAt).toBe(waiting?.nextAttemptAt);
+    });
+
+    it('attempts the same item once it is due', async () => {
+      await queue.enqueue(eventWrite(), AT);
+      await queue.drain(AT, context, scripted(DOWN));
+      const waiting = (await queue.list()).items[0];
+
+      const delivery = scripted(SUCCESS);
+      const outcome = await queue.attempt(
+        waiting?.queueItemId ?? '',
+        later(POLICY.baseDelayMs),
+        context,
+        delivery,
+      );
+
+      expect(outcome).toBe('DELIVERED');
+      expect(delivery.seen).toHaveLength(1);
+    });
+
+    it('will not attempt an item that ran out of attempts', async () => {
+      await queue.enqueue(eventWrite(), AT);
+      let at = AT;
+      for (let attempt = 0; attempt < POLICY.maxAttempts; attempt += 1) {
+        await queue.drain(at, context, scripted(DOWN));
+        at = new Date((await queue.list()).items[0]?.nextAttemptAt ?? at);
+      }
+      const exhausted = (await queue.list()).items[0];
+      expect(exhausted?.terminalFailure).toBe('RETRY_EXHAUSTED');
+
+      const delivery = scripted(SUCCESS);
+      const outcome = await queue.attempt(
+        exhausted?.queueItemId ?? '',
+        later(1_000_000_000),
+        context,
+        delivery,
+      );
+
+      // However far into the future the caller asks. Stopping means stopping.
+      expect(delivery.seen).toHaveLength(0);
+      expect(outcome).toBe('TERMINAL');
+      expect((await queue.list()).items[0]).toEqual(exhausted);
+    });
+
+    it('will not attempt an item the server refused', async () => {
+      await queue.enqueue(eventWrite(), AT);
+      await queue.drain(AT, context, scripted(REFUSED));
+      const refused = (await queue.list()).items[0];
+      expect(refused?.terminalFailure).toBe('PERMANENT_RESPONSE');
+
+      const delivery = scripted(SUCCESS);
+      const outcome = await queue.attempt(
+        refused?.queueItemId ?? '',
+        later(1_000_000),
+        context,
+        delivery,
+      );
+
+      // The server said no. Asking again by id is still asking again.
+      expect(delivery.seen).toHaveLength(0);
+      expect(outcome).toBe('TERMINAL');
+      expect((await queue.list()).items[0]).toEqual(refused);
+    });
+
+    it('says so when there is no such item', async () => {
+      const delivery = scripted(SUCCESS);
+
+      const outcome = await queue.attempt(randomUUID(), AT, context, delivery);
+
+      expect(outcome).toBe('NOT_FOUND');
+      expect(delivery.seen).toHaveLength(0);
+    });
+
+    it('refuses an item belonging to another owner, as a sweep does', async () => {
+      const item = await queue.enqueue(eventWrite({ ownerId: randomUUID() as OwnerId }), AT);
+      const delivery = scripted(SUCCESS);
+
+      const outcome = await queue.attempt(item.queueItemId, AT, context, delivery);
+
+      expect(outcome).toBe('OWNER_MISMATCH');
+      expect(delivery.seen).toHaveLength(0);
+    });
+  });
+
   describe('when the credential is the obstacle', () => {
     it('changes nothing and stops the drain', async () => {
       await queue.enqueue(eventWrite(), AT);
