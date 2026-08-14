@@ -1731,3 +1731,19 @@ No raw detail was added to make this possible. `QueueStorageError` still carries
 An important Event described as routine produces no notice — the person is simply never told about a write that was lost. An Event described as a Verification produces a notice naming the wrong operation and a `dedupKey` that will never match the one a later scan builds from the file, so the same failure is reported twice under different names.
 
 The public API is now `submitEventWithFallback` and `submitVerificationWithFallback`, each taking the coordinator and the caller's own input. The operation comes from which function was called; the importance comes from the input that the submission itself uses. The general helpers are private, so there is no signature that accepts either as a separate argument. An architecture test pins the barrel's exports and the two wrappers' parameter lists, because the whole class of mistake is one that type-checks.
+
+## D-183 — A write that cannot be found is not a write that was lost (P3-09, after review)
+
+`RetryQueue.attempt` answers `NOT_FOUND` when the item is not where it was left, and the coordinator was folding that into `PERMANENT_FAILURE`. Under P3-08 that was harmless: `PERMANENT_FAILURE` promised only "not delivered", and the conservative reading was the safe one. P3-09 gave the same value a much stronger meaning — a write that is confirmed lost, and one an important Problem produces a notice about — and the old mapping became a false claim.
+
+The ordinary reason an item goes missing is the one P3-08 deliberately supports: another queue instance over the same directory delivered it and removed the file. Reproduced before fixing, with the second instance posting to a real server and the row landing in the database: the caller was told `UNSAVED`, with `IMPORTANT_MEMORY_UNSAVED`, about an Event that was sitting on the server.
+
+Neither of the obvious repairs is right. `DELIVERED` would be true for that race and false when a file was removed by something else or stopped being readable — this module cannot tell those apart. `QUEUED` would promise a retry from a file that is not there.
+
+So `UNKNOWN` was added to both `SubmitOutcome` and `MemoryWriteState`, and it is the answer that claims nothing: not saved, not unsaved, not pending. It produces no notice even for an important Problem, because the only thing there is to tell somebody is that an important Memory *could not be saved*, and this does not say that — it says nobody here can tell, and the usual cause is that it was saved. A second notice kind meaning "something happened and we are unsure" would fire most often when everything had worked.
+
+Unrecognised outcomes now fall to `UNKNOWN` as well, rather than to `PERMANENT_FAILURE`. An outcome this build does not understand is not evidence of a failure, and the answer that claims nothing is the only one that cannot be wrong about somebody's work.
+
+What did not change: `PERMANENT_RESPONSE` and `RETRY_EXHAUSTED` still mean `PERMANENT_FAILURE`, still mean `UNSAVED`, and an important one still produces exactly one notice, findable again by the same handle after a restart.
+
+The general lesson is worth keeping separately from the fix. A value that means "we are being careful" is safe only while nothing acts on it. `PERMANENT_FAILURE` was a fine place to put uncertainty until something started telling people about it, and then the uncertainty had to be given a name of its own. Widening what a value means is a change to every mapping that already points at it.

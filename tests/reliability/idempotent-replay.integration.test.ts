@@ -65,6 +65,7 @@ import { buildMemoryHttpApp } from '../../src/http/index.js';
 import {
   createReliableWriteCoordinator,
   createRetryQueue,
+  submitEventWithFallback,
   QueueCapacityError,
   type DeliveryContext,
   type DeliveryOutcome,
@@ -491,6 +492,69 @@ describe.skipIf(databaseUrl === undefined)('the same write, sent more than once'
       // test. One row.
       expect(await eventsByKey(submitted.clientEventId)).toHaveLength(1);
       expect(await readdir(directory)).toEqual([]);
+    });
+  });
+
+  describe('when another queue instance got there first', () => {
+    it('does not report an important write as unsaved, and the row is there', async () => {
+      const problemId = await newProblem('the event another instance delivered');
+      const mine = createRetryQueue({ directory, limits: LIMITS, policy: POLICY });
+      const other = createRetryQueue({ directory, limits: LIMITS, policy: POLICY });
+      const context: DeliveryContext = { ownerId };
+
+      // The second instance posts to the real server and removes the file,
+      // between the enqueue returning and the first attempt running. Two queues
+      // over one directory is supported — the queue promises at-least-once and
+      // the server makes the effect once — so this is an ordinary race, staged
+      // at a fixed point rather than left to timing.
+      const theirs = delivery();
+      const raced: RetryQueue = {
+        async enqueue(write, now) {
+          const item = await mine.enqueue(write, now);
+          await other.drain(now, context, theirs);
+          return item;
+        },
+        list: () => mine.list(),
+        attempt: (id, now, ctx, own) => mine.attempt(id, now, ctx, own),
+        drain: (now, ctx, own) => mine.drain(now, ctx, own),
+      };
+
+      const ownDelivery = delivery();
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(raced),
+        {
+          ownerId,
+          problemId,
+          problemImportant: true,
+          payload: { eventType: 'DISCOVERY', summary: 'saved by somebody else' },
+        },
+        AT,
+        context,
+        ownDelivery,
+      );
+
+      // The other instance really posted, and the server really took it.
+      expect(theirs.seen).toHaveLength(1);
+      expect(theirs.seen[0]?.status).toBe(201);
+      expect(ownDelivery.seen).toHaveLength(0);
+
+      const key = String(theirs.seen[0]?.body['client_event_id']);
+      expect(await eventsByKey(key)).toHaveLength(1);
+      const all = await pool.query<{ n: string }>(
+        `select count(*)::text as n from public.events where owner_id = $1 and problem_id = $2`,
+        [ownerId, problemId],
+      );
+      expect(all.rows[0]?.n).toBe('1');
+
+      // And the caller is not told that an important Memory was lost, because
+      // it is sitting in the row counted above.
+      expect(decision.continueMainWork).toBe(true);
+      expect(decision.memoryState).toBe('UNKNOWN');
+      expect(decision.noticeIntent).toBeNull();
+
+      for (const name of await readdir(directory)) {
+        await rm(join(directory, name));
+      }
     });
   });
 

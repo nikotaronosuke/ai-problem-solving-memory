@@ -32,6 +32,7 @@ import {
   createRetryQueue,
   fallbackForSearch,
   MEMORY_NOTICE_KINDS,
+  MEMORY_WRITE_STATES,
   OwnerMismatchError,
   QueueCapacityError,
   QueueStorageError,
@@ -559,6 +560,110 @@ describe('carrying on when the Memory will not take a write', () => {
       expect(decision.memoryState).toBe('UNSAVED');
       expect(decision.noticeIntent?.kind).toBe('IMPORTANT_MEMORY_UNSAVED');
       expect(attempted.seen).toHaveLength(0);
+    });
+  });
+
+  describe('a write that is no longer where it was left', () => {
+    // A review found a missing item reported as a confirmed failure to save.
+    // The ordinary reason an item goes missing is that another queue instance
+    // over the same directory delivered it and removed the file — supported
+    // concurrency since P3-08, and a write that is safely stored. Reporting
+    // that as unsaved tells somebody their work is gone while it sits on the
+    // server.
+
+    /**
+     * A queue whose item is delivered by somebody else before it is attempted.
+     *
+     * The second instance is real and works on the same directory, so this is
+     * the production race rather than an imitation of it — arranged to happen
+     * at a fixed point instead of by timing.
+     */
+    function racedBy(other: RetryQueue, delivery: RetryDelivery): RetryQueue {
+      return {
+        async enqueue(write, now) {
+          const item = await queue.enqueue(write, now);
+          await other.drain(now, { ownerId }, delivery);
+          return item;
+        },
+        list: () => queue.list(),
+        attempt: (id, now, context, own) => queue.attempt(id, now, context, own),
+        drain: (now, context, own) => queue.drain(now, context, own),
+      };
+    }
+
+    it('does not call an important write unsaved when another instance saved it', async () => {
+      const other = createRetryQueue({ directory, limits: LIMITS, policy: POLICY });
+      const theirs = fake(SUCCESS);
+      const mine = fake(SUCCESS);
+
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(racedBy(other, theirs)),
+        event(true),
+        AT,
+        { ownerId },
+        mine,
+      );
+
+      // The other instance delivered it and cleaned up; this one found nothing
+      // to attempt.
+      expect(theirs.seen).toHaveLength(1);
+      expect(mine.seen).toHaveLength(0);
+      expect(await readdir(directory)).toEqual([]);
+
+      expect(decision.continueMainWork).toBe(true);
+      expect(decision.memoryState).not.toBe('UNSAVED');
+      expect(decision.memoryState).toBe('UNKNOWN');
+      // The important half: no notice. Nothing was lost.
+      expect(decision.noticeIntent).toBeNull();
+    });
+
+    it('does not call it saved either, when nothing was delivered', async () => {
+      // The other direction, and the reason `UNKNOWN` is not just `DELIVERED`
+      // under another name. Here the file goes away without anybody sending
+      // it, which this module cannot tell apart from the case above.
+      const vanishing: RetryQueue = {
+        async enqueue(write, now) {
+          const item = await queue.enqueue(write, now);
+          await rm(join(directory, `${item.queueItemId}.json`));
+          return item;
+        },
+        list: () => queue.list(),
+        attempt: (id, now, context, own) => queue.attempt(id, now, context, own),
+        drain: (now, context, own) => queue.drain(now, context, own),
+      };
+      const mine = fake(SUCCESS);
+
+      const decision = await submitEventWithFallback(
+        createReliableWriteCoordinator(vanishing),
+        event(true),
+        AT,
+        { ownerId },
+        mine,
+      );
+
+      expect(mine.seen).toHaveLength(0);
+      expect(decision.memoryState).not.toBe('SAVED');
+      expect(decision.memoryState).toBe('UNKNOWN');
+      expect(decision.noticeIntent).toBeNull();
+    });
+
+    it('still calls a refused write unsaved, and says so', async () => {
+      // The settled case is untouched. `UNSAVED` still means something said
+      // no, and an important one is still reported.
+      const decision = await submitEventWithFallback(
+        coordinator,
+        event(true),
+        AT,
+        { ownerId },
+        fake(REFUSED),
+      );
+
+      expect(decision.memoryState).toBe('UNSAVED');
+      expect(decision.noticeIntent?.kind).toBe('IMPORTANT_MEMORY_UNSAVED');
+    });
+
+    it('offers exactly four states, and keeps them apart', () => {
+      expect([...MEMORY_WRITE_STATES].sort()).toEqual(['PENDING', 'SAVED', 'UNKNOWN', 'UNSAVED']);
     });
   });
 

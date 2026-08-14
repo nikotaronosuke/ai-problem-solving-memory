@@ -205,14 +205,20 @@ describe('submitting a write', () => {
       expect(submitted.outcome).toBe(expected);
     });
 
-    it('offers exactly four answers', () => {
+    it('offers exactly five answers', () => {
       // Mechanical, and closed. Whether any of this is worth telling a person,
       // and how, belongs to the failure-fallback contract rather than here.
+      //
+      // `UNKNOWN` joined them when the fallback gave `PERMANENT_FAILURE` its
+      // full meaning: a write that is confirmed lost, and one an important
+      // Problem gets a notice about. A state that cannot be established is not
+      // that, and needed somewhere else to go.
       expect([...SUBMIT_OUTCOMES].sort()).toEqual([
         'AUTH_REQUIRED',
         'DELIVERED',
         'PERMANENT_FAILURE',
         'QUEUED',
+        'UNKNOWN',
       ]);
     });
 
@@ -273,12 +279,20 @@ describe('submitting a write', () => {
     }
 
     it.each([
-      ['NOT_FOUND', 'PERMANENT_FAILURE'],
+      // Confirmed: the attempts ran out, or the item had already stopped.
       ['TERMINAL', 'PERMANENT_FAILURE'],
-      ['OWNER_MISMATCH', 'PERMANENT_FAILURE'],
       ['RETRY_EXHAUSTED', 'PERMANENT_FAILURE'],
       // Live and waiting, which is what QUEUED already means.
       ['NOT_DUE', 'QUEUED'],
+      // Not where it was left. Most often because another queue instance over
+      // the same directory delivered it and removed the file, which is
+      // supported and is a write that is safely stored — so calling it a
+      // confirmed failure would report somebody's work as lost while it sits
+      // on the server.
+      ['NOT_FOUND', 'UNKNOWN'],
+      // Cannot happen: the owner is checked before the write is enqueued.
+      // Answered by the value that claims nothing, as anything unrecognised is.
+      ['OWNER_MISMATCH', 'UNKNOWN'],
     ] as const)('turns %s into %s, never into DELIVERED', async (attempted, expected) => {
       const submitted = await createReliableWriteCoordinator(queueAnswering(attempted)).submitEvent(
         event(),
