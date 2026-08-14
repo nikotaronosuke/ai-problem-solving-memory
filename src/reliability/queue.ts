@@ -117,6 +117,29 @@ export interface RetryQueue {
    * one.
    */
   drain(now: Date, context: DeliveryContext, delivery: RetryDelivery): Promise<DrainReport>;
+
+  /**
+   * Attempts one item, by id, whether or not others are due.
+   *
+   * This is what a first attempt is. A write is enqueued and then tried
+   * immediately, and going through `drain` would sweep up every other item
+   * that happened to be waiting — turning "record this Event" into "flush the
+   * backlog", with the caller's latency and failures decided by writes it knows
+   * nothing about.
+   *
+   * The item is processed by the same code `drain` uses, so the owner guard,
+   * the classification, the backoff and the terminal states are one
+   * implementation rather than two that drift.
+   *
+   * Answers `undefined` when there is no such item — already delivered, or
+   * removed by something else.
+   */
+  attempt(
+    queueItemId: string,
+    now: Date,
+    context: DeliveryContext,
+    delivery: RetryDelivery,
+  ): Promise<DrainOutcome | undefined>;
 }
 
 export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
@@ -128,6 +151,81 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
     nextAttemptAt: null,
     terminalFailure: failure,
   });
+
+  /**
+   * One item, one attempt, one outcome.
+   *
+   * Everything that decides what happens to an item lives here and only here:
+   * the owner guard, the delivery, the classification, the backoff and the two
+   * terminal states. Both entry points — the first attempt on a freshly
+   * enqueued write, and a sweep of everything due — run this, so a first
+   * attempt cannot end up being treated differently from a retry.
+   *
+   * That is not a tidiness argument. The whole point of the queue is that a
+   * write behaves the same however many times it is sent, and two copies of
+   * this logic would be two places for that to stop being true.
+   */
+  async function processItem(
+    item: QueueItem,
+    now: Date,
+    context: DeliveryContext,
+    delivery: RetryDelivery,
+  ): Promise<DrainOutcome> {
+    if (item.write.ownerId !== context.ownerId) {
+      // Not delivered, not counted as an attempt, not modified. This is not an
+      // authorisation check — the server decides that from the credential — it
+      // is a guard against handing one person's Event to a context established
+      // for someone else.
+      return 'OWNER_MISMATCH';
+    }
+
+    const outcome: DeliveryOutcome = await delivery.deliver(item, context);
+
+    if (outcome.kind === 'SUCCESS') {
+      await store.remove(item.queueItemId);
+      return 'DELIVERED';
+    }
+
+    const decision = classifyDeliveryOutcome(outcome);
+
+    if (decision === 'AUTH_REQUIRED') {
+      // Untouched: no attempt spent, no schedule moved, nothing written. A
+      // revoked credential is replaced, and the Event queued before that
+      // happened is still worth saving.
+      return 'AUTH_REQUIRED';
+    }
+
+    if (decision === 'PERMANENT') {
+      await store.write(terminal(item, 'PERMANENT_RESPONSE'), options.limits, false);
+      return 'PERMANENT_FAILURE';
+    }
+
+    const attemptCount = item.attemptCount + 1;
+    if (attemptCount >= options.policy.maxAttempts) {
+      await store.write(
+        terminal({ ...item, attemptCount }, 'RETRY_EXHAUSTED'),
+        options.limits,
+        false,
+      );
+      return 'RETRY_EXHAUSTED';
+    }
+
+    const delay = nextDelayMs(
+      options.policy,
+      attemptCount,
+      outcome.kind === 'HTTP_FAILURE' ? outcome.retryAfterMs : undefined,
+    );
+    await store.write(
+      {
+        ...item,
+        attemptCount,
+        nextAttemptAt: new Date(now.getTime() + delay).toISOString(),
+      },
+      options.limits,
+      false,
+    );
+    return 'RESCHEDULED';
+  }
 
   return {
     async enqueue(write, now) {
@@ -163,6 +261,15 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
       return { items, corruptCount };
     },
 
+    async attempt(queueItemId, now, context, delivery) {
+      const { items } = await store.read();
+      const item = items.find((candidate) => candidate.queueItemId === queueItemId);
+      if (item === undefined) {
+        return undefined;
+      }
+      return processItem(item, now, context, delivery);
+    },
+
     async drain(now, context, delivery) {
       const { items, corruptCount } = await store.read();
       const results: { queueItemId: string; outcome: DrainOutcome }[] = [];
@@ -179,65 +286,14 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
           continue;
         }
 
-        if (item.write.ownerId !== context.ownerId) {
-          // Not delivered, not counted as an attempt, not modified. This is
-          // not an authorisation check — the server decides that from the
-          // credential — it is a guard against handing one person's Event to a
-          // context established for someone else.
-          results.push({ queueItemId: item.queueItemId, outcome: 'OWNER_MISMATCH' });
-          continue;
-        }
+        const outcome = await processItem(item, now, context, delivery);
+        results.push({ queueItemId: item.queueItemId, outcome });
 
-        const outcome: DeliveryOutcome = await delivery.deliver(item, context);
-
-        if (outcome.kind === 'SUCCESS') {
-          await store.remove(item.queueItemId);
-          results.push({ queueItemId: item.queueItemId, outcome: 'DELIVERED' });
-          continue;
-        }
-
-        const decision = classifyDeliveryOutcome(outcome);
-
-        if (decision === 'AUTH_REQUIRED') {
-          // Untouched: no attempt spent, no schedule moved, nothing written.
-          // A revoked credential is replaced, and the Event queued before that
-          // happened is still worth saving.
-          results.push({ queueItemId: item.queueItemId, outcome: 'AUTH_REQUIRED' });
+        if (outcome === 'AUTH_REQUIRED') {
+          // The credential is the obstacle, and the next item would meet it
+          // too. The caller drains again once it has a working one.
           break;
         }
-
-        if (decision === 'PERMANENT') {
-          await store.write(terminal(item, 'PERMANENT_RESPONSE'), options.limits, false);
-          results.push({ queueItemId: item.queueItemId, outcome: 'PERMANENT_FAILURE' });
-          continue;
-        }
-
-        const attemptCount = item.attemptCount + 1;
-        if (attemptCount >= options.policy.maxAttempts) {
-          await store.write(
-            terminal({ ...item, attemptCount }, 'RETRY_EXHAUSTED'),
-            options.limits,
-            false,
-          );
-          results.push({ queueItemId: item.queueItemId, outcome: 'RETRY_EXHAUSTED' });
-          continue;
-        }
-
-        const delay = nextDelayMs(
-          options.policy,
-          attemptCount,
-          outcome.kind === 'HTTP_FAILURE' ? outcome.retryAfterMs : undefined,
-        );
-        await store.write(
-          {
-            ...item,
-            attemptCount,
-            nextAttemptAt: new Date(now.getTime() + delay).toISOString(),
-          },
-          options.limits,
-          false,
-        );
-        results.push({ queueItemId: item.queueItemId, outcome: 'RESCHEDULED' });
       }
 
       return { results, notDue, terminal: terminalCount, corruptCount };

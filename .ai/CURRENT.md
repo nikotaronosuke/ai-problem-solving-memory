@@ -498,6 +498,26 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Delivery is an interface and nothing else.** No HTTP client ships, because choosing a transport, a timeout and a credential source for adapters that do not exist is how a library acquires behaviour nobody picked. The integration test writes one, against a real server on a real port that is really stopped.
 
+## What exists now — Idempotent replay (P3-08)
+
+**Durable before attempted** (D-161). `submitEvent` and `submitVerification` enqueue the write and only then try to send it. The reverse order — send, and queue if that fails — is cheaper and has a window that loses data: the attempt fails, the process ends before the failure is written down, and the Event is gone with no trace. After `enqueue` returns, every outcome leaves either a queue item or a row on the server.
+
+**No fallback to sending when the queue refuses** (D-162). Full, erroring, or holding a credential that cannot be removed — nothing is sent. The fallback looks like resilience and reintroduces exactly the window above, at the moment the system is least able to track what happened. Two tests assert the delivery is never called, so adding it later fails them.
+
+**Three layers, one key** (D-163). The coordinator assigns `client_event_id`, once, before the write is durable; the queue persists it and never changes it; the server refuses the second write carrying it. The caller cannot supply a key, which is what stops two adapters each inventing their own discipline and one of them regenerating on retry. An architecture test pins that `generateClientEventId` is called in exactly one file.
+
+**The first attempt carries the sanitized write** (D-164). `enqueue` returns the item it stored, and that item is what is delivered. Building a request from the caller's original would put an unredacted credential on the wire on the first attempt only — once is once too many, and it is the attempt least likely to be inspected.
+
+**A first attempt is a retry** (D-165). `RetryQueue.attempt(queueItemId, …)` processes one item through the same per-item function `drain` uses, so the owner guard, the classification, the backoff and the terminal states exist once. The coordinator contains no retry logic and never names `classifyDeliveryOutcome` or `nextDelayMs`. `attempt` rather than `drain`, so recording one Event does not mean flushing the backlog.
+
+**At least once, observably once** (D-166). No lock: two processes over one directory can both post the same item, and a crash between a success and the `unlink` replays a write the server already has. What makes that safe is the Phase 1 unique index on `(owner_id, client_event_id)` with the first write kept. "Exactly once" is avoided as a phrase — deliveries are not, and the **effect on Memory** is.
+
+**The proof is a lost answer, not a stopped server** (D-167). The end-to-end tests post to a running server, wait for a real 201, and report a transport failure anyway. Against a stopped server the same tests would pass with a fresh key per retry, which is the bug this exists to prevent. Both Events and Verifications are proved this way; they take different insert paths on the server.
+
+**Four mechanical outcomes** (D-169): `DELIVERED`, `QUEUED`, `AUTH_REQUIRED`, `PERMANENT_FAILURE`, plus the key. No body, no error, no credential. `RETRY_EXHAUSTED` and a refusal collapse into one, since neither will be retried and both stay on disk. Nothing is phrased for a person — that is P3-09's, and it now has something mechanical to be written against.
+
+**Nothing on the server changed.** The unique index, `on conflict do nothing`, the re-read and the 201 with the original record have all been there since Phase 1. One measured caveat is recorded rather than fixed (D-168): a unique violation aborts its transaction, so `appendVerification` — which catches the violation instead of avoiding it — would break if it were ever called inside one. Nothing does, and a replay is an ordinary HTTP append.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -516,6 +536,7 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No import. Export proves its format is restorable; reading an artifact back is outside the Core MVP by the specification's own line (D-142)
 - No per-project or per-problem export, no streaming, no archive, no export job, no pagination
 - No HTTP client, no scheduler and no queue directory default. The retry queue ships an interface, a `drain` the caller drives, and a required path (D-151, D-155, D-158)
+- No fallback that sends a write the queue could not record (D-162), and no user-facing anything: the submit outcomes are mechanical, and what a person is told is P3-09's
 - No enforcement of `memory_write_enabled` on an append. It is stored and settable; whether a replay may proceed against a Problem whose owner has since turned writes off is a rule for the adapter's delivery (D-160)
 - No pagination, filtering or search on list endpoints
 - No rendered API explorer. The contract is JSON at one path; a UI, a YAML variant and an owner-scoped copy are all absent deliberately
@@ -526,15 +547,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-08 — Idempotent replay.
+P3-09 — Failure fallback contract.
 
 Not started. See the private Phase 3 breakdown for the task.
 
 Notes for whoever picks this up:
-- The server side already deduplicates. `unique (owner_id, client_event_id)` on Events and Verifications, `on conflict do nothing` then re-select, first write wins, replay returns the original with the same 201 (D-058, D-063). Nothing there needs building
-- What P3-07 left is a queue that keeps whatever key it was given. P3-08 is the path that generates the key before the first attempt and carries it through send, queue and replay as one thing (D-153)
-- The proof to aim for is end to end: the same Event sent any number of times leaves exactly one row, with the queue in the middle
-- `src/reliability/` must stay out of the server's imports; that is what makes it work when the server is down
+- The mechanical half exists. A submit answers `DELIVERED`, `QUEUED`, `AUTH_REQUIRED` or `PERMANENT_FAILURE` (D-169), and a queue holds every write that has not arrived, terminal ones included (D-156). Nothing has to be re-derived to know what happened
+- What is missing is what a caller does with that: not turning a Memory failure into a fatal error, and telling the person about important things that were not saved. The spec asks for *only* the important ones
+- A terminal item is a file in the queue directory. That is where "what was not saved" lives; nothing else records it
+- Search failure falls back to ordinary investigation, which is the other half of the same contract and has no code behind it yet
 
 ## Core MVP milestone
 

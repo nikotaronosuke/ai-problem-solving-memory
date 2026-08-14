@@ -1517,3 +1517,88 @@ The item becomes terminal and is kept. The `problem_id` is not rewritten, no Pro
 But it leaves a real question for whoever writes a delivery implementation, so it is recorded here as a standing rule: **a replay must respect the Problem's state at the time of the replay, not at the time of the enqueue.** An Event queued while writes were enabled, and delivered after the owner turned them off, is a write the owner asked not to happen. A delivery that blindly resends is doing so on the strength of a decision the owner has since reversed.
 
 That belongs to Phase 5 and Phase 6, and to whatever P3-08 and P3-09 settle about how a caller learns what happened.
+
+## D-161 — The write is made durable before it is attempted (P3-08)
+
+The obvious arrangement is to send, and to queue only if sending fails. It is cheaper: a write that succeeds never touches the disk. It also has a window that loses data outright — the attempt fails, and the process ends before the failure has been written down. Nothing reached the server and nothing reached the queue, so the Event is gone with no trace. That window is small and it is exactly when a crash is most likely, because what takes a network attempt down is often what takes the process down.
+
+So the order is enqueue, then attempt. After `enqueue` returns, every subsequent outcome leaves either a queue item or a row on the server:
+
+| what happens | what survives |
+| --- | --- |
+| crash before the attempt | the item, replayed later |
+| the attempt fails | the item, retried later |
+| the attempt succeeds, then a crash before the file is removed | the item; the server keeps the first write |
+| the server commits and the answer is lost | the same, and the same |
+
+The cost is one small file written and removed for every Event that succeeds first time, paid on a path that is not the user's work.
+
+An architecture test pins the order in the source rather than only the behaviour, because the behavioural difference appears only under a crash.
+
+## D-162 — There is no fallback to sending when the write cannot be recorded (P3-08)
+
+If the queue refuses the write — it is full, the disk errors, the payload holds a credential that cannot be removed — nothing is sent. There is deliberately no "queue unavailable, so send it directly anyway".
+
+The fallback is tempting because it looks like resilience, and it reintroduces exactly the window D-161 closes, at the moment the system is least able to track what happened: a send with no durable record of it, made because the durable record could not be written. An ambiguous failure on that path leaves nobody able to say whether the write landed.
+
+Recording a Memory is not the work the assistant is doing. Declining to send is a bounded, visible loss; an untracked delivery is an unbounded, invisible one. Two integration tests assert that the delivery is not called at all when the queue refuses — one for a full queue, one for a refused payload — so adding the fallback later fails them.
+
+What the caller is told, and whether the person hears about it, is P3-09's.
+
+## D-163 — Three layers, three responsibilities, one key (P3-08)
+
+The coordinator assigns the idempotency key. The queue persists it and never changes it. The server refuses the second write that carries it.
+
+The key is generated once, before the write is made durable, and the caller cannot supply one. That last part matters more than it looks: adapters in Phase 5 and Phase 6 will both submit writes, and if each carried its own key discipline, one of them would eventually regenerate on retry. The failure is invisible until there are duplicate rows, and by then the duplicates are in somebody's memory. Taking the decision away from the caller removes the possibility.
+
+An architecture test pins that `generateClientEventId` is called in exactly one file. The queue must never call it: a fresh key per attempt turns one Event into one row per retry, which is the exact duplicate the key exists to prevent, produced by the mechanism meant to prevent it.
+
+## D-164 — The first attempt carries the sanitized write, not the caller's input (P3-08)
+
+`enqueue` inspects the payload and answers with the item it stored. That item — not the caller's original — is what the first attempt delivers.
+
+Building a request from the original would put an unredacted credential on the wire exactly once, on the first attempt, and every retry would carry the redacted version. Once is once too many, and it is the attempt least likely to be looked at: a test that inspected retries would see nothing wrong.
+
+It also means the write is the same object at every stage. The first attempt, the file on disk, the replay after a restart and the delivery a week later all carry identical bytes, so "the same Event, sent again" is true in a way that can be asserted field by field rather than by key alone.
+
+## D-165 — A first attempt is a retry, run through the same code (P3-08)
+
+`RetryQueue` gained `attempt(queueItemId, …)`, which processes exactly one item. The coordinator uses it for the first attempt; `drain` uses the same per-item function for everything due.
+
+Two things follow. The owner guard, the classification, the backoff and the two terminal states exist once, so a first attempt cannot start behaving differently from a retry — which is the property the whole queue rests on. And the coordinator contains no retry logic at all: an architecture test asserts it never names `classifyDeliveryOutcome` or `nextDelayMs`.
+
+`attempt` rather than `drain`, deliberately. Draining on submit would make "record this Event" mean "flush the backlog", handing the caller the latency and the failures of writes it knows nothing about, and making one slow item delay every subsequent Event. Draining stays something a scheduler does on purpose.
+
+## D-166 — At least once, and observably once (P3-08)
+
+The queue delivers at least once. It has no lock, so two processes over one directory can read the same item and both post it; a crash between a success and the `unlink` replays a write the server already has. Both are ordinary and neither is an error.
+
+What makes that safe is not the queue. It is the unique index on `(owner_id, client_event_id)` with the first write kept, which has been there since Phase 1. The queue's contribution is to carry the same key every time.
+
+The phrase "exactly once" is avoided on purpose. Deliveries are not exactly once and cannot be made so across a network. What is once is the **observable effect on Memory**: one row, whatever happened on the way there. A test drains the same item from two queue instances simultaneously and asserts one row, which is the honest version of the claim.
+
+## D-167 — The proof is a lost answer, not a stopped server (P3-08)
+
+The end-to-end tests do not stop the server. They post to a running one, wait for a real 201, and then report a transport failure anyway.
+
+A test against a stopped server proves something weaker: nothing arrived, so a resend cannot duplicate. It would pass against an implementation that generated a fresh key on every retry, which is the bug this task exists to prevent. The interesting case is the one where the write *did* land and the client cannot tell — a timeout after a commit — because there the client's only safe move is to send again, and the second write is a real duplicate unless something refuses it.
+
+Both Events and Verifications are proved this way, because the completion condition names both and because they take different code paths on the server: the Event insert uses `on conflict do nothing`, the Verification insert catches the unique violation.
+
+## D-168 — The Verification insert's transaction caveat is left where it is (P3-08)
+
+The two append paths deduplicate differently. `appendEvent` uses `on conflict … do nothing` and then re-reads; `appendVerification` lets the unique violation raise and catches it.
+
+Measured during this task: a unique violation aborts the surrounding transaction, so any statement after it fails with `25P02` until the transaction ends. The Event path avoids that and needs to, because the close path appends Events inside a transaction. The Verification path would break the same way — but nothing calls it inside a transaction, and a replay is an ordinary HTTP append.
+
+It is not fixed here. Changing a Phase 1 insert inside an idempotency task is the kind of unrelated edit that makes a change hard to review, and the difference is currently harmless. It is recorded as a standing note instead: **if `appendVerification` is ever called inside an explicit transaction, it must first be changed to the `on conflict do nothing` form.**
+
+## D-169 — What the caller is told is mechanical and closed (P3-08)
+
+`submitEvent` and `submitVerification` answer with one of four outcomes and the key: `DELIVERED`, `QUEUED`, `AUTH_REQUIRED`, `PERMANENT_FAILURE`. No response body, no error, no message, no credential.
+
+`RETRY_EXHAUSTED` and a server refusal collapse into `PERMANENT_FAILURE`. They differ in why the item stopped, which the item itself records, and not in what the caller can do: neither will be retried, and both are still on disk.
+
+Nothing here is phrased for a person. Whether an assistant should mention a queued Event, and how, is the failure-fallback contract in P3-09 — and it can only be written once there is something mechanical to write it against, which is what this is.
+
+Submitting for an owner the delivery is not acting as throws rather than returning an outcome. That is a bug in the caller, not something that happened to a write; the queue's own owner guard exists for items read back off a disk, where the two can legitimately disagree.
