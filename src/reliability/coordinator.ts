@@ -49,7 +49,7 @@
 
 import type { DeliveryContext, RetryDelivery } from './delivery.js';
 import type { EventIntentPayload, QueuedWrite, VerificationIntentPayload } from './item.js';
-import type { RetryQueue } from './queue.js';
+import type { AttemptOutcome, RetryQueue } from './queue.js';
 import { generateClientEventId, type ClientEventId } from '../domain/client-event-id.js';
 import type { OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
@@ -116,14 +116,18 @@ export class OwnerMismatchError extends Error {
 
 export interface ReliableWriteCoordinator {
   /**
-   * Records an Event so that it arrives exactly once, however many times it is
-   * sent.
+   * Records an Event so that however many times it is delivered, the Memory
+   * holds one row.
    *
    * The caller does not supply an idempotency key and cannot: it is generated
    * here, once, before the write is made durable, and never again. An adapter
    * that assigned its own would be re-implementing the one discipline that
    * makes all of this work, and the failure mode of getting it wrong — a fresh
    * key per retry — is invisible until there are duplicate rows.
+   *
+   * Delivery is at least once and is not made exactly once — that is not
+   * something a network allows. What is once is the observable effect: the
+   * server keeps the first write carrying a given key and refuses the rest.
    *
    * Raises whatever `enqueue` raises when the write cannot be made durable: a
    * refused payload, or a full queue. Nothing is sent in that case.
@@ -213,22 +217,32 @@ export function createReliableWriteCoordinator(queue: RetryQueue): ReliableWrite
 /**
  * Translates what the queue did into what the caller is told.
  *
- * `RETRY_EXHAUSTED` and `PERMANENT_FAILURE` become one answer. They differ in
- * why the item stopped, which the item itself records, and not in what the
- * caller can now do: neither will be tried again, and both are still on disk
- * for P3-09 to report.
+ * `RETRY_EXHAUSTED` and a server refusal become one answer. They differ in why
+ * the item stopped, which the item itself records, and not in what the caller
+ * can now do: neither will be tried again, and both are still on disk for
+ * P3-09 to report.
  *
- * `OWNER_MISMATCH` cannot occur — the owner was checked before the write was
- * enqueued — and `undefined` would mean the item vanished between being written
- * and being read, which nothing else does. Both are treated as the write not
- * having arrived, because claiming delivery is the one answer that must never
- * be given wrongly.
+ * The rest are answers a fresh submission should never see, and each is mapped
+ * to whichever true statement is safest rather than to a guess:
+ *
+ * `NOT_DUE` means the item is live and waiting, which is exactly what `QUEUED`
+ * says. It cannot happen here — an item is due the moment it is enqueued — but
+ * if it ever did, the write really is on disk and really will be retried.
+ *
+ * `TERMINAL` and `NOT_FOUND` both mean nothing further will happen to the item
+ * through this path. `OWNER_MISMATCH` cannot occur, because the owner is
+ * checked before the write is enqueued.
+ *
+ * What none of them may become is `DELIVERED`. Claiming a write arrived when it
+ * did not is the one answer that must never be given wrongly, so anything
+ * unrecognised falls to the answer that promises nothing.
  */
-function toSubmitOutcome(outcome: string | undefined): SubmitOutcome {
+function toSubmitOutcome(outcome: AttemptOutcome): SubmitOutcome {
   switch (outcome) {
     case 'DELIVERED':
       return 'DELIVERED';
     case 'RESCHEDULED':
+    case 'NOT_DUE':
       return 'QUEUED';
     case 'AUTH_REQUIRED':
       return 'AUTH_REQUIRED';

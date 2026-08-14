@@ -54,8 +54,11 @@ export {
   type VerificationIntentPayload,
 } from './item.js';
 export {
+  ATTEMPT_REFUSALS,
   createRetryQueue,
   DRAIN_OUTCOMES,
+  type AttemptOutcome,
+  type AttemptRefusal,
   type DrainOutcome,
   type DrainReport,
   type RetryQueue,

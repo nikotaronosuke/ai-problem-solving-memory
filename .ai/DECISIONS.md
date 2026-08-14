@@ -1602,3 +1602,17 @@ It is not fixed here. Changing a Phase 1 insert inside an idempotency task is th
 Nothing here is phrased for a person. Whether an assistant should mention a queued Event, and how, is the failure-fallback contract in P3-09 — and it can only be written once there is something mechanical to write it against, which is what this is.
 
 Submitting for an owner the delivery is not acting as throws rather than returning an outcome. That is a bug in the caller, not something that happened to a write; the queue's own owner guard exists for items read back off a disk, where the two can legitimately disagree.
+
+## D-170 — An item's eligibility is decided once, whichever way it is reached (P3-08, after review)
+
+`RetryQueue.attempt` went straight to delivery. `drain` did not: it skipped an item that had stopped, and one whose next attempt was still in the future. Two entry points, one of them missing the gate the other applied.
+
+The consequence was measured before it was fixed, and it is a regression against three P3-07 guarantees rather than a cosmetic gap. Given an item id, `attempt` would deliver a write the server had permanently refused, deliver one whose attempts had run out, and ignore a backoff that was still running — the delivery callback was invoked in all three cases.
+
+The coordinator only ever calls `attempt` on an item it has just enqueued, which is due and not terminal, so nothing in the shipped path was wrong. That is exactly why it needed fixing anyway: `attempt` is an exported method on a public interface, and "the one caller today happens to use it correctly" is a fact about today, not a property of the queue. Phase 5 and Phase 6 will each have their own caller.
+
+So eligibility is one function — due, not due, or terminal — and both entry points run it before anything is delivered. `attempt` answers `NOT_DUE`, `TERMINAL` or `NOT_FOUND` instead of attempting, and `drain` counts the same three answers as it always did.
+
+The mapping to what a caller is told is conservative in one direction only. `NOT_DUE` becomes `QUEUED`, because the write really is on disk and really will be retried. Everything else unrecognised becomes `PERMANENT_FAILURE`, which promises nothing. Nothing but a delivery becomes `DELIVERED`: claiming a write arrived when it did not is the one answer that must never be given wrongly, and it is now asserted directly rather than left to a comment — a queue stub reports each refusal in turn and the mapping is checked against all of them.
+
+The wording in the coordinator was corrected at the same time. It described an Event as arriving "exactly once", which contradicts D-166 and is not what any of this provides. Delivery is at least once; what happens once is the observable effect on Memory.

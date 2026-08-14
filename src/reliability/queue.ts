@@ -63,6 +63,20 @@ export const DRAIN_OUTCOMES = [
 
 export type DrainOutcome = (typeof DRAIN_OUTCOMES)[number];
 
+/**
+ * Why an item was not attempted, or that it was.
+ *
+ * Separate from `DrainOutcome` because these are answers about whether an item
+ * may be tried at all, decided before any delivery happens. A sweep counts them;
+ * a caller asking for one item by id is told which it was.
+ */
+export const ATTEMPT_REFUSALS = ['NOT_DUE', 'TERMINAL', 'NOT_FOUND'] as const;
+
+export type AttemptRefusal = (typeof ATTEMPT_REFUSALS)[number];
+
+/** What came of asking for one item to be attempted. */
+export type AttemptOutcome = DrainOutcome | AttemptRefusal;
+
 export interface DrainReport {
   /** One entry per item considered, in the order they were considered. */
   readonly results: readonly { readonly queueItemId: string; readonly outcome: DrainOutcome }[];
@@ -127,19 +141,22 @@ export interface RetryQueue {
    * backlog", with the caller's latency and failures decided by writes it knows
    * nothing about.
    *
-   * The item is processed by the same code `drain` uses, so the owner guard,
-   * the classification, the backoff and the terminal states are one
-   * implementation rather than two that drift.
+   * The item goes through the same two stages a sweep puts it through: first
+   * whether it may be attempted at all, then the attempt itself. Naming an item
+   * by its id does not get past the first stage — an item that has stopped, or
+   * whose next try is still in the future, is not delivered, and answers
+   * `TERMINAL` or `NOT_DUE` instead.
    *
-   * Answers `undefined` when there is no such item — already delivered, or
-   * removed by something else.
+   * That guarantee belongs here rather than in the caller. This is an exported
+   * method, so "the coordinator only calls it on a fresh item" is a fact about
+   * one caller today and not a property of the queue.
    */
   attempt(
     queueItemId: string,
     now: Date,
     context: DeliveryContext,
     delivery: RetryDelivery,
-  ): Promise<DrainOutcome | undefined>;
+  ): Promise<AttemptOutcome>;
 }
 
 export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
@@ -151,6 +168,24 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
     nextAttemptAt: null,
     terminalFailure: failure,
   });
+
+  /**
+   * Whether an item may be attempted at all.
+   *
+   * The first of the two stages every attempt goes through, and the one a
+   * review found `attempt` was skipping. A stopped item stays stopped however
+   * it is reached, and a backoff that only applies when a sweep is what runs is
+   * not a backoff.
+   */
+  function eligibility(item: QueueItem, now: Date): 'DUE' | AttemptRefusal {
+    if (item.terminalFailure !== null) {
+      return 'TERMINAL';
+    }
+    if (item.nextAttemptAt !== null && new Date(item.nextAttemptAt) > now) {
+      return 'NOT_DUE';
+    }
+    return 'DUE';
+  }
 
   /**
    * One item, one attempt, one outcome.
@@ -265,8 +300,16 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
       const { items } = await store.read();
       const item = items.find((candidate) => candidate.queueItemId === queueItemId);
       if (item === undefined) {
-        return undefined;
+        // Delivered already, or removed by something else. Not an error: the
+        // point of an item was for it to stop existing.
+        return 'NOT_FOUND';
       }
+
+      const eligible = eligibility(item, now);
+      if (eligible !== 'DUE') {
+        return eligible;
+      }
+
       return processItem(item, now, context, delivery);
     },
 
@@ -277,11 +320,12 @@ export function createRetryQueue(options: RetryQueueOptions): RetryQueue {
       let terminalCount = 0;
 
       for (const item of items) {
-        if (item.terminalFailure !== null) {
+        const eligible = eligibility(item, now);
+        if (eligible === 'TERMINAL') {
           terminalCount += 1;
           continue;
         }
-        if (item.nextAttemptAt !== null && new Date(item.nextAttemptAt) > now) {
+        if (eligible === 'NOT_DUE') {
           notDue += 1;
           continue;
         }
