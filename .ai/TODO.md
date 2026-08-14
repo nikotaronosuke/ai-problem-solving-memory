@@ -378,13 +378,35 @@ Fourteen deliberate mutations fail between 1 and 6 tests each: treating `503` as
 
 Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations. 2391 tests across 78 files.
 
-### P3-08 — NEXT
+### P3-08 — DONE
 
 Idempotent replay.
 
-Depends on P3-07, satisfied. See the private Phase 3 breakdown for the completion condition.
+No migration, no dependency, no HTTP surface, and nothing changed on the server. One new file in `src/reliability/` — the coordinator — plus one method on the queue.
 
-The server half is already built and has been since Phase 1: `unique (owner_id, client_event_id)` on both append paths, `on conflict do nothing` then re-select, first write wins, and a replay that returns the original with the same status (D-058, D-063). P3-07 added a queue that keeps whatever key it was handed. What remains is the path that joins them — generate the key before the first attempt, send, queue on failure, replay — and an end-to-end proof that the same Event sent any number of times leaves exactly one row.
+The decision the task turns on is the order (D-161): the write is made durable **before** it is attempted. Sending first and queuing on failure is cheaper and loses data in a window that is small and badly timed — the attempt fails, the process ends before the failure is written down, and the Event is gone with no trace anywhere. Enqueue-then-attempt means every outcome after `enqueue` leaves either a queue item or a row on the server.
+
+There is deliberately no fallback that sends when the queue refuses the write (D-162). It looks like resilience and reintroduces exactly that window at the moment the system can least track what happened. Two integration tests assert the delivery is never called — one for a full queue, one for a refused payload — so adding the fallback later fails them.
+
+Three layers, one key (D-163). The coordinator assigns `client_event_id` once and the caller cannot supply one; the queue persists it and never changes it; the server refuses the second write carrying it. Taking the decision away from callers is what stops two adapters each inventing a key discipline and one of them regenerating on retry — a failure invisible until there are duplicate rows in somebody's memory.
+
+The first attempt carries the sanitized item `enqueue` returned, not the caller's input (D-164), so an unredacted credential cannot reach the wire on the one attempt least likely to be inspected. `RetryQueue.attempt` processes a single item through the same per-item function `drain` uses (D-165), so a first attempt and a retry are one implementation, and the coordinator holds no retry logic at all.
+
+The end-to-end proof does not stop the server (D-167). It posts to a running one, waits for a real 201, and reports a transport failure anyway — the timeout-after-commit that a stopped server cannot reproduce and that a fresh-key-per-retry implementation would survive. Both Events and Verifications are proved this way, because the completion condition names both and their inserts take different paths.
+
+Ten deliberate mutations fail between 1 and 5 tests each: regenerating the key on retry, generating a second key at enqueue, attempting before the write is durable, delivering the caller's raw input, draining the whole queue on submit, routing a Verification as an Event, dropping the owner check, weakening the server's `on conflict` clause, giving `attempt` its own classification, and leaving a delivered item on disk. The first two fail with **two rows in the database**, which is the only failure that matters here.
+
+One measurement is recorded rather than acted on (D-168): a unique violation aborts its transaction, so `appendVerification` — which catches the violation rather than avoiding it — would fail on the statement after it if it were ever called inside an explicit transaction. Nothing does, and a replay is an ordinary HTTP append. A standing note says what to change if that stops being true.
+
+Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations. 2424 tests across 80 files.
+
+### P3-09 — NEXT
+
+Failure fallback contract.
+
+Depends on P3-08, satisfied. See the private Phase 3 breakdown for the completion condition.
+
+The mechanical half is built: a submit answers `DELIVERED`, `QUEUED`, `AUTH_REQUIRED` or `PERMANENT_FAILURE`, and every write that has not arrived is a file in the queue directory, terminal ones included. What is missing is the contract around it — that a Memory failure does not become the caller's fatal error, that a search failure falls back to ordinary investigation, and that the person hears about the important things that were not saved and only those.
 
 ## BLOCKED
 
@@ -395,6 +417,16 @@ None currently documented.
 Docker publishes the local Supabase ports on all interfaces, not only loopback. Enabling fewer services reduced the published ports to three, but the binding address is a Docker daemon setting, not a repository one.
 
 Decided: not a blocker. The Docker daemon configuration is left unchanged, and the operating rule is to stop the local stack when it is not in use (`npm run supabase:stop`). Revisit only if the stack ever needs to run on an untrusted network.
+
+## STANDING NOTE — the Verification insert is not transaction-safe
+
+`appendEvent` deduplicates with `on conflict (owner_id, client_event_id) do nothing` and then re-reads. `appendVerification` lets the unique violation raise and catches it.
+
+Measured during P3-08: a unique violation aborts the surrounding transaction, so every statement after it fails with `25P02` until the transaction ends. The Event form avoids that and has to, because the close path appends Events inside a transaction. The Verification form would break the same way.
+
+Nothing calls `appendVerification` inside an explicit transaction today, and a queued replay is an ordinary HTTP append, so this is currently harmless and was deliberately not changed inside an idempotency task (D-168).
+
+**If `appendVerification` is ever called inside an explicit transaction, change it to the `on conflict do nothing` form first.**
 
 ## STANDING RULE — a replay respects the Problem as it is now
 

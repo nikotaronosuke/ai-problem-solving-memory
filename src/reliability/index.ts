@@ -23,6 +23,16 @@
 
 export { nextDelayMs, type RetryPolicy } from './backoff.js';
 export {
+  createReliableWriteCoordinator,
+  OwnerMismatchError,
+  SUBMIT_OUTCOMES,
+  type ReliableWriteCoordinator,
+  type SubmitEventInput,
+  type SubmitOutcome,
+  type SubmitResult,
+  type SubmitVerificationInput,
+} from './coordinator.js';
+export {
   classifyDeliveryOutcome,
   RETRY_DECISIONS,
   type DeliveryOutcome,
