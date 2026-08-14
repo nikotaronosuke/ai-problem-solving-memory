@@ -112,6 +112,53 @@ comes from the verified credential and exactly the same data is reachable.
 An AI vendor account is not an owner identity and is never the ownership
 boundary. A client is one place a credential was installed, not a person.
 
+## Deleting is physical, and it is the only destructive thing here
+
+`DELETE /v1/problems/{problem_id}?expected_version=N` removes a Problem
+permanently. It is not the same operation as invalidating, suppressing, or
+turning reads off — those three keep the record and say something about how to
+use it. This one leaves nothing.
+
+What goes with it: the Problem's events, verifications and change log, and
+every relation and usage log that refers to it _from either direction_. A
+relation another Problem recorded pointing at this one, and a usage log saying
+another investigation drew on this one as memory, both name it and both carry
+free text written while looking at it. So both are removed, and a surviving
+Problem can lose part of its own history as a result. That is the intended
+trade: a request to remove something outranks another record's account of it.
+
+What stays: the Project and the Environment. An Environment is a moment in
+time that other Problems may name, and a Project outlives the problems found
+in it; neither is removed as a side effect, even when the deleted Problem was
+the last one using it. Nothing else is touched — clients and credentials belong
+to the owner rather than to any Problem.
+
+Nothing is left behind to consult. There is no `deleted_at`, no `DELETED`
+status and no tombstone, and no record is kept that a particular Problem once
+existed. Afterwards every path answers 404: reading it, listing it, appending
+an event or verification, relating to it, updating it, concluding it, reading
+its change log. That is the same 404 a Problem that never existed gets, and the
+same one another owner's gets.
+
+`expected_version` is required, and it is worth knowing exactly what it
+guarantees. It detects a change to the _Problem_ since it was read — an edit, a
+status change, a conclusion. It does not detect an event or verification
+appended in the meantime, because appending does not move the Problem's
+version. A delete decided at version 5 can therefore remove an event that
+arrived after the decision.
+
+The request carries nothing else. No `changed_by`, because the change log for
+this Problem is itself being deleted; no owner or client id, which come from
+the credential; and no confirmation flag, because any client that can send the
+request can send the flag too. **A caller acting on someone's behalf — an
+adapter, a UI — must have that person's explicit intent before calling this.**
+The server cannot check that, and a field claiming it would only record that
+the client knew the field existed.
+
+Success is `204` with no body: the Problem is deliberately not echoed back,
+since a caller removing a mis-saved credential should not receive it one more
+time. Deleting again is `404`. A stale version is `409`.
+
 ## Not found means one thing
 
 A resource belonging to another owner answers exactly as one that does not

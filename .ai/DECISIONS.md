@@ -1254,3 +1254,57 @@ It is a document default rather than a per-route declaration, so a route added w
 The contract version moved 0.1.0 → 0.2.0. It describes the `/v1` surface, and requiring a credential is a change to that surface.
 
 Credential management is deliberately not in the document, because it is deliberately not in the API. Issuing and revoking are local commands. An endpoint that mints credentials has to decide what may call it, and that decision belongs to whoever administers the machine rather than to a request — the bootstrap problem does not get easier by being moved over HTTP.
+
+## D-136 — The unit of physical deletion is a Problem and everything referring to it (P3-05)
+
+The spec allows complete deletion for three cases — something a person explicitly wants gone, something that was never worth keeping, and a credential written into a record by mistake — and names the unit `delete_memory`. A Memory is a Problem, so the operation removes one Problem, its events, verifications and change log, and every relation and usage log naming it.
+
+What it deliberately is not is a search for a string. "Remove this secret from wherever it appears" would be a different operation with a different shape: it would have to accept the secret as a parameter, which means a request carrying a credential, validated and logged on its way in, in order to remove a credential. The sanitization boundary stops new ones arriving; this removes the record that already holds one. Those two together are the answer, and a third mechanism that hunts for values is not.
+
+Project and Environment deletion is out of scope for the reason it was out of scope in Phase 2: the breakdown says explicitly that dangerous operations outside MVP requirements may go unimplemented, and nothing in the delete cases requires removing a container to remove what it contains.
+
+## D-137 — Physical means physical: no tombstone, no flag, no record it existed (P3-05)
+
+The row is deleted. There is no `deleted_at`, no `DELETED` status, no tombstone entry and no separate table recording that a Problem was removed.
+
+The soft-delete version of this is tempting and worse. Every read, list and append in the system would have to remember to exclude the deleted row, and the one that forgot would serve exactly the content the delete existed to remove — a failure that looks like ordinary retrieval and would be found by whoever the deletion was protecting. With the row gone there is nothing to exclude: every path already resolves the Problem first, so all of them answer 404 without a line of new code, and it is the same 404 as for a Problem that never existed and one belonging to somebody else.
+
+Nor is a "Problem X was deleted" record kept. It could not live in the change log — that is attached to a Problem, so keeping the entry means keeping the Problem — and a new table for it would be a durable statement that a particular Problem existed. For the person deleting a mis-saved credential, that statement is part of what they asked to be rid of. The operational log records that a delete happened, by the closed identifiers this codebase chose; that is a different question from P3-10's audit policy and does not decide it.
+
+The request carries no `changed_by` for the same reason: the history it would be written into is being deleted, so it would be free text collected solely to be logged, which is the egress P3-01 through P3-03 spent three tasks closing.
+
+## D-138 — A reference from another Problem goes with the deletion (P3-05)
+
+`relations` and `usage_logs` each have two foreign keys into `problems`, and the second of each pair points *in* from somewhere else: a relation another Problem recorded against this one, and a usage log saying another investigation drew on this one as memory. Both are removed.
+
+They carry free text — a relation's reason, a usage log's reason and result — written while looking at the Problem being deleted. Leaving them would leave sentences about it, possibly quoting it, in the database after a request that asked for it to be gone.
+
+The consequence is real and is accepted rather than hidden: a Problem that had nothing to do with the deletion can lose part of its own history, and nothing tells it why. The alternative was to null the references, which would need `to_id` and `memory_id` made nullable — weakening a NOT NULL composite foreign key in order to keep a row whose subject no longer exists, and its text along with it. The user's request to remove something outranks another record's account of it.
+
+## D-139 — One transaction, and RESTRICT is the guard rather than an obstacle (P3-05)
+
+Six statements across six tables run in one transaction opened by the service. The states in between — events gone but the Problem still there, relations removed from one side only — are each a Problem that has quietly lost part of its history with nothing recording that it happened, which is worse than the delete failing outright.
+
+Every foreign key stays `ON DELETE RESTRICT` (D-034). No cascade was added, and this is where that policy earns itself back: the delete path's list of tables is the single description of what a deletion reaches, and if a later table gains a reference to `problems` and is not added, the final statement fails on the foreign key and the whole transaction rolls back. The table keeps its rows, the Problem keeps existing, and the omission is loud. Cascade would have made the same omission silent and irreversible.
+
+That failure is deliberately not translated into a version conflict. It is a programming mistake — a table missing from this file — and reporting it as "your version was stale" would hide the bug behind a plausible retry. Only a version mismatch is a 409.
+
+The lock taken on the Problem row is worth stating precisely, because it does less than it appears to. Correctness comes from the version predicate on the last statement: the Problem is removed only if it is still at the version named, so a writer landing in between is refused rather than overwritten, with or without a lock. What the lock adds is determinism — a concurrent writer waits instead of causing five statements' work to be rolled back. A concurrent append is blocked either way, because deleting the Problem locks its row a moment later, which is why removing the lock fails no behavioural test and is pinned by an architecture test instead.
+
+## D-140 — `expected_version` guards the Problem, not its children (P3-05)
+
+A delete requires the version the caller last saw, and it catches a change to the Problem itself: an edit, a status transition, a conclusion.
+
+It does not catch an event or verification appended in the meantime, because appending does not move the Problem's version. Phase 2 made appends independent of the Problem's optimistic locking deliberately — they are append-only writes with their own idempotency key — and changing that here would rework locking and idempotency for every write in the system in order to add a guard to one.
+
+So the honest statement of the guarantee is this: a delete decided at version 5 can remove an event that arrived after the decision was made. Requiring the version and describing it as protecting the whole aggregate would claim a guarantee the code does not provide, which is worse than the gap.
+
+No confirmation flag is accepted either. Any client able to send the delete can send `confirm: true`, so the field would record that the client knew about the field. The spec's "explicit user intent" is a responsibility of whatever calls this on a person's behalf — an adapter, a UI — and the Phase 8 interface will carry it. Pretending to enforce it at the server would make a real requirement look satisfied.
+
+## D-141 — A future retrieval artifact joins the delete path, or the delete fails (P3-05)
+
+The completion condition mentions search derivatives and caches. None exist: eleven tables, no views, no materialized views, nothing derived. So P3-05 removes nothing of the kind, and no empty table, fake cache or `DeletableArtifactStore` was created to have something to point at — an abstraction with no implementation is a shape that will be wrong when the first real one arrives.
+
+What was added instead is a test pinning the exact set of foreign keys pointing into `problems` — seven of them, since `relations` and `usage_logs` contribute two each. A new reference fails that test, and whoever adds it has to decide whether the delete path takes it too. Combined with RESTRICT, forgetting is not silent in either direction: the test fails first, and if it somehow does not, the delete does.
+
+The rule for later phases, recorded here and in the task list: **a phase that adds a retrieval artifact, a search index or any cache derived from Memory must extend the physical delete path and the Phase 3 delete end-to-end in the same change.** Anything living outside PostgreSQL — a vector store, an external search index — cannot be reached by a foreign key, so its delete integration has to be written deliberately when it is introduced.

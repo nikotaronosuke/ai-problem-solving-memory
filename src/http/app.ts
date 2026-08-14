@@ -31,6 +31,7 @@ import type {
   ChangeLogService,
   MemoryControlService,
   ProblemCloseService,
+  ProblemDeleteService,
   EventService,
   HealthService,
   ProblemService,
@@ -54,6 +55,7 @@ import { registerEventRoutes } from './event-routes.js';
 import { registerMemoryControlRoutes } from './memory-control-routes.js';
 import { registerOpenApi } from './openapi.js';
 import { registerProblemCloseRoutes } from './problem-close-routes.js';
+import { registerProblemDeleteRoutes } from './problem-delete-routes.js';
 import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
@@ -77,6 +79,7 @@ export interface MemoryHttpAppDependencies {
   readonly changeLogService: ChangeLogService;
   readonly memoryControlService: MemoryControlService;
   readonly problemCloseService: ProblemCloseService;
+  readonly problemDeleteService: ProblemDeleteService;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -385,6 +388,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
 
       registerProjectRoutes(scope, dependencies.projectEnvironmentService);
       registerProblemRoutes(scope, dependencies.problemService);
+      registerProblemDeleteRoutes(scope, dependencies.problemDeleteService);
       registerProblemStatusRoutes(scope, dependencies.problemStatusService);
       registerEventRoutes(scope, dependencies.eventService);
       registerVerificationRoutes(scope, dependencies.verificationService);

@@ -25,6 +25,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   RequestContextUnavailableError,
   type AppendEventCommand,
   type AuthenticatedRequestContext,
@@ -106,6 +107,7 @@ function buildApp(service: EventService, authenticated = true) {
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
+    problemDeleteService: createProblemDeleteService(),
     logger: false,
   });
 }

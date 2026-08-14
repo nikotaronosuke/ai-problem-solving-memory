@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createEventService,
   createProblemService,
   createProblemStatusService,
@@ -91,6 +92,7 @@ function buildApp(service: ChangeLogService, authenticated = true) {
     changeLogService: service,
     memoryControlService: createMemoryControlService(),
     problemCloseService: createProblemCloseService(),
+    problemDeleteService: createProblemDeleteService(),
     logger: false,
   });
 }

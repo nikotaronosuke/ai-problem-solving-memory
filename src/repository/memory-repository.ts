@@ -69,6 +69,7 @@ import {
   type CreateRelationInput,
   type RelationRecord,
 } from '../db/relations.js';
+import { deleteProblemAggregate, type DeleteProblemOutcome } from '../db/problem-deletion.js';
 import {
   appendVerification,
   listVerifications,
@@ -174,6 +175,19 @@ export interface MemoryRepository {
    */
   listUsageLogs(problemId: ProblemId): Promise<UsageLogRecord[]>;
 
+  /**
+   * Removes a Problem and everything that refers to it.
+   *
+   * The one destructive operation on this surface. Answers what happened
+   * rather than throwing: whether a missing Problem is a 404 and a moved one
+   * a 409 is the application layer's call, and encoding it here would put an
+   * HTTP decision in storage.
+   *
+   * Must be called with a transactional executor. What it removes spans six
+   * tables, and half a delete is worse than none.
+   */
+  deleteProblem(problemId: ProblemId, expectedVersion: number): Promise<DeleteProblemOutcome>;
+
   createRelation(input: CreateRelationInput): Promise<RelationRecord>;
   /**
    * Relations touching this problem, from either end.
@@ -236,5 +250,8 @@ export function createMemoryRepository(
 
     createRelation: (input) => createRelation(executor, context, input),
     listRelations: (problemId) => listRelations(executor, context, problemId),
+
+    deleteProblem: (problemId, expectedVersion) =>
+      deleteProblemAggregate(executor, context, problemId, expectedVersion),
   };
 }

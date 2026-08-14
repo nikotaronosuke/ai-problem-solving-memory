@@ -26,6 +26,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createVerificationService,
 } from '../../src/app/index.js';
 import { createFixedRequestContextService } from '../support/request-context.js';
@@ -76,6 +77,7 @@ describe.skipIf(databaseUrl === undefined)('Problem API', () => {
       changeLogService: createChangeLogService(),
       memoryControlService: createMemoryControlService(),
       problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
       logger: false,
     });
     appsCreated.push(app);

@@ -23,6 +23,7 @@ import {
   createChangeLogService,
   createMemoryControlService,
   createProblemCloseService,
+  createProblemDeleteService,
   createRequestContextService,
   createVerificationService,
 } from './app/index.js';
@@ -53,6 +54,7 @@ const app = buildMemoryHttpApp({
   changeLogService: createChangeLogService(),
   memoryControlService: createMemoryControlService(),
   problemCloseService: createProblemCloseService(),
+  problemDeleteService: createProblemDeleteService(),
   // Credentials must not survive into a log file, and the failure is silent
   // if they do. Built by the http module so the configuration a test exercises
   // is the configuration the server runs.

@@ -172,6 +172,49 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       expect(result.rows).toHaveLength(12);
     });
 
+    it('has exactly seven references into problems, all of which the delete path removes', async () => {
+      const result = await pool.query<{ child: string; columns: string }>(
+        `select
+           con.conrelid::regclass::text as child,
+           (select string_agg(a.attname, ',' order by k.ord)
+              from unnest(con.conkey) with ordinality k(attnum, ord)
+              join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.attnum) as columns
+         from pg_constraint con
+         where con.contype = 'f'
+           and con.connamespace = 'public'::regnamespace
+           and con.confrelid = 'public.problems'::regclass
+         order by 1, 2`,
+      );
+
+      const incoming = result.rows.map((row) => `${row.child}(${row.columns})`);
+
+      // Pinned as a literal list, and the reason is P3-05 rather than tidiness.
+      // Physical delete has to reach every one of these, and the failure mode
+      // of forgetting one is silent from up here: the parent delete fails on
+      // the foreign key, the transaction rolls back, and a user who asked for
+      // a Problem to be gone is told something went wrong without being told
+      // it is still there.
+      //
+      // So a new reference into `problems` fails this test, and whoever adds
+      // it has to decide whether the delete path takes it too. A future
+      // retrieval artifact or search cache is exactly that case: give it a
+      // RESTRICT foreign key like everything else, and this test is the
+      // reminder that P3-05 and the Phase 3 delete end-to-end have to grow
+      // with it.
+      // Seven, not six: `relations` and `usage_logs` each contribute two, so
+      // counting tables rather than keys undercounts exactly the references
+      // that point in from a Problem that survives.
+      expect(incoming).toEqual([
+        'change_logs(owner_id,problem_id)',
+        'events(owner_id,problem_id)',
+        'relations(owner_id,from_id)',
+        'relations(owner_id,to_id)',
+        'usage_logs(owner_id,memory_id)',
+        'usage_logs(owner_id,problem_id)',
+        'verifications(owner_id,problem_id)',
+      ]);
+    });
+
     it('carries owner_id on every table, so owner scope never needs a join', async () => {
       const result = await pool.query<{ table_name: string }>(
         `select table_name from information_schema.columns

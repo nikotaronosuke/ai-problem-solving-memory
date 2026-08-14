@@ -585,3 +585,22 @@ export const NULLABLE_TEXT_SCHEMA = { type: ['string', 'null'] } as const;
  * misread is not one.
  */
 export const EXPECTED_VERSION_SCHEMA = { type: 'integer', minimum: 1 } as const;
+
+/**
+ * The same guard, in a query string.
+ *
+ * A query parameter is text on the wire, and this API does not coerce types —
+ * a deliberate choice, so that a body saying `"2"` is a mistake rather than
+ * something quietly reinterpreted. Declaring the parameter as an integer and
+ * relying on coercion to make it one would be turning that choice off for the
+ * one request where the consequence of a misread guard is a deleted Problem.
+ *
+ * So it is a string with the shape spelled out, converted deliberately in the
+ * handler. The pattern accepts a whole number from 1 with no leading zero and
+ * no more than ten digits: `0`, `-1`, `2.5`, `007`, an empty value and
+ * anything with a letter in it are all refused before the route runs.
+ */
+export const EXPECTED_VERSION_QUERY_SCHEMA = {
+  type: 'string',
+  pattern: '^[1-9][0-9]{0,9}$',
+} as const;

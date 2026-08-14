@@ -585,6 +585,105 @@ describe('credential boundary', () => {
   });
 });
 
+describe('the delete path', () => {
+  it('removes Memory rows from exactly one file', async () => {
+    const modules = await readModules(SRC);
+
+    const deleters = modules
+      .filter((module) => /delete\s+from\s+public\./i.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    // One file. Revoking a credential is an update rather than a delete, so
+    // this is the only place in the system that removes a row at all. What
+    // must not appear is a second: the order rows have to go in is a fact
+    // about the foreign key graph, and a second place that knows it is a
+    // second place that can be wrong about it.
+    expect(deleters).toEqual(['db/problem-deletion.ts']);
+  });
+
+  it('names the owner in every statement that removes something', async () => {
+    const source = await readFile(join(SRC, 'db', 'problem-deletion.ts'), 'utf8');
+
+    const statements = source.match(/delete\s+from\s+public\.[\s\S]*?`/gi) ?? [];
+    expect(statements.length).toBe(6);
+
+    // The foreign keys into `problems` are composite, so another owner's row
+    // cannot reference this one and matching on the id alone would happen to
+    // be safe today. It is still one edit away from not being, and there is no
+    // reason to write it the other way.
+    for (const statement of statements) {
+      expect(statement).toContain('owner_id = $1');
+    }
+  });
+
+  it('takes the row lock before removing anything', async () => {
+    const source = await readFile(join(SRC, 'db', 'problem-deletion.ts'), 'utf8');
+
+    const lockAt = source.indexOf('for update');
+    const firstDeleteAt = source.search(/delete\s+from\s+public\./i);
+
+    // Without the lock, an append can land between the read and the delete,
+    // and which of the two wins is decided by timing rather than by anything
+    // either caller can see.
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(lockAt).toBeLessThan(firstDeleteAt);
+  });
+
+  it('keeps the delete away from credentials', async () => {
+    const source = await readFile(join(SRC, 'db', 'problem-deletion.ts'), 'utf8');
+    // Comments stripped: the file explains at length why credentials are not
+    // its business, and prose saying so must not read as the thing it
+    // describes.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Clients and credentials belong to the owner, not to a Problem, and no
+    // foreign key connects them. Deleting a Problem must not be able to lock
+    // somebody out of their own memory.
+    for (const forbidden of ['clients', 'client_credentials', 'owners', 'credential']) {
+      expect(code).not.toContain(forbidden);
+    }
+  });
+
+  it('leaves Projects and Environments alone', async () => {
+    const source = await readFile(join(SRC, 'db', 'problem-deletion.ts'), 'utf8');
+
+    const removed = [...source.matchAll(/delete\s+from\s+public\.(\w+)/gi)].map(
+      (match) => match[1],
+    );
+
+    // Deliberate, not an omission. An Environment is a moment in time other
+    // Problems may name, and a Project outlives the problems found in it.
+    expect(removed).not.toContain('projects');
+    expect(removed).not.toContain('environments');
+    expect([...removed].sort()).toEqual([
+      'change_logs',
+      'events',
+      'problems',
+      'relations',
+      'usage_logs',
+      'verifications',
+    ]);
+  });
+
+  it('deletes through the repository rather than around it', async () => {
+    const modules = await readModules(SRC);
+
+    const importers = modules
+      .filter((module) =>
+        importsOf(module.source).some((specifier) => specifier.includes('problem-deletion')),
+      )
+      .map((module) => module.path)
+      .sort();
+
+    // The facade and the barrel that re-exports its result type, and nothing
+    // else. A service reaching the database function directly would be a
+    // delete outside the sanitized, owner-scoped seam every other write goes
+    // through.
+    expect(importers).toEqual(['repository/index.ts', 'repository/memory-repository.ts']);
+  });
+});
+
 describe('contract generation', () => {
   it('is named in one transport module and nowhere else', async () => {
     const modules = await readModules(SRC);

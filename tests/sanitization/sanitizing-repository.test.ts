@@ -34,80 +34,96 @@ import {
 const UUID = '5d41402a-bc4b-4a76-b971-9d911017c592';
 
 /**
- * Every operation, and whether it puts caller data into storage.
+ * Every operation, and whether the boundary inspects its arguments.
  *
- * `stores` is the question that matters: a write must be inspected, a read has
- * nothing to inspect. Both directions are asserted, so classifying a write as
- * a read to make a test pass fails a different one.
+ * `inspected` is the question that matters, and it is deliberately not the
+ * same question as "does this write". A write must be inspected and a read has
+ * nothing to inspect, so for most operations the two coincide. `deleteProblem`
+ * is where they come apart: it stores nothing and is inspected anyway, because
+ * the boundary treats anything it was not told is a read as a write. Its
+ * arguments are an identifier and an integer, so the inspection finds nothing
+ * and costs nothing — and the alternative, an exception list, is a list
+ * somebody eventually adds a content-carrying operation to.
+ *
+ * Both directions are asserted, so moving an operation to the other column to
+ * make one test pass fails the other.
  */
-const OPERATIONS: readonly { name: keyof MemoryRepository; stores: boolean; args: unknown[] }[] = [
-  { name: 'createProject', stores: true, args: [{ projectName: 'p' }] },
-  { name: 'getProject', stores: false, args: [UUID] },
-  { name: 'listProjects', stores: false, args: [] },
-  { name: 'updateProject', stores: true, args: [UUID, { projectName: 'p' }] },
+const OPERATIONS: readonly { name: keyof MemoryRepository; inspected: boolean; args: unknown[] }[] =
+  [
+    { name: 'createProject', inspected: true, args: [{ projectName: 'p' }] },
+    { name: 'getProject', inspected: false, args: [UUID] },
+    { name: 'listProjects', inspected: false, args: [] },
+    { name: 'updateProject', inspected: true, args: [UUID, { projectName: 'p' }] },
 
-  { name: 'createEnvironment', stores: true, args: [{ projectId: UUID, snapshot: { a: 'b' } }] },
-  { name: 'getEnvironment', stores: false, args: [UUID] },
-  { name: 'listEnvironments', stores: false, args: [UUID] },
+    {
+      name: 'createEnvironment',
+      inspected: true,
+      args: [{ projectId: UUID, snapshot: { a: 'b' } }],
+    },
+    { name: 'getEnvironment', inspected: false, args: [UUID] },
+    { name: 'listEnvironments', inspected: false, args: [UUID] },
 
-  {
-    name: 'createProblem',
-    stores: true,
-    args: [{ projectId: UUID, environmentId: UUID, title: 't', symptoms: 's' }],
-  },
-  { name: 'getProblem', stores: false, args: [UUID] },
-  { name: 'listProblems', stores: false, args: [UUID] },
-  { name: 'updateProblem', stores: true, args: [UUID, 1, { title: 't' }] },
-  { name: 'updateProblemStatus', stores: true, args: [UUID, 1, 'PAUSED'] },
-  {
-    name: 'updateProblemConclusion',
-    stores: true,
-    args: [UUID, 1, { status: 'PAUSED', fixKind: null }],
-  },
+    {
+      name: 'createProblem',
+      inspected: true,
+      args: [{ projectId: UUID, environmentId: UUID, title: 't', symptoms: 's' }],
+    },
+    { name: 'getProblem', inspected: false, args: [UUID] },
+    { name: 'listProblems', inspected: false, args: [UUID] },
+    { name: 'updateProblem', inspected: true, args: [UUID, 1, { title: 't' }] },
+    { name: 'updateProblemStatus', inspected: true, args: [UUID, 1, 'PAUSED'] },
+    {
+      name: 'updateProblemConclusion',
+      inspected: true,
+      args: [UUID, 1, { status: 'PAUSED', fixKind: null }],
+    },
 
-  {
-    name: 'appendEvent',
-    stores: true,
-    args: [{ problemId: UUID, eventType: 'FIX', summary: 's', clientEventId: UUID }],
-  },
-  { name: 'listEvents', stores: false, args: [UUID] },
+    {
+      name: 'appendEvent',
+      inspected: true,
+      args: [{ problemId: UUID, eventType: 'FIX', summary: 's', clientEventId: UUID }],
+    },
+    { name: 'listEvents', inspected: false, args: [UUID] },
 
-  {
-    name: 'appendVerification',
-    stores: true,
-    args: [
-      {
-        problemId: UUID,
-        verificationType: 'TEST',
-        result: true,
-        summary: 's',
-        clientEventId: UUID,
-      },
-    ],
-  },
-  { name: 'listVerifications', stores: false, args: [UUID] },
+    {
+      name: 'appendVerification',
+      inspected: true,
+      args: [
+        {
+          problemId: UUID,
+          verificationType: 'TEST',
+          result: true,
+          summary: 's',
+          clientEventId: UUID,
+        },
+      ],
+    },
+    { name: 'listVerifications', inspected: false, args: [UUID] },
 
-  {
-    name: 'createChangeLog',
-    stores: true,
-    args: [{ problemId: UUID, changedBy: 'c', fromVersion: 1, toVersion: 2, changes: {} }],
-  },
-  { name: 'listChangeLogs', stores: false, args: [UUID] },
+    {
+      name: 'createChangeLog',
+      inspected: true,
+      args: [{ problemId: UUID, changedBy: 'c', fromVersion: 1, toVersion: 2, changes: {} }],
+    },
+    { name: 'listChangeLogs', inspected: false, args: [UUID] },
 
-  {
-    name: 'createUsageLog',
-    stores: true,
-    args: [{ problemId: UUID, sourceAi: 'a', action: 'ADOPTED', memoryId: UUID, reason: 'r' }],
-  },
-  { name: 'listUsageLogs', stores: false, args: [UUID] },
+    {
+      name: 'createUsageLog',
+      inspected: true,
+      args: [{ problemId: UUID, sourceAi: 'a', action: 'ADOPTED', memoryId: UUID, reason: 'r' }],
+    },
+    { name: 'listUsageLogs', inspected: false, args: [UUID] },
 
-  {
-    name: 'createRelation',
-    stores: true,
-    args: [{ fromId: UUID, toId: UUID, relationType: 'SIMILAR_TO', reason: 'r' }],
-  },
-  { name: 'listRelations', stores: false, args: [UUID] },
-] as const;
+    {
+      name: 'createRelation',
+      inspected: true,
+      args: [{ fromId: UUID, toId: UUID, relationType: 'SIMILAR_TO', reason: 'r' }],
+    },
+    { name: 'listRelations', inspected: false, args: [UUID] },
+
+    // Stores nothing, inspected all the same. See the note above the table.
+    { name: 'deleteProblem', inspected: true, args: [UUID, 1] },
+  ] as const;
 
 /** An executor that answers everything with nothing. */
 const stubExecutor: DatabaseExecutor = {
@@ -182,17 +198,17 @@ describe('the operation inventory', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('classifies twelve operations as storing and eleven as not', () => {
-    const storing = OPERATIONS.filter((operation) => operation.stores);
+  it('classifies thirteen operations as inspected and eleven as reads', () => {
+    const inspected = OPERATIONS.filter((operation) => operation.inspected);
 
-    expect(storing).toHaveLength(12);
-    expect(OPERATIONS).toHaveLength(23);
+    expect(inspected).toHaveLength(13);
+    expect(OPERATIONS).toHaveLength(24);
   });
 });
 
 describe('what the boundary inspects', () => {
-  it.each(OPERATIONS.filter((operation) => operation.stores))(
-    '$name is inspected before it can store anything',
+  it.each(OPERATIONS.filter((operation) => operation.inspected))(
+    '$name is inspected before it reaches storage',
     async ({ name, args }) => {
       const { seen } = await drive(name, args);
 
@@ -203,8 +219,8 @@ describe('what the boundary inspects', () => {
     },
   );
 
-  it.each(OPERATIONS.filter((operation) => !operation.stores))(
-    '$name stores nothing, so nothing is inspected',
+  it.each(OPERATIONS.filter((operation) => !operation.inspected))(
+    '$name is a read, so nothing is inspected',
     async ({ name, args }) => {
       const { seen } = await drive(name, args);
 
