@@ -112,7 +112,9 @@ function serviceRecording(calls: ServiceCalls): ProjectEnvironmentService {
   };
 }
 
-const healthService: HealthService = { check: () => Promise.resolve({ status: 'ok' }) };
+const healthService: HealthService = {
+  check: () => Promise.resolve({ status: 'ok', latencyMs: 0 }),
+};
 
 function contextService(ownerId = OWNER_ID): RequestContextService {
   return {
@@ -128,7 +130,7 @@ function buildApp(service: ProjectEnvironmentService, authenticated = true) {
     healthService,
     requestContextService: authenticated
       ? contextService()
-      : { authenticate: () => Promise.reject(new RequestContextUnavailableError('unset')) },
+      : { authenticate: () => Promise.reject(new RequestContextUnavailableError('MISSING')) },
     projectEnvironmentService: service,
     problemService: createProblemService(),
     problemStatusService: createProblemStatusService(),

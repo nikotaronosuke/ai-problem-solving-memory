@@ -1124,6 +1124,268 @@ describe('contract generation', () => {
   });
 });
 
+describe('the operational log', () => {
+  /**
+   * Scripts a person runs and reads the output of.
+   *
+   * They print results — a token, once, at issuance; whether the database
+   * answered — and that is what they are for. The distinction P3-10 draws is
+   * between an operational log, which accumulates unattended, and a command
+   * whose output is the answer somebody asked for.
+   */
+  const ADMINISTRATIVE_CLIS = [
+    'credentials/issue.ts',
+    'credentials/revoke.ts',
+    'db/check-connection.ts',
+    'owner/bootstrap.ts',
+  ];
+
+  /** Every `x.log.<level>({ … })` call site, with the keys it passes. */
+  function loggedKeys(source: string): string[] {
+    const calls = [...source.matchAll(/\.log\.\w+\(\s*\{([^{}]*)\}/g)];
+    return calls.flatMap((call) => [...(call[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => m[1]!));
+  }
+
+  /**
+   * The full argument text of every `x.log.<level>(…)` call.
+   *
+   * Scanned by matching parentheses rather than by regex, so a call spanning
+   * several lines is read whole. A guard that only saw the first line of a
+   * call would report clean for a violation written on the second.
+   */
+  function logCallArguments(source: string): string[] {
+    const found: string[] = [];
+    const opener = /\.log\.\w+\(/g;
+
+    let match: RegExpExecArray | null;
+    while ((match = opener.exec(source)) !== null) {
+      let depth = 1;
+      let at = match.index + match[0].length;
+      const from = at;
+
+      while (at < source.length && depth > 0) {
+        const character = source[at];
+        if (character === '(') {
+          depth += 1;
+        } else if (character === ')') {
+          depth -= 1;
+        }
+        at += 1;
+      }
+
+      found.push(source.slice(from, at - 1));
+    }
+
+    return found;
+  }
+
+  it('carries only the fields this policy names', async () => {
+    const modules = await readModules(SRC);
+
+    // The allowlist, spelled out. Every one of these is a value the server
+    // produced: an event name, a count, a status code, a closed reason. None
+    // of them can hold a caller's text, a driver's message or Memory content.
+    const ALLOWED = new Set([
+      'event',
+      'failure',
+      'validationContext',
+      'validationProblemCount',
+      'statusCode',
+      'locator',
+      'kind',
+      'reason',
+      'healthReason',
+      'latencyMs',
+      'signal',
+    ]);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const key of loggedKeys(module.source)) {
+        if (!ALLOWED.has(key)) {
+          offenders.push(`${module.path} -> ${key}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('is never handed an error', async () => {
+    const modules = await readModules(SRC);
+
+    // `{ err: error }` is the shape this used to take, and Pino expands an
+    // error into its message, its stack, its `cause` and every enumerable
+    // property it has — including, for a `pg` constraint violation, the row
+    // that broke it. The serializer would catch this now; the point of also
+    // forbidding it here is that nobody should have to rely on that.
+    //
+    // What is forbidden is the error *value*: a bare `err` or `error`, and any
+    // of the properties that carry the failure's own words. Reading a field
+    // Fastify computed — `error.validationContext` is one of four strings it
+    // chose — is a different act, and stays allowed.
+    const dangerous = [
+      /\b(?:err|error)\b(?!\s*\.)/,
+      /\.(?:message|stack|cause|detail|constraint|table|column|query|internalQuery|where|path)\b/,
+    ];
+
+    // Quoted message text is stripped first. `'error during shutdown'` is a
+    // sentence this repository wrote, and a guard that read prose would be
+    // arguing with the word rather than the value. Template literals are left
+    // in, deliberately — `${error.message}` is exactly the thing to catch.
+    const withoutMessages = (argument: string): string =>
+      argument.replace(/'(?:[^'\\]|\\.)*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, '""');
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const argument of logCallArguments(module.source)) {
+        const code = withoutMessages(argument);
+        if (dangerous.some((pattern) => pattern.test(code))) {
+          offenders.push(`${module.path} -> ${argument.replace(/\s+/g, ' ').trim()}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('is never handed a request body or a response payload', async () => {
+    const modules = await readModules(SRC);
+
+    const offenders = modules
+      .filter((module) =>
+        /\.log\.\w+\([^)]*\b(?:request\.body|req\.body|request\.raw|reply\.raw|payload|body)\b/.test(
+          module.source,
+        ),
+      )
+      .map((module) => module.path)
+      .sort();
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('decides what a request, a response and a failure look like in one place', async () => {
+    const modules = await readModules(SRC);
+
+    const withSerializers = modules
+      .filter((module) => /\bserializers\b/.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    // One home for the policy. A second serializer configured somewhere else
+    // would be a second answer to the same question, and the safe one would
+    // not necessarily win.
+    expect(withSerializers).toEqual(['http/app.ts']);
+  });
+
+  it('brings in no logging library of its own', async () => {
+    const modules = await readModules(SRC);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // Pino arrives through Fastify and is configured through Fastify.
+        // Importing it directly, or adding a second logger, would put a sink
+        // outside the configuration every test here checks.
+        if (/^(pino|winston|bunyan|loglevel|@opentelemetry)/.test(specifier)) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps the server process to one line of console output', async () => {
+    const modules = await readModules(SRC);
+
+    const consoleUsers = modules
+      .filter((module) => /\bconsole\.\w+\(/.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    expect(consoleUsers).toEqual([...ADMINISTRATIVE_CLIS, 'index.ts'].sort());
+
+    const entrypoint = modules.find((module) => module.path === 'index.ts');
+    const calls = [...entrypoint!.source.matchAll(/console\.(\w+)\(([^\n]*)/g)];
+
+    // Two, and both of them static. The summary is a service name, a Node
+    // version, an environment, a level and the address about to be bound —
+    // decided by whoever started the process, at a moment when there are no
+    // callers. The failure line is a constant.
+    expect(calls.map((call) => call[1])).toEqual(['log', 'error']);
+    expect(calls[0]![2]).toContain('formatStartupSummary(buildStartupSummary(env))');
+    expect(calls[1]![2]).toContain('STARTUP_FAILURE_MESSAGE');
+  });
+
+  it('reads configuration inside the boundary that catches it failing', async () => {
+    const modules = await readModules(SRC);
+    const entrypoint = modules.find((module) => module.path === 'index.ts')!.source;
+
+    // `loadEnv` and `createPool` run before a logger exists, so a failure in
+    // either is an uncaught exception with a stack — and two of the errors
+    // reachable there quote their input. They belong inside `main`, whose
+    // caller prints fixed text.
+    const main = /async function main\(\): Promise<void> \{([\s\S]*?)\n\}/.exec(entrypoint);
+    expect(main).not.toBeNull();
+    expect(main![1]).toContain('loadEnv()');
+    expect(main![1]).toContain('createPool(');
+    expect(main![1]).toContain('buildMemoryHttpApp(');
+
+    // And nothing is left at the top level that could throw past it.
+    const afterMain = entrypoint.slice(entrypoint.indexOf('\ntry {\n  await main();'));
+    expect(afterMain).toContain('await main();');
+    expect(afterMain).not.toContain('loadEnv');
+    expect(afterMain).not.toContain('createPool');
+  });
+
+  it('leaves the retry queue without a logger', async () => {
+    const modules = await readModules(join(SRC, 'reliability'));
+    expect(modules.length).toBeGreaterThan(0);
+
+    // The queue holds payloads, file paths, idempotency keys and terminal
+    // reasons — the things P3-07 through P3-09 decided not to carry outward.
+    // Where a client-side library's diagnostics go is the Adapter's question,
+    // in Phase 5, and answering it here would answer it for every caller.
+    const offenders = modules
+      .filter((module) => /\.log\.\w+\(|\bconsole\.\w+\(|\blogger\b/.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('is written from two modules and no others', async () => {
+    const modules = await readModules(SRC);
+
+    const writers = modules
+      .filter((module) => /\.log\.\w+\(/.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    // The transport boundary, which knows what a request did, and the
+    // composition root, which knows about the process. Nothing below them
+    // logs at all — no service, no repository, no domain rule, and in
+    // particular neither of the modules that own UsageLog and ChangeLog.
+    //
+    // That is what keeps the two kinds of log apart without needing a rule
+    // about it. UsageLog and ChangeLog are Memory data: rows an owner reads,
+    // exports and deletes. Mirroring them into the process log would copy
+    // Memory content somewhere none of those operations reach, and writing
+    // process events into them would make Memory the place operations get
+    // audited — the Global Audit warehouse this module is not.
+    expect(writers).toEqual(['http/app.ts', 'index.ts']);
+
+    const memoryLogModules = modules.filter((module) =>
+      /^(?:app|db|domain)\/(?:usage-logs?|change-logs?)\.ts$/.test(module.path),
+    );
+    expect(memoryLogModules.length).toBeGreaterThan(0);
+    for (const module of memoryLogModules) {
+      expect(module.source).not.toMatch(/\.log\.\w+\(|\bconsole\.\w+\(/);
+    }
+  });
+});
+
 describe('database layer', () => {
   it('is the only place that names the driver', async () => {
     const modules = await readModules(SRC);

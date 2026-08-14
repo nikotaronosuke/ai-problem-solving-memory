@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-13
+Updated: 2026-08-15
 
 ## Current phase
 
@@ -8,7 +8,7 @@ Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
 Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
-Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 … P3-03 done; P3-04 next)
+Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 … P3-10 done; P3-11 next)
 
 ## Source of truth
 
@@ -548,6 +548,28 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **The library answers; the caller works** (D-180). No `withMemoryFallback(mainWork, …)`. Continuation is proved by a caller-side sentinel, which is also what an adapter will look like.
 
+## What exists now — Logging policy (P3-10)
+
+**The log carries what the server decided, never what anybody sent it** (D-184). The previous configuration was safe by subtraction — Fastify wrote what it wrote, and a redaction list removed what somebody had thought of. Measuring it found five leaks, none of them on any list: the raw URL, so a credential in a 404 path or a query string was written verbatim; the caller-chosen `Host` header; the remote address and port; the driver's message behind a failed health probe, which named a database host, a port and an account; and every `Error` handed to the logger. The direction is now inverted, and adding a field is an edit to `createLoggerOptions` or to one of eleven call sites.
+
+**Fastify's lifecycle logging stays; its serializers do not** (D-185). `req` becomes `{ method, route, operation }` — the route template or `UNMATCHED`, and the OpenAPI `operationId` or `null`. `res` becomes `{ statusCode }`. `err` becomes `{ failure: 'UNEXPECTED' }` from a function that takes no argument at all. No URL, no host, no headers, no address, no port, no body, no payload. `disableRequestLogging` was rejected: it is deprecated in Fastify 5.11.3, and its supported replacement is a *server* option, which would move the policy out of the one function every leak test runs as production configuration.
+
+**No error reaches the logger, and none could say anything if it did** (D-186). Pino expands an `Error` into its message, its stack, its `cause` — appended into the message too — and every enumerable property. A `pg` unique or check violation carries the offending row in `detail`, which for this schema is Memory prose, plus `table`, `column`, `constraint`, `internalQuery` and `where`; a Node filesystem error carries the absolute `path`. Both the sink and the serializer are closed, and the mutation results say why: handing the error back with the serializer in place leaks nothing, removing the serializer with no call site passing an error leaks nothing, removing both leaks everything.
+
+**A failed health probe reports a reason, not the driver's words** (D-187). `CONNECTION_FAILED`, `AUTHENTICATION_FAILED`, `UNEXPECTED_PROBE_RESULT`, `UNKNOWN` — classified from `error.code`, never from message text, and falling to `UNKNOWN` rather than guessing. The HTTP contract is unchanged: `200 {status:'ok'}`, `503 {status:'unavailable'}`, reason never in the response. This is the leak a serializer cannot close, which is why the two halves of the policy both exist.
+
+**Eleven closed events, and a field allowlist** (D-184). `REQUEST_VALIDATION_FAILED`, `REQUEST_PARSE_FAILED`, `REQUEST_APPLICATION_REJECTED`, `SANITIZATION_REJECTED`, `AUTH_CONTEXT_UNAVAILABLE`, `EXPORT_BLOCKED`, `HEALTH_UNAVAILABLE`, `UNHANDLED_REQUEST_FAILURE`, `SERVER_SHUTDOWN`, `SERVER_SHUTDOWN_FAILURE`, `SERVER_START_FAILURE`. The permitted fields are `event`, `failure`, `validationContext`, `validationProblemCount`, `statusCode`, `locator`, `kind`, `reason`, `healthReason`, `latencyMs`, `signal` — all server-produced, none able to hold caller text, driver output or Memory content.
+
+**`request_id` is the only identifier** (D-188). Fastify generates it and a caller cannot supply one — `requestIdHeader` defaults to `false` in Fastify 5, verified at runtime rather than read from documentation. No owner, client, credential, project, problem, event, verification or client-event id is logged, and neither is the remote address. The test applied was necessity, not secrecy.
+
+**A server that cannot start says only that** (D-189). Configuration is read and the pool opened before a logger exists, so a failure there was an uncaught exception with a stack — and `EnvValidationError` quotes the offending value while `UnsafeDatabaseTargetError` quotes the database host. Startup now runs inside `main()`, whose caller prints one fixed sentence and sets a non-zero exit code. Proved by running the real entrypoint in a child process, because there is no call site a source guard could look for.
+
+**An administrative command is not a monitoring log** (D-190). `credential:issue` still prints a token once; that is the command's result, not an accumulating record. The server process is held to one line, the static startup summary, which stays on `console.log` because moving it to Pino would not close the pre-logger path and would mean it could not print before the logger exists. `db:check` changed: it printed the driver's message and now prints the closed reason.
+
+**Nothing new logs** (D-191). The logger is written from two modules — the transport boundary and the composition root. `src/reliability/` stays logger-free and `QueueStorageError` keeps its three operation kinds and no `cause`. UsageLog and ChangeLog stay Memory data: not mirrored into the process log, and not written to from it.
+
+**Two layers of test, because either alone passes for the wrong reason.** An exact JSON field inventory fails the moment a field appears, whatever is in it; an adversarial sweep of twenty markers — credentials, JWTs, an AWS secret, a private key, a password-bearing database URL, an email, Memory prose, prompt, chain-of-thought and conversation markers, a filesystem path, a caller-invented key — fails when a permitted field starts carrying something it should not. Both run against `createLoggerOptions('trace')`, which is more verbose than any level `LOG_LEVELS` allows an operator to select.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -558,7 +580,8 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No PII detector, no raw-conversation or raw-log classifier, no large-code threshold. P3-02 and P3-03 are about secrets only; an email address is kept, and that is a statement about secrets rather than a ruling on PII
 - No bare-secret detection. A credential with no context at all — pasted alone into a summary, nothing naming it — is not found, because the only way to find it would be to guess from shape (D-122)
 - No key redaction. A credential written into an object *key* is refused, not rewritten (D-126)
-- No general logging policy. Two specific pre-sanitization paths were closed in P3-03; the rest of P3-10 is untouched
+- No logging backend. No log table, no log endpoint, no retention, no rotation, no external sink, no metrics platform, no Global Audit warehouse. P3-10 is a policy about what may be emitted to stdout (D-191)
+- No logger-side sanitizer. Memory’s secret detector is for structured Memory content and is not reused for logs; operational diagnostics are closed values instead, so there is nothing to sanitize (D-184)
 - No orphan cleanup. A Project or Environment left with no Problems stays; that is the rule, not a gap (D-136)
 - No record that a deletion happened. No tombstone, no delete audit table, and no `changed_by` on the request (D-137)
 - No server-side confirmation of user intent. A flag any client can send proves nothing; the responsibility sits with the adapter or UI (D-140)
@@ -580,15 +603,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-10 — Logging policy.
+P3-11 — Security tests.
 
 Not started. See the private Phase 3 breakdown for the task.
 
 Notes for whoever picks this up:
-- Two paths were closed early, in P3-03: Ajv names an offending property, and a JSON parse error quotes the bytes it choked on. Both are logged as codes rather than objects (D-128)
-- P3-09 deliberately dropped filesystem detail rather than carrying it for diagnostics (D-172). If operational diagnostics are wanted, they need somewhere safe to go before anything starts keeping the original error again
-- The redaction paths on the logger are dormant: Fastify's `req` serializer writes no headers, so nothing exercises them today (D-157 era). Whether that stays true is worth checking rather than assuming
-- Nothing in `src/reliability/` logs at all. What a queue or a fallback should record, if anything, is an open question this task inherits
+- P3-10 built the log-leak apparatus P3-11 can reuse: `tests/http/logging.test.ts` holds a twenty-marker fixture set and a field-inventory helper, both driven by the production `createLoggerOptions`
+- P3-10 covered a representative entry point per log surface, not all 27 operations. Sweeping every operation with secret fixtures is P3-11’s
+- Owner crossing, delete residuals, retry duplication and malformed input across the whole surface were deliberately left to P3-11 rather than partly done here
+- `HealthReport.detail` is gone. Anything reading a health failure now reads a closed `reason` (D-187)
+- `RequestContextUnavailableError` now takes a closed union rather than a `string`; a new failure needs a new member of `REQUEST_CONTEXT_FAILURES`
 
 ## Core MVP milestone
 

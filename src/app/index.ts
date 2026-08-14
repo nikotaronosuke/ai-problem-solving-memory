@@ -40,7 +40,15 @@ export {
   type DeleteProblemCommand,
   type ProblemDeleteService,
 } from './problem-delete-service.js';
-export { createHealthService, type HealthReport, type HealthService } from './health-service.js';
+export {
+  createHealthService,
+  type HealthReport,
+  type HealthService,
+  type HealthStatus,
+} from './health-service.js';
+// Re-exported so transport can name the closed reason without importing the
+// database layer, which the layering rules forbid it from doing.
+export { DATABASE_HEALTH_REASONS, type DatabaseHealthReason } from '../db/health.js';
 export {
   createProjectEnvironmentService,
   type CreateEnvironmentCommand,
@@ -76,8 +84,10 @@ export {
 } from './verification-service.js';
 export {
   createRequestContextService,
+  REQUEST_CONTEXT_FAILURES,
   RequestContextUnavailableError,
   type AuthenticatedRequestContext,
+  type RequestContextFailure,
   type RequestContextService,
 } from './request-context.js';
 // Re-exported so transport maps the refusal without importing the boundary

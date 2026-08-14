@@ -9,8 +9,17 @@ export {
   buildMemoryHttpApp,
   API_PREFIX,
   createLoggerOptions,
+  OPERATIONAL_FAILURES,
+  OPERATIONAL_LOG_EVENTS,
   REDACTED_LOG_PATHS,
+  UNMATCHED_ROUTE,
+  type LoggedFailure,
+  type LoggedReply,
+  type LoggedRequest,
   type MemoryHttpAppDependencies,
+  type OperationalFailure,
+  type OperationalLoggerOptions,
+  type OperationalLogEvent,
 } from './app.js';
 export {
   buildErrorEnvelope,

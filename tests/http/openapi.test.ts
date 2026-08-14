@@ -45,7 +45,9 @@ import type { MemoryRepository } from '../../src/repository/index.js';
 
 const OWNER_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 
-const healthService: HealthService = { check: () => Promise.resolve({ status: 'ok' }) };
+const healthService: HealthService = {
+  check: () => Promise.resolve({ status: 'ok', latencyMs: 0 }),
+};
 const requestContextService: RequestContextService = {
   authenticate: () =>
     Promise.resolve({

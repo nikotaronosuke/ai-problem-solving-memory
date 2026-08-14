@@ -91,7 +91,9 @@ function serviceFailing(error: Error): UsageLogService {
   };
 }
 
-const healthService: HealthService = { check: () => Promise.resolve({ status: 'ok' }) };
+const healthService: HealthService = {
+  check: () => Promise.resolve({ status: 'ok', latencyMs: 0 }),
+};
 
 function buildApp(service: UsageLogService, authenticated = true) {
   return buildMemoryHttpApp({
@@ -103,7 +105,7 @@ function buildApp(service: UsageLogService, authenticated = true) {
               repository: { ownerId: OWNER_ID } as unknown as MemoryRepository,
             } as AuthenticatedRequestContext),
         } satisfies RequestContextService)
-      : { authenticate: () => Promise.reject(new RequestContextUnavailableError('unset')) },
+      : { authenticate: () => Promise.reject(new RequestContextUnavailableError('MISSING')) },
     projectEnvironmentService: createProjectEnvironmentService(),
     problemService: createProblemService(),
     problemStatusService: createProblemStatusService(),
