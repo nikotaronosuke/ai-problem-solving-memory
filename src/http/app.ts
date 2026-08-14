@@ -109,6 +109,34 @@ export const REDACTED_LOG_PATHS = [
 ] as const;
 
 /**
+ * The logging options the server runs with.
+ *
+ * Assembled here rather than at the one call site so a test can run the real
+ * configuration instead of rebuilding an equivalent one and proving only that
+ * its own copy behaves. Nothing about redaction is worth asserting against a
+ * list the assertion wrote itself.
+ *
+ * `remove: true` deletes the field rather than replacing it with a marker. A
+ * marker says a credential was there, and the shape of the log then depends on
+ * whether a request carried one.
+ *
+ * Worth being plain about the limit: today no serializer writes request
+ * headers, so this removes nothing in practice. It is here for the moment one
+ * does — a debug serializer added under pressure, an error path that dumps a
+ * request — because that is exactly when nobody re-derives which headers are
+ * credentials.
+ */
+export function createLoggerOptions(level: string): {
+  level: string;
+  redact: { paths: string[]; remove: true };
+} {
+  return {
+    level,
+    redact: { paths: [...REDACTED_LOG_PATHS], remove: true },
+  };
+}
+
+/**
  * Builds the application.
  *
  * Returns a Fastify instance that has not been listened on. The caller decides
@@ -264,6 +292,11 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
           operationId: 'healthCheck',
           summary: 'Report whether the service is serving',
           tags: ['Operational'],
+          // Opts out of the document's default. Whether the process is
+          // serving is not owned by anyone, and a probe that needed a
+          // credential could not answer during the failure it exists to
+          // report.
+          security: [],
           response: {
             200: {
               type: 'object',
@@ -305,9 +338,15 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
   void app.register(
     (scope, _options, done) => {
       scope.addHook('preHandler', async (request) => {
-        // Establishing an owner needs the database, so it belongs in the
+        // Verifying a credential needs the database, so it belongs in the
         // request lifecycle rather than in schema validation.
-        request.memoryContext = await dependencies.requestContextService.authenticate();
+        //
+        // This is the only place the `Authorization` header is read. What the
+        // handler below receives is a context; the header itself goes no
+        // further, so no route and no service ever holds a credential.
+        request.memoryContext = await dependencies.requestContextService.authenticate(
+          request.headers.authorization,
+        );
       });
 
       scope.get(

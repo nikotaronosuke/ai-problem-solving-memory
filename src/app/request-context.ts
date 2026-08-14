@@ -5,29 +5,41 @@
  * pass somewhere. It asks for a context and receives an owner-scoped
  * repository — already bound, with no argument that could name someone else.
  *
- * How the owner is identified is deliberately behind this one function. In
- * this phase it comes from `MEMORY_OWNER_ID`, the same local development
- * identity Phase 1 established. When real client credentials arrive in P3-04,
- * the resolver changes here and route handlers do not change at all.
+ * Since P3-04 that context comes from a credential and from nothing else:
  *
- * Two things this is not:
+ *     Authorization: Bearer mem_…
+ *         → the credential is verified
+ *         → which names a client
+ *         → which belongs to an owner
+ *         → whose existence is confirmed
+ *         → and only then is a repository handed out
  *
- * An owner id is not a credential. Nothing accepts an owner id from a header
- * or a body and treats the request as authenticated on that basis — knowing an
- * identifier is not the same as being that person, and wiring it up "just for
- * now" is how that distinction gets lost.
+ * There is no other way in. The environment used to establish an HTTP context
+ * and deliberately no longer can: knowing an owner's identifier is not the same
+ * as holding a credential for it, and a fallback that quietly accepted the
+ * former would make an identifier that lives in configuration files into a
+ * password that cannot be revoked. That identifier remains what it always was
+ * for local tooling — bootstrap, issuing and revoking credentials — and has no
+ * route into this function.
+ *
+ * Two things this is still not:
+ *
+ * An owner id is not a credential. Nothing accepts one from a header or a body
+ * and treats the request as authenticated on that basis.
  *
  * The reason a context could not be established does not leave this module in
- * a form a client can read. Missing, malformed and unknown are three different
- * failures to an operator reading the log, and one indistinguishable rejection
- * to a client — otherwise the endpoint answers "does this owner exist?" for
- * anyone who asks.
+ * a form a client can read. Missing, malformed, unknown, wrong and revoked are
+ * five different failures to an operator reading a log, and one
+ * indistinguishable rejection to a client — otherwise the endpoint answers
+ * questions about credentials the caller does not hold.
  */
 
-import type { EnvSource } from '../config/env.js';
+import type { CredentialAuthenticator } from '../credentials/index.js';
+import { CredentialAuthenticationError } from '../credentials/index.js';
 import type { DatabaseExecutor } from '../db/executor.js';
 import type { DatabaseTransactionRunner } from '../db/transaction.js';
-import { resolveOwnerContext } from '../owner/context.js';
+import type { ClientId } from '../domain/client.js';
+import { resolveOwnerContextFor } from '../owner/context.js';
 import { createMemoryRepository, type MemoryRepository } from '../repository/index.js';
 import {
   createSecretDetectionPolicy,
@@ -38,10 +50,19 @@ import {
 /**
  * A request that has an established owner.
  *
- * Carries the repository rather than an id, so owner scope is a thing you
- * hold, not a value you remember to pass.
+ * Carries the repository rather than an owner id, so owner scope is a thing
+ * you hold rather than a value you remember to pass.
+ *
+ * `clientId` is the exception, and it is not an owner: it says which
+ * connection this request came through. Nothing consults it yet. It is here so
+ * that when read, write and delete permissions are decided per client, the
+ * decision has somewhere to be made rather than requiring the whole
+ * authentication path to be rethreaded — and because "which client did this"
+ * is the question an audit trail will eventually ask.
  */
 export interface AuthenticatedRequestContext {
+  readonly clientId: ClientId;
+
   readonly repository: MemoryRepository;
 
   /**
@@ -62,7 +83,15 @@ export interface AuthenticatedRequestContext {
 
 /** Raised when no owner could be established for a request. */
 export class RequestContextUnavailableError extends Error {
-  /** For the server log only. Never rendered into a response. */
+  /**
+   * For the server log only, and never rendered into a response.
+   *
+   * Since P3-04 this is filled from a closed set of authentication reasons
+   * rather than from a message built at the failure site. The rule P3-01
+   * through P3-03 arrived at the hard way is that any string an outside party
+   * can influence eventually reaches a log, and a presented credential is the
+   * most outside-influenced string there is.
+   */
   readonly internalReason: string;
 
   constructor(internalReason: string) {
@@ -73,7 +102,14 @@ export class RequestContextUnavailableError extends Error {
 }
 
 export interface RequestContextService {
-  authenticate(): Promise<AuthenticatedRequestContext>;
+  /**
+   * Verifies a request's credential and hands back its context.
+   *
+   * Takes the raw `Authorization` header, which is the only place a
+   * credential is read. The header does not travel any further: routes and
+   * services receive a context, never the value that produced it.
+   */
+  authenticate(authorizationHeader: string | undefined): Promise<AuthenticatedRequestContext>;
 }
 
 /**
@@ -84,35 +120,45 @@ export interface RequestContextService {
  * not start a transaction would have to fail at the moment a service tried,
  * which is far too late to notice.
  *
- * The owner is resolved once and closed over, so the transactional repository
- * is the same scope as the ordinary one by construction rather than by a
- * caller remembering to pass the same context twice.
+ * The owner is resolved once per request and closed over, so the transactional
+ * repository is the same scope as the ordinary one by construction rather than
+ * by a caller remembering to pass the same context twice.
  *
  * `policy` is the sanitization policy every write is checked against. It
- * defaults to secret detection, so a server built without saying anything about
- * sanitization is checked rather than open — the direction a default should
- * fail in when the alternative is storing a credential.
- *
- * P3-01 installed the boundary, P3-02 supplies this detector, and P3-03 will
- * decide refusal and redaction in full. Each arrives by passing a different
- * policy here rather than by moving where the check happens.
+ * defaults to secret detection, so a server built without saying anything
+ * about sanitization is checked rather than open.
  */
 export function createRequestContextService(
   executor: DatabaseExecutor,
   transactionRunner: DatabaseTransactionRunner,
-  source: EnvSource = process.env,
+  authenticator: CredentialAuthenticator,
   policy: SanitizationPolicy = createSecretDetectionPolicy(),
 ): RequestContextService {
   return {
-    async authenticate(): Promise<AuthenticatedRequestContext> {
+    async authenticate(authorizationHeader): Promise<AuthenticatedRequestContext> {
+      let principal;
+      try {
+        // Every request, against the database. Nothing about a credential is
+        // held between requests, which is what makes a revocation take effect
+        // on the next call rather than at the next restart.
+        principal = await authenticator.authenticate(authorizationHeader);
+      } catch (error) {
+        if (error instanceof CredentialAuthenticationError) {
+          // The reason is one of five identifiers this codebase chose. No part
+          // of what was presented is in it.
+          throw new RequestContextUnavailableError(error.reason);
+        }
+        throw error;
+      }
+
       let ownerContext;
       try {
-        ownerContext = await resolveOwnerContext(executor, source);
-      } catch (error) {
-        // The distinction between missing, malformed and unknown is kept for
-        // the log and collapsed for the caller.
-        const internalReason = error instanceof Error ? error.message : 'owner resolution failed';
-        throw new RequestContextUnavailableError(internalReason);
+        // The credential named an owner; this confirms the owner is still
+        // there. An id read out of a foreign key is not the same as a row, and
+        // `OwnerContext` means somebody checked.
+        ownerContext = await resolveOwnerContextFor(executor, principal.ownerId);
+      } catch {
+        throw new RequestContextUnavailableError('OWNER_UNAVAILABLE');
       }
 
       // Both repositories are wrapped, and this is the only place either is
@@ -121,6 +167,7 @@ export function createRequestContextService(
       // transactional path, where forgetting it would leave exactly the writes
       // that matter most unchecked.
       return {
+        clientId: principal.clientId,
         repository: withSanitization(createMemoryRepository(executor, ownerContext), policy),
         runInTransaction: (work) =>
           transactionRunner.run((transactional) =>

@@ -28,7 +28,9 @@
     "db:migrate": "supabase migration up",
     "db:migration:new": "supabase migration new",
     "db:check": "tsx --env-file-if-exists=.env src/db/check-connection.ts",
-    "owner:bootstrap": "tsx --env-file-if-exists=.env src/owner/bootstrap.ts"
+    "owner:bootstrap": "tsx --env-file-if-exists=.env src/owner/bootstrap.ts",
+    "credential:issue": "tsx --env-file-if-exists=.env src/credentials/issue.ts",
+    "credential:revoke": "tsx --env-file-if-exists=.env src/credentials/revoke.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

@@ -271,14 +271,33 @@ Definition of Done verified against a real database: every marker absent from ev
 
 Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2155 tests across 67 files.
 
-### P3-04 — NEXT
+### P3-04 — DONE
 Credential separation.
 
-Depends on P3-03, satisfied. See the private task breakdown for the completion condition.
+One migration, the first since P2-10: `clients` and `client_credentials`. A client belongs to an owner; a credential belongs to a client and does *not* carry `owner_id`. Duplicating it would create a second answer to who owns a credential, and the two answers can disagree (D-130).
 
-Memory content and client credentials managed separately, credentials revocable, owner identity distinct from client identity. `createRequestContextService` is where an owner is established today and was deliberately left behind one function so a real resolver replaces it without touching a route. The OpenAPI document declares no security scheme on purpose (D-110); P3-04 is what makes one exist, and the document should gain it in the same change.
+A request presents `Authorization: Bearer mem_<lookup>_<secret>`. The lookup half is a public selector that finds one row; the secret half is compared, in constant time, against a SHA-256 digest — the raw token is never stored and cannot be reconstructed (D-131). A valid lookup with the wrong secret is refused exactly like a lookup that matches nothing, which is the mutation worth keeping: without the digest comparison the lookup alone would be the credential.
 
-Likely the first migration since P2-10: a credential store is not Memory content and should not share a table with it.
+`MEMORY_OWNER_ID` no longer establishes an HTTP context (D-132). Knowing an owner's identifier is not holding a credential for it, and a fallback would have made an identifier that lives in configuration files into a password that cannot be revoked. It remains local tooling for bootstrap and for issuing credentials. Thirty-eight test sites depended on the old path; they moved to an explicit `tests/support` double rather than leaving an optional fallback in production, because a bypass kept for the convenience of tests is a bypass.
+
+Every request is verified against the database, with nothing cached anywhere, so revocation takes effect on the next call rather than at the next restart (D-133). Rotation follows from the same shape: a client may hold several credentials, and revoking one leaves the others working.
+
+The credential store is its own repository, not part of `MemoryRepository`, and is deliberately not wrapped by the sanitization boundary (D-134). It runs before an owner exists to scope to, and pointing a secret detector at a digest is at best wasted work and at worst a policy redacting the one column that must survive verbatim.
+
+Issuing and revoking are local commands rather than HTTP endpoints. Revocation takes a credential id, never a token, so revoking one does not put it in shell history.
+
+The OpenAPI document gained the scheme it refused to invent in P2-13 (D-135): `memoryToken`, required by default so a route added without a thought about authentication is documented as protected, with `/health` the only exemption. Contract version 0.1.0 → 0.2.0.
+
+Two findings came out of the mutation proofs rather than the implementation, and both fixed a test rather than the code. Storing the secret's own bytes in place of a digest passed all 52 credential tests, because `to_jsonb` renders `bytea` as hex and no substring search for a base64url secret matches it; the test now decodes the column and compares against a digest computed independently of the function under test. And removing the `Authorization` redaction path changed nothing observable, because Fastify's own `req` serializer never writes headers — that control is dormant defence for the moment a serializer changes, so it is pinned structurally and the comment says why a behavioural test cannot catch it.
+
+Nine deliberate mutations fail between 1 and 8 tests each: the environment fallback restored, the revocation check removed, the digest comparison removed, a reversible digest, the hook not passing the header on, the redaction path removed, redaction marking instead of removing, revoke taking down a whole client, and revoke ignoring the owner.
+
+Schema and repository counts: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 23 repository operations (unchanged), 3 runtime dependencies (unchanged). 2220 tests across 69 files.
+
+### P3-05 — NEXT
+See the private Phase 3 breakdown for the task and its completion condition.
+
+Depends on P3-04, satisfied.
 
 ## BLOCKED
 

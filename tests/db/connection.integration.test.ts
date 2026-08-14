@@ -60,6 +60,8 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
     // UsageLog and ChangeLog are still to come.
     expect(result.rows.map((row) => row.table_name).sort()).toEqual([
       'change_logs',
+      'client_credentials',
+      'clients',
       'environments',
       'events',
       'owners',

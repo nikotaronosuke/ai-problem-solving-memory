@@ -42,6 +42,14 @@
 import type { FastifyInstance } from 'fastify';
 import swagger from '@fastify/swagger';
 
+/**
+ * The name of the one security scheme.
+ *
+ * A single scheme, referenced from the document default and from the two
+ * operations that opt out of it, so the string exists once.
+ */
+export const SECURITY_SCHEME = 'memoryToken';
+
 /** Where the generated document is served. Outside the owner-scoped prefix. */
 export const OPENAPI_PATH = '/openapi.json';
 
@@ -52,7 +60,7 @@ export const OPENAPI_PATH = '/openapi.json';
  * Tying it to the package version would make every unrelated release look like
  * a contract change to anything watching this number.
  */
-export const API_CONTRACT_VERSION = '0.1.0';
+export const API_CONTRACT_VERSION = '0.2.0';
 
 /**
  * Groupings, for readers and generators that sort by them.
@@ -102,7 +110,9 @@ const API_DESCRIPTION = [
   '',
   'This document is generated at startup from the schemas the server validates against. It is not maintained separately and cannot describe a contract the server does not enforce.',
   '',
-  'Everything under `/v1` is owner-scoped. The owner is established server-side in the current MVP; no client-supplied credential exists yet, and `owner_id` in a response is data, not a credential. A resource belonging to another owner answers exactly as one that does not exist — a 404 with no way to tell the two apart, deliberately, because distinguishing them would confirm what it exists to hide.',
+  'Everything under `/v1` requires a Memory-issued bearer credential: `Authorization: Bearer mem_...`. The credential identifies a client, the client belongs to an owner, and the server resolves both — a request never names either. `owner_id` appears in responses because it is data; it is not a credential, and presenting one authenticates nothing. An AI vendor account is not an owner identity and is never the ownership boundary.',
+  '',
+  'Credentials are issued and revoked by local administrative commands rather than through this API, and a revoked credential stops working on the next request. A resource belonging to another owner answers exactly as one that does not exist — a 404 with no way to tell the two apart, deliberately, because distinguishing them would confirm what it exists to hide.',
   '',
   'Writes to a Problem carry `expected_version`. A 409 `VERSION_CONFLICT` means the Problem moved since it was read; re-read it and decide again. Appending an Event or Verification carries a `client_event_id` instead — an idempotency key, where the first write wins and a retry returns what it wrote.',
   '',
@@ -124,6 +134,25 @@ export function registerOpenApi(app: FastifyInstance): void {
         description: API_DESCRIPTION,
       },
       tags: OPENAPI_TAGS.map((tag) => ({ ...tag })),
+      components: {
+        securitySchemes: {
+          // The one scheme, and it exists now: P3-02 refused to describe an
+          // authentication method the server did not have, and P3-04 gave it
+          // one. `bearerFormat` names the token's own shape rather than a
+          // vendor or a standard it does not implement.
+          [SECURITY_SCHEME]: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'MemoryToken',
+            description:
+              'A Memory-issued credential. Identifies a client, which belongs to an owner; neither is named by the request.',
+          },
+        },
+      },
+      // Applied to everything, so a route added without a thought about
+      // authentication is documented as requiring it. The two operational
+      // endpoints opt out explicitly below.
+      security: [{ [SECURITY_SCHEME]: [] }],
     },
   });
 

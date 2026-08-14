@@ -485,6 +485,106 @@ describe('sanitization boundary', () => {
   });
 });
 
+describe('credential boundary', () => {
+  it('keeps credential storage out of the Memory repository', async () => {
+    const modules = await readModules(join(SRC, 'repository'));
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        if (specifier.includes('/credentials/') || specifier.includes('/db/credentials')) {
+          offenders.push(module.path + ' -> ' + specifier);
+        }
+      }
+      if (/credential|token_hash|tokenHash/i.test(module.source)) {
+        offenders.push(module.path + ' names credentials');
+      }
+    }
+
+    // `MemoryRepository` is owner-scoped and sanitized. A credential lookup
+    // runs before an owner exists and must not be sanitized at all, so the two
+    // are different seams rather than one with a flag.
+    expect(offenders).toEqual([]);
+  });
+
+  it('never sanitizes the credential store', async () => {
+    const modules = await readModules(SRC);
+
+    const wrapped = modules
+      .filter((module) => /withSanitization\s*\(/.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    // Sanitization exists to keep credentials out of what a person writes
+    // down. Pointing it at the credential store would have it inspecting a
+    // digest for signs of a credential, and a policy could decide to redact
+    // the one column that has to survive verbatim.
+    expect(wrapped).toEqual(['app/request-context.ts', 'sanitization/sanitizing-repository.ts']);
+  });
+
+  it('reads the Authorization header in exactly one place', async () => {
+    const modules = await readModules(SRC);
+
+    const readers = modules
+      .filter((module) => /headers\.authorization|headers\['authorization'\]/i.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    // The hook consumes it and hands on a context. A route or a service that
+    // could reach the header could pass a credential somewhere, and the value
+    // would start appearing in places nobody audited.
+    expect(readers).toEqual(['http/app.ts']);
+  });
+
+  it('leaves no path from MEMORY_OWNER_ID to an HTTP request context', async () => {
+    const source = await readFile(join(SRC, 'app', 'request-context.ts'), 'utf8');
+    // Comments removed: the file explains at length that this fallback is
+    // gone, and prose saying so must not read as the thing it describes.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Knowing an owner's identifier is not the same as holding a credential
+    // for it. A fallback here would make an identifier that lives in
+    // configuration files into a password that cannot be revoked.
+    expect(code).not.toContain('MEMORY_OWNER_ID');
+    expect(code).not.toContain('readOwnerIdFromEnv');
+    expect(code).not.toContain('resolveOwnerContext(');
+    expect(code).not.toContain('EnvSource');
+    expect(code).not.toContain('process.env');
+  });
+
+  it('builds an owner context only where existence is checked', async () => {
+    const modules = await readModules(SRC);
+
+    const asserters = modules
+      .filter((module) => /as OwnerContext/.test(module.source))
+      .map((module) => module.path)
+      .sort();
+
+    // `OwnerContext` means somebody asked the database. One file may assert
+    // it, directly under the check that earns it; a cast anywhere else would
+    // turn the type back into a value you can simply claim.
+    expect(asserters).toEqual(['owner/context.ts']);
+  });
+
+  it('keeps credential code from writing Memory content', async () => {
+    const modules = (await readModules(SRC)).filter((module) =>
+      module.path.startsWith('credentials/'),
+    );
+    expect(modules.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        if (specifier.includes('/repository/') || specifier.includes('/http/')) {
+          offenders.push(module.path + ' -> ' + specifier);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('contract generation', () => {
   it('is named in one transport module and nowhere else', async () => {
     const modules = await readModules(SRC);

@@ -33,19 +33,17 @@ import {
   createProblemStatusService,
   createProjectEnvironmentService,
   createRelationService,
-  createRequestContextService,
   createUsageLogService,
   createVerificationService,
 } from '../../src/app/index.js';
+import { createFixedRequestContextService } from '../support/request-context.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
-import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
-import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
 import {
   describeInspectionPath,
   type SanitizationPolicy,
@@ -112,12 +110,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
 
     const app = buildMemoryHttpApp({
       healthService: createHealthService(pool),
-      requestContextService: createRequestContextService(
-        pool,
-        createTransactionRunner(pool),
-        { [MEMORY_OWNER_ID_VAR]: ownerId },
-        policy,
-      ),
+      requestContextService: createFixedRequestContextService(pool, ownerId, policy),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
@@ -384,12 +377,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
 
       const app = buildMemoryHttpApp({
         healthService: createHealthService(pool),
-        requestContextService: createRequestContextService(
-          pool,
-          createTransactionRunner(pool),
-          { [MEMORY_OWNER_ID_VAR]: ownerId },
-          policy,
-        ),
+        requestContextService: createFixedRequestContextService(pool, ownerId, policy),
         projectEnvironmentService: createProjectEnvironmentService(),
         problemService: createProblemService(),
         problemStatusService: createProblemStatusService(),

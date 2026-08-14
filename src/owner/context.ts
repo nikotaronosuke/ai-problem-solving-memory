@@ -7,9 +7,11 @@
  * context. Owner-scoped work takes an `OwnerContext`, so it cannot start
  * before ownership is settled.
  *
- * This is the local development path only. HTTP request auth context is P2-01,
- * and client credentials and their revocation are P3-04. Neither is implied by
- * anything here.
+ * There are two ways in, and both end at the same existence check. Local
+ * tooling reads `MEMORY_OWNER_ID`; an HTTP request arrives with a credential
+ * that names an owner, and `resolveOwnerContextFor` confirms that owner is
+ * real. Neither hands out a context for an id nobody checked, which is the
+ * whole value of the type.
  */
 
 import { toOwnerId, type OwnerContext, type OwnerId } from '../domain/owner.js';
@@ -48,6 +50,30 @@ export class OwnerContextError extends Error {
  */
 function establishOwnerContext(ownerId: OwnerId): OwnerContext {
   return { ownerId } as OwnerContext;
+}
+
+/**
+ * Establishes the context for an owner id that came from somewhere trusted.
+ *
+ * "Trusted" means the value is already a validated `OwnerId` — from a
+ * credential row, say — and not that its existence can be assumed. The
+ * database is still asked, because the invariant this type carries is that
+ * somebody checked, and an id read out of a foreign key is not the same as a
+ * row that is still there.
+ *
+ * This exists so that credential-based authentication has one honest way to
+ * reach a context, rather than a cast at the call site. There is deliberately
+ * no public constructor that skips the check.
+ */
+export async function resolveOwnerContextFor(
+  executor: DatabaseExecutor,
+  ownerId: OwnerId,
+): Promise<OwnerContext> {
+  const owner = await findOwnerRecord(executor, ownerId);
+  if (owner === undefined) {
+    throw new OwnerContextError('UNKNOWN', `no owner ${ownerId} exists.`);
+  }
+  return establishOwnerContext(ownerId);
 }
 
 /** Reads the configured owner id without validating or checking it. */

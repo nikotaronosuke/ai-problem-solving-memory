@@ -33,19 +33,17 @@ import {
   createProblemStatusService,
   createProjectEnvironmentService,
   createRelationService,
-  createRequestContextService,
   createUsageLogService,
   createVerificationService,
 } from '../../src/app/index.js';
+import { createFixedRequestContextService } from '../support/request-context.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
-import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
-import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -142,9 +140,7 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
       // No policy argument: the default is what a production server runs, and
       // running the default here is what makes this a test of the server
       // rather than of a policy this file chose.
-      requestContextService: createRequestContextService(pool, createTransactionRunner(pool), {
-        [MEMORY_OWNER_ID_VAR]: owner,
-      }),
+      requestContextService: createFixedRequestContextService(pool, owner),
       projectEnvironmentService: createProjectEnvironmentService(),
       problemService: createProblemService(),
       problemStatusService: createProblemStatusService(),
