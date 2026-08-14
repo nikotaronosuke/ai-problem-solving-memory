@@ -27,6 +27,7 @@ import {
   OwnerMismatchError,
   SUBMIT_OUTCOMES,
   type DeliveryOutcome,
+  type AttemptOutcome,
   type QueueItem,
   type ReliableWriteCoordinator,
   type RetryDelivery,
@@ -238,6 +239,63 @@ describe('submitting a write', () => {
       const live = (await second.list()).items.filter((item) => item.terminalFailure === null);
       expect(live).toHaveLength(1);
       expect(live[0]?.attemptCount).toBe(1);
+    });
+  });
+
+  describe('answers a fresh submission should never see', () => {
+    /**
+     * A queue that reports one attempt outcome, whatever it is asked.
+     *
+     * The refusals below cannot arise from a fresh submission — an item is due
+     * the moment it is enqueued, is not terminal, and has just been written. So
+     * they are driven directly, because "cannot happen" is a claim about today
+     * and the mapping is what protects the caller if it stops being true.
+     */
+    function queueAnswering(outcome: AttemptOutcome): RetryQueue {
+      return {
+        enqueue: (write, now) =>
+          Promise.resolve({
+            queueItemId: randomUUID(),
+            write,
+            enqueuedAt: now.toISOString(),
+            attemptCount: 0,
+            nextAttemptAt: now.toISOString(),
+            terminalFailure: null,
+          }),
+        list: () => Promise.resolve({ items: [], corruptCount: 0 }),
+        attempt: () => Promise.resolve(outcome),
+        drain: () => Promise.resolve({ results: [], notDue: 0, terminal: 0, corruptCount: 0 }),
+      };
+    }
+
+    it.each([
+      ['NOT_FOUND', 'PERMANENT_FAILURE'],
+      ['TERMINAL', 'PERMANENT_FAILURE'],
+      ['OWNER_MISMATCH', 'PERMANENT_FAILURE'],
+      ['RETRY_EXHAUSTED', 'PERMANENT_FAILURE'],
+      // Live and waiting, which is what QUEUED already means.
+      ['NOT_DUE', 'QUEUED'],
+    ] as const)('turns %s into %s, never into DELIVERED', async (attempted, expected) => {
+      const submitted = await createReliableWriteCoordinator(queueAnswering(attempted)).submitEvent(
+        event(),
+        AT,
+        { ownerId },
+        fake(SUCCESS),
+      );
+
+      // Claiming a write arrived when it did not is the one answer that must
+      // never be given wrongly. Everything unrecognised falls to the answer
+      // that promises nothing.
+      expect(submitted.outcome).toBe(expected);
+      expect(submitted.outcome).not.toBe('DELIVERED');
+    });
+
+    it('says DELIVERED only when the queue did', async () => {
+      const submitted = await createReliableWriteCoordinator(
+        queueAnswering('DELIVERED'),
+      ).submitEvent(event(), AT, { ownerId }, fake(SUCCESS));
+
+      expect(submitted.outcome).toBe('DELIVERED');
     });
   });
 
