@@ -312,6 +312,55 @@ describe('ordinary content is not a credential', () => {
   });
 });
 
+describe('the strongest evidence wins, whatever order the parsers run in', () => {
+  // The regression from the third review. A value like `token=morning` under
+  // `api_key` contains a suspected-looking inline assignment, and an earlier
+  // version returned that suspicion immediately — never consulting the
+  // structure, which says `api_key` and confirms it. The certainty is the
+  // strongest evidence available for the string at its site, not whichever
+  // parser happened to answer first.
+  it.each([
+    ['api_key', 'token=morning'],
+    ['password', 'session=morning'],
+    ['client_secret', 'token=letmein'],
+    ['access_token', 'session=whatever'],
+    ['db_password', 'token=opensesame'],
+  ])('confirms %s even when the value looks like a suspected assignment', (key, value) => {
+    expect(detect(value, under('snapshot', key))).toEqual({
+      category: 'CREDENTIAL_FIELD',
+      certainty: 'confirmed',
+    });
+  });
+
+  it('still reports a confirmed inline assignment as an assignment', () => {
+    // Both signals are confirmed; the content rule keeps its more specific
+    // category. What must never happen is a downgrade.
+    expect(detect('API_KEY=abc123def', under('snapshot', 'api_key'))).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'confirmed',
+    });
+  });
+
+  it('still says suspected when suspicion really is the strongest evidence', () => {
+    // No structure to consult, or structure that says nothing stronger.
+    expect(detect('token=morning')).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'suspected',
+    });
+    expect(detect('token=morning', under('snapshot', 'note'))).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'suspected',
+    });
+  });
+
+  it('keeps a placeholder or status word under a strong name, unchanged', () => {
+    // The priority fix must not widen detection: nothing-to-protect is still
+    // nothing-to-protect.
+    expect(detect('[REDACTED]', under('snapshot', 'api_key'))).toBeNull();
+    expect(detect('rotated', under('snapshot', 'password'))).toBeNull();
+  });
+});
+
 describe('a weak-looking credential is still a credential', () => {
   // The correction from the second review. An earlier version required a
   // digit or punctuation before believing an explicit `PASSWORD=`, which meant

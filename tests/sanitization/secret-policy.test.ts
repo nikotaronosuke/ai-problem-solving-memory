@@ -200,6 +200,31 @@ describe('the policy carries nothing outward', () => {
     expect(JSON.stringify(outcome)).not.toContain(secret);
   });
 
+  it('redacts a suspected-looking value under a strong field name', () => {
+    // The third review's regression, at the policy level: the inline
+    // suspicion must not shadow the structure's confirmation into a keep.
+    const policy = createSecretDetectionPolicy();
+    const site = (key: string): SanitizationSite => ({
+      path: [...AT_ROOT, { kind: 'key', name: 'snapshot' }, { kind: 'key', name: key }],
+      kind: 'value',
+    });
+
+    expect(policy.inspect('token=morning', site('api_key'))).toEqual({
+      kind: 'replace',
+      value: '[REDACTED]',
+    });
+    expect(policy.inspect('session=morning', site('password'))).toEqual({
+      kind: 'replace',
+      value: '[REDACTED]',
+    });
+    expect(policy.inspect('token=letmein', site('client_secret'))).toEqual({
+      kind: 'replace',
+      value: '[REDACTED]',
+    });
+    // And without the strong name, suspicion alone still keeps.
+    expect(policy.inspect('token=morning', site('note'))).toEqual({ kind: 'keep' });
+  });
+
   it('returns a replacement holding no part of what it removed', () => {
     const policy = createSecretDetectionPolicy();
 

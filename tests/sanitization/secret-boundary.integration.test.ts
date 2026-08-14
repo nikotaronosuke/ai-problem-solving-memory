@@ -112,6 +112,8 @@ const MARKERS = [
   'zorbak',
   'plimth',
   'vandrel',
+  'wexqib',
+  'qorvathy',
 ] as const;
 
 /** Text with no credential in it, used where a request must succeed. */
@@ -420,6 +422,61 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
         await app.inject({ method: 'GET', url: `/v1/problems/${problemId}/events` })
       ).json<{ events: { summary: string }[] }>().events;
       expect(events.at(-1)?.summary).toBe('the call sent [REDACTED] and failed');
+    });
+
+    it('strips a suspected-looking value sitting under a strong field name', async () => {
+      // The third review's regression, end to end. `token=morningwexqib`
+      // alone is only a suspicion; under `api_key` the structure confirms it,
+      // and an earlier version let the suspicion answer first and stored the
+      // value in plaintext. The marker is lowercase-only so the old ordering
+      // would genuinely have kept it.
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/projects/${projectId}/environments`,
+        payload: { snapshot: { auth: { api_key: 'token=morningwexqib' } } },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(response.body).toContain('[REDACTED]');
+      expect(response.body).not.toContain('wexqib');
+    });
+
+    it('replays an idempotent append with the redacted value, not the raw one', async () => {
+      // A retry is the same write arriving again. The first attempt was
+      // redacted before storage; the retry must return that stored row — one
+      // event, identical bodies, and the raw secret in neither the database
+      // nor either response.
+      const key = generateClientEventId();
+      const payload = {
+        event_type: 'DISCOVERY' as const,
+        summary: 'the deploy worked after setting API_KEY=fake-qorvathy-0123456789 in staging',
+        client_event_id: key,
+      };
+
+      const first = await app.inject({
+        method: 'POST',
+        url: `/v1/problems/${problemId}/events`,
+        payload,
+      });
+      const retry = await app.inject({
+        method: 'POST',
+        url: `/v1/problems/${problemId}/events`,
+        payload,
+      });
+
+      expect(first.statusCode).toBe(201);
+      expect(retry.statusCode).toBe(201);
+      expect(retry.json()).toEqual(first.json());
+
+      const summary = first.json<{ summary: string }>().summary;
+      expect(summary).toBe('the deploy worked after setting API_KEY=[REDACTED] in staging');
+
+      const events = (
+        await app.inject({ method: 'GET', url: `/v1/problems/${problemId}/events` })
+      ).json<{ events: { client_event_id: string; summary: string }[] }>().events;
+      const matching = events.filter((event) => event.client_event_id === key);
+      expect(matching).toHaveLength(1);
+      expect(matching[0]?.summary).toBe(summary);
     });
 
     it('still refuses a credential a caller wrote into an object key', async () => {
