@@ -917,6 +917,57 @@ describe('the retry queue is not part of the server', () => {
     }
   });
 
+  it('generates the idempotency key in one place, and never on a retry', async () => {
+    const modules = await readModules(join(SRC, 'reliability'));
+
+    const generators = modules
+      .filter((module) => /generateClientEventId/.test(module.source))
+      .map((module) => module.path);
+
+    // One caller, and it is the coordinator, which assigns the key once before
+    // the write is made durable. The queue must never generate one: a fresh key
+    // on a retry turns one Event into one row per attempt, which is precisely
+    // the duplicate the key exists to prevent, produced by the mechanism meant
+    // to prevent it.
+    expect(generators).toEqual(['reliability/coordinator.ts']);
+  });
+
+  it('makes the write durable before it attempts to send it', async () => {
+    const source = await readFile(join(SRC, 'reliability', 'coordinator.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const enqueueAt = code.indexOf('queue.enqueue');
+    const attemptAt = code.indexOf('queue.attempt');
+
+    // Order matters and is the task's whole decision. Attempting first leaves a
+    // window where a failure and the process ending together lose the write
+    // with no trace anywhere.
+    expect(enqueueAt).toBeGreaterThan(-1);
+    expect(attemptAt).toBeGreaterThan(enqueueAt);
+
+    // And no way around it: a fallback that sent directly when the queue
+    // refused the write would reintroduce that window at the moment the system
+    // is least able to track what happened.
+    expect(code).not.toContain('catch');
+    expect(code).not.toContain('drain');
+  });
+
+  it('decides an outcome in one place, shared by the first attempt and a retry', async () => {
+    const source = await readFile(join(SRC, 'reliability', 'queue.ts'), 'utf8');
+    const coordinator = await readFile(join(SRC, 'reliability', 'coordinator.ts'), 'utf8');
+
+    // One call site, inside the per-item processing that both the first
+    // attempt and a sweep of everything due run. The classification, the
+    // backoff, the owner guard and the terminal states exist once; two copies
+    // would be two places for a first attempt to stop behaving like a retry,
+    // which is the property the whole queue rests on.
+    expect([...source.matchAll(/classifyDeliveryOutcome\(/g)]).toHaveLength(1);
+    expect([...source.matchAll(/processItem\(/g)].length).toBeGreaterThanOrEqual(3);
+    expect(coordinator).not.toContain('classifyDeliveryOutcome');
+    expect(coordinator).not.toContain('nextDelayMs');
+    expect(coordinator).not.toContain('TERMINAL');
+  });
+
   it('inspects a write before it reaches the disk, using the boundary’s own policy', async () => {
     const queue = await readFile(join(SRC, 'reliability', 'queue.ts'), 'utf8');
 

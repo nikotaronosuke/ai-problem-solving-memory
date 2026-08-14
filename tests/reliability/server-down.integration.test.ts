@@ -60,6 +60,7 @@ import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import {
+  createReliableWriteCoordinator,
   createRetryQueue,
   type DeliveryContext,
   type DeliveryOutcome,
@@ -280,14 +281,13 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
       () => token,
     );
 
-    // The key is assigned once, here, before anything is sent. Every attempt
-    // below carries this exact value.
-    const clientEventId = generateClientEventId();
+    // The key is assigned once, by the coordinator, before anything is sent.
+    // Every attempt below carries that exact value.
     const write = {
       operation: 'appendEvent',
       ownerId,
       problemId,
-      clientEventId,
+      clientEventId: generateClientEventId(),
       payload: {
         eventType: 'DISCOVERY',
         summary: 'found it while the server was down',
@@ -305,34 +305,30 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
     let mainWorkFinished = false;
     const enqueuedAt = new Date('2026-08-14T10:00:00.000Z');
 
-    const outcome = await (async () => {
-      const attempt = await delivery.deliver(
+    const submitted = await (async () => {
+      // The production path, since P3-08: the coordinator makes the write
+      // durable and then attempts it, so there is no hand-built item here and
+      // no window between the failure and the record of it.
+      const result = await createReliableWriteCoordinator(queue).submitEvent(
         {
-          queueItemId: 'probe',
-          write,
-          enqueuedAt: '',
-          attemptCount: 0,
-          nextAttemptAt: null,
-          terminalFailure: null,
+          ownerId: write.ownerId,
+          problemId: write.problemId,
+          payload: write.payload,
         },
+        enqueuedAt,
         context,
+        delivery,
       );
-      if (attempt.kind !== 'SUCCESS') {
-        await queue.enqueue(write, enqueuedAt);
-      }
       mainWorkFinished = true;
-      return attempt;
+      return result;
     })();
 
-    expect(outcome.kind).toBe('TRANSPORT_FAILURE');
+    expect(submitted.outcome).toBe('QUEUED');
     expect(mainWorkFinished).toBe(true);
+    const clientEventId = submitted.clientEventId;
 
     // Nothing reached the database.
     expect(await eventsFor(problemId)).toEqual([]);
-
-    // --- draining while it is still down --------------------------------
-    const whileDown = await queue.drain(enqueuedAt, context, delivery);
-    expect(whileDown.results.map((result) => result.outcome)).toEqual(['RESCHEDULED']);
 
     // --- the process ends and starts again ------------------------------
     const restarted = createRetryQueue({ directory, limits: LIMITS, policy: POLICY });
