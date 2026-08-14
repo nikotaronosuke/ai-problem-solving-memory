@@ -263,11 +263,13 @@ The redacted text is then shown to the detector again, and if a confirmed creden
 
 `Set-Cookie` attributes are no longer read as cookie values — only the first pair is the credential — which fixes a false positive that refused `Set-Cookie: sid=[REDACTED]; Path=/`.
 
+A post-merge review found one regression: a suspected inline assignment answered before the strong structured context, so `{"api_key": "token=morning"}` was kept in plaintext. Certainty is now the strongest evidence available for the string at its site, never the first parser to return (D-129). Reproduced first; with the old ordering restored, the database sweep itself fails.
+
 Two pre-sanitization log paths were closed. Ajv names the offending property on an `additionalProperties` failure, so logging the validation error wrote a caller-chosen key into the operational log before sanitization had run at all (D-128). The malformed-JSON branch got the same treatment defensively; Fastify 5 replaces that message and it was not observed to leak.
 
 Definition of Done verified against a real database: every marker absent from every column of every table, the redacted text present in its place, and absent from responses, the change log and the operational log. Six deliberate mutations — disabling partial redaction, redacting only the first of several, removing the post-check, restoring `Set-Cookie` attribute handling, and restoring both `{err}` log lines — fail between 1 and 20 of the new tests; the parse-error one does not, for the reason above.
 
-Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2144 tests across 67 files.
+Schema and repository counts unchanged: migrations 12, tables 9, DOMAINs 8, FKs 10 all RESTRICT, 23 repository operations, 3 runtime dependencies. 2155 tests across 67 files.
 
 ### P3-04 — NEXT
 Credential separation.

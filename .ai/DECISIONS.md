@@ -1182,3 +1182,13 @@ Nothing from a validation error is logged now. What replaces it is `validationCo
 The malformed-JSON branch was given the same treatment. Node's own `JSON.parse` message quotes the bytes it choked on, so the message is unsafe in principle; Fastify 5 replaces it with a fixed `FST_ERR_CTP_INVALID_JSON_BODY` string and no leak was observed. That change is hardening against a future Fastify or a custom parser rather than a fix for something seen, and its test cannot currently fail — which is worth knowing when reading it.
 
 This is not P3-10. The general logging policy is untouched; these were two specific paths that defeated P3-03's own completion condition.
+
+## D-129 — Certainty is the strongest evidence, not the first parser to answer (P3-03, after review)
+
+`{"api_key": "token=morning"}` was stored in plaintext. The value contains a suspected-looking inline assignment — `token` is an ambiguous name, `morning` an ordinary word — and the detector returned that suspicion immediately, before consulting the structure. The structure says `api_key`, which is a strong name, which is confirmed. The write was kept on the weaker of two verdicts, and D-124's guarantee that value shape never acquits under a strong name had regressed one level up: not inside a rule this time, but in the ordering between rules.
+
+The fix is the principle stated as code: a suspected verdict may only leave the detector after every source of a confirmed one — content rules, confirmed assignments, and the structured field context — has been asked. Where both the assignment and the structure confirm, the more specific category wins; what can never happen is a downgrade because a weaker parser ran earlier.
+
+One consequence is worth naming because it looks like a change and is not. `{"session": "token=expired"}` is now confirmed and redacted: `session` is ambiguous, and a value containing `=` reads as credential-shaped, which is exactly the D-124 matrix — `{"session": "abc123def"}` was already confirmed on the same rule. The shadowing bug had been hiding that cell of the matrix, not softening it.
+
+The mutation proof for this one is the reason the lowercase markers from the fixture review exist: with the old ordering restored, the database sweep itself fails, showing the marker stored in plaintext rather than a unit expectation merely disagreeing.
