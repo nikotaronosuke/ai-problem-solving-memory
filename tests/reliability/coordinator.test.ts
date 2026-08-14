@@ -64,12 +64,14 @@ describe('submitting a write', () => {
   const event = () => ({
     ownerId,
     problemId,
+    problemImportant: false,
     payload: { eventType: 'DISCOVERY' as const, summary: 'something was learned' },
   });
 
   const verification = () => ({
     ownerId,
     problemId,
+    problemImportant: false,
     payload: { verificationType: 'TEST' as const, result: true, summary: 'the suite agreed' },
   });
 
@@ -141,6 +143,7 @@ describe('submitting a write', () => {
         {
           ownerId,
           problemId,
+          problemImportant: false,
           payload: {
             eventType: 'DISCOVERY',
             summary: `AWS_SECRET_ACCESS_KEY=${secret}`,
@@ -169,6 +172,7 @@ describe('submitting a write', () => {
           ownerId,
           problemId,
           clientEventId: randomUUID() as never,
+          problemImportant: false,
           payload: { eventType: 'ATTEMPT', summary: 'queued earlier' },
         },
         AT,

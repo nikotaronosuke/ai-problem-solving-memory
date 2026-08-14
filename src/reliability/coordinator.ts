@@ -85,13 +85,27 @@ export interface SubmitResult {
   readonly clientEventId: ClientEventId;
 }
 
-export interface SubmitEventInput {
+/**
+ * How important the Problem this write belongs to was, when it was written.
+ *
+ * Required, and named after where it comes from. There is one notion of
+ * importance in this system and it belongs to a Problem — the spec gives it
+ * one, where a person can set it and an assistant may only suggest it — so a
+ * write does not get an importance of its own. What is recorded here is the
+ * value the caller was looking at, which is the only version obtainable when
+ * the failure being handled is the server not answering.
+ */
+interface ProblemImportance {
+  readonly problemImportant: boolean;
+}
+
+export interface SubmitEventInput extends ProblemImportance {
   readonly ownerId: OwnerId;
   readonly problemId: ProblemId;
   readonly payload: EventIntentPayload;
 }
 
-export interface SubmitVerificationInput {
+export interface SubmitVerificationInput extends ProblemImportance {
   readonly ownerId: OwnerId;
   readonly problemId: ProblemId;
   readonly payload: VerificationIntentPayload;
@@ -189,6 +203,7 @@ export function createReliableWriteCoordinator(queue: RetryQueue): ReliableWrite
           // Once, here, before the write is durable. Never again for this
           // write, in this process or any later one.
           clientEventId: generateClientEventId(),
+          problemImportant: input.problemImportant,
           payload: input.payload,
         },
         now,
@@ -204,6 +219,7 @@ export function createReliableWriteCoordinator(queue: RetryQueue): ReliableWrite
           ownerId: input.ownerId,
           problemId: input.problemId,
           clientEventId: generateClientEventId(),
+          problemImportant: input.problemImportant,
           payload: input.payload,
         },
         now,
