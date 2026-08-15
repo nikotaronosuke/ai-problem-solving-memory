@@ -2172,3 +2172,13 @@ What is *not* claimed: that any of this makes a summary true. The checks establi
 Fourteen discrimination mutations, each killed by a named test.
 
 P4-02 is done. P4-03 Full-text search is NOT STARTED.
+
+## D-229 — Generated output is held to its exact key set at the top level too (P4-02 final review correction)
+
+A review of the committed P4-02 found that `toGeneratedRetrievalSummary` checked the object's *type* and then read three fields, so an output carrying a fourth was accepted and the extra field silently ignored. `structural_features` had been held to its exact key set since it was defined (D-222), and the module's own documentation described "an object with a field nobody defined" as something it validated — so this was an inconsistency between two levels of the same value, not a design choice. The allowed top-level keys are now exactly `normalizedSummary`, `keywords` and `structuralFeatures`, and both levels share one definition of the check.
+
+The severity was low and is worth stating accurately rather than inflating: an unknown field could not be stored, because P4-02 stores nothing and the draft is rebuilt from named fields. What it could do is hide a disagreement about the contract. A generator supplying `problemId`, `sourceFingerprint`, `embedding` or `generatedAt` — all of which are the caller's or a later task's, and none of which a generator can know — would have been quietly accepted and its guess discarded, so nobody would learn that the two ends disagreed about who supplies what.
+
+The check runs before any field is read, which matters for the same reason the structural-feature version does: an unexpected field is never looked at, never measured, and never carried anywhere. Neither the key nor the value reaches the error — a key is text a generator wrote from somebody's Memory and can be anything, including a credential — so the refusal names the object and the kind of problem and nothing else. There are tests for both the value and the key case, asserted as booleans so a failure prints `true` rather than the thing it was checking for.
+
+Nothing else moved: no schema, no migration, no API change, no dependency, no change to `retrieval_artifacts`, and no change to any other P4-02 decision.
