@@ -685,6 +685,8 @@ Turning one Problem into something a search can compare. A `RetrievalSummaryDraf
 
 **Generated output is inspected before it can reach an embedding provider** (D-226). P4-01's boundary is too late by one step: the text goes to a provider before the write. Refused whole, same detector, same false-positive line, nested `x=NAME=value` included — and P4-01's check still stands behind it.
 
+**Held to an exact key set at both levels** (D-229, found by review after the first commit). The output's top-level keys are exactly `normalizedSummary`, `keywords` and `structuralFeatures`; the features' keys are exactly their eight. The first version checked the type and read three fields, so a fourth was accepted and ignored — which could not store anything, since nothing is stored, but would have hidden a generator supplying an identity, a digest or an embedding it has no way to know.
+
 **Fourteen discrimination mutations, each killed by a named test**: the owner predicate dropped, the Environment removed, `DISCOVERY` filtered out, `USER_CORRECTION` filtered out, the document rebuilt through JavaScript, the second read removed, the recheck comparing the new source with itself, the privacy inspection removed, the read touching the Problem, a placeholder embedding on the draft, confidence joining the document, and each of the three gates — initial read control, final read control, successful-direction evidence — disabled in turn.
 
 ## What is deliberately absent

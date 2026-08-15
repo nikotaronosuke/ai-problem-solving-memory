@@ -191,6 +191,35 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Refuses an object carrying a field this code does not produce.
+ *
+ * Dropping the extra field instead would be the quiet option and the wrong
+ * one. A generator returning something nobody asked for is a generator whose
+ * idea of the contract differs from this one's, and that is worth finding out
+ * from a refusal rather than from a field that turns out to have been ignored
+ * for months. It also keeps the shape honest in the direction that matters
+ * next: what is validated here is what gets embedded and stored, and a value
+ * that survived validation without being looked at is a value nothing has
+ * decided about.
+ *
+ * Neither the key nor its value reaches the error. The key is text a generator
+ * wrote from somebody's Memory — it can be anything, including a credential —
+ * and an error travels into a caller, a log and possibly a report. So the
+ * refusal names the object and the kind of problem, and nothing else.
+ */
+function rejectUnknownKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  field: string,
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      throw new InvalidRetrievalSummaryError(field, 'it holds a field this code does not produce');
+    }
+  }
+}
+
 function requireBoundedText(value: unknown, field: string, maximum: number): string {
   if (typeof value !== 'string') {
     throw new InvalidRetrievalSummaryError(field, 'it is not a string');
@@ -295,13 +324,7 @@ function toStructuralFeatures(
     throw new InvalidRetrievalSummaryError('structural features', 'it is not an object');
   }
 
-  for (const key of Object.keys(value)) {
-    if (!STRUCTURAL_FEATURE_KEYS.includes(key)) {
-      // Named by position rather than by content: the key is the generator's
-      // text, and this error travels.
-      throw new InvalidRetrievalSummaryError('structural features', 'it holds an unknown field');
-    }
-  }
+  rejectUnknownKeys(value, STRUCTURAL_FEATURE_KEYS, 'structural features');
   for (const key of STRUCTURAL_FEATURE_KEYS) {
     if (!Object.hasOwn(value, key)) {
       throw new InvalidRetrievalSummaryError('structural features', 'a field is missing');
@@ -354,6 +377,20 @@ export interface GeneratedRetrievalSummary {
 }
 
 /**
+ * Every key a generator's output may have, and no others.
+ *
+ * The identity, the fingerprint, the embedding and the generation time are all
+ * attached by the caller or by a later task, so a generator supplying any of
+ * them is supplying something it has no way to know — and that is exactly the
+ * shape this refuses.
+ */
+const GENERATED_SUMMARY_KEYS: readonly string[] = [
+  'normalizedSummary',
+  'keywords',
+  'structuralFeatures',
+];
+
+/**
  * Reads a generator's output, or refuses it.
  *
  * Everything arriving here is `unknown` and is treated that way. A generator is
@@ -377,6 +414,12 @@ export function toGeneratedRetrievalSummary(
   if (!isPlainObject(generated)) {
     throw new InvalidRetrievalSummaryError('output', 'it is not an object');
   }
+
+  // Before any field is read, so an unexpected one is never looked at, never
+  // measured and never carried anywhere. The structural features have been
+  // held to their exact key set since they were defined; this is the same rule
+  // one level up, which is where it should have been from the start.
+  rejectUnknownKeys(generated, GENERATED_SUMMARY_KEYS, 'output');
 
   return {
     normalizedSummary: requireBoundedText(
