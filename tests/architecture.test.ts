@@ -1475,3 +1475,123 @@ describe('database layer', () => {
     expect(driverUsers).toEqual(['db/config.ts', 'db/executor.ts', 'db/pool.ts']);
   });
 });
+
+describe('the retrieval summary generator', () => {
+  it('names no model vendor and opens no connection of its own', async () => {
+    const modules = await readModules(SRC);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // A summariser is where a vendor SDK would first look reasonable, and
+        // choosing one here would put a model decision inside a module whose
+        // job is to be independent of it. The port exists so that decision can
+        // be made later, by whoever has a reason.
+        if (
+          /^(openai|@anthropic|@google|@mistral|cohere|@huggingface|langchain|llamaindex)/.test(
+            specifier,
+          ) ||
+          /^(axios|node-fetch|undici|got|superagent)$/.test(specifier)
+        ) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('hands the generator a document and nothing it could write through', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-summary-service.ts'), 'utf8');
+    const port = source.slice(source.indexOf('export interface RetrievalSummaryGenerator {'));
+    const body = port.slice(0, port.indexOf('\n}'));
+
+    // The strongest form of "generating a summary does not change the Memory":
+    // the port has no way to. It is given a string and returns a value, so a
+    // repository, an executor or a pool cannot be reached from inside one.
+    for (const reachable of ['Repository', 'Executor', 'DatabasePool', 'OwnerContext']) {
+      expect(body.includes(reachable), `the generator port can reach a ${reachable}`).toBe(false);
+    }
+    expect(body).toContain('RetrievalSummaryGeneratorInput');
+  });
+
+  it('generates without a path to the artifact write', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-summary-service.ts'), 'utf8');
+
+    // An artifact needs an embedding, and an embedding needs a provider that
+    // nothing here has. A draft that could be written down would be written
+    // down incomplete, or with a placeholder vector standing in for one.
+    expect(source).not.toContain('upsertArtifact');
+    expect(source).not.toContain('RetrievalArtifactRepository');
+    expect(source).not.toContain('createRetrievalArtifactRepository');
+  });
+
+  it('inspects what a generator produced before returning it', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-summary-service.ts'), 'utf8');
+
+    // The step that has to happen here rather than at storage: whatever comes
+    // back next goes to an embedding provider, and a vector computed from a
+    // credential cannot be redacted afterwards.
+    expect(source).toContain('createArtifactInspectionPolicy');
+    expect(source).toContain('sanitizeValue');
+  });
+
+  it('reads its source in one owner-scoped statement', async () => {
+    // The statement that runs, not the source that builds it: the subqueries
+    // are interpolated, so reading the file would check the fragments and miss
+    // what they were assembled into.
+    const { RETRIEVAL_SUMMARY_SOURCE_STATEMENT } =
+      await import('../src/db/retrieval-summary-source.js');
+
+    // Four reads would take four snapshots and could assemble a state that
+    // never existed, which would then be fingerprinted as though it had.
+    expect(RETRIEVAL_SUMMARY_SOURCE_STATEMENT).not.toContain(';');
+
+    // Every subquery carries the owner, not just the outer one. The composite
+    // foreign keys make a cross-owner row unstorable, so matching on the
+    // problem alone would happen to be safe — and would be one schema edit
+    // away from not being.
+    const scoped = [
+      ...RETRIEVAL_SUMMARY_SOURCE_STATEMENT.matchAll(/from\s+public\.(\w+)\s+(\w+)/g),
+    ];
+    expect(scoped.length).toBeGreaterThan(0);
+    for (const [, table, alias] of scoped) {
+      expect(
+        RETRIEVAL_SUMMARY_SOURCE_STATEMENT.includes(`${String(alias)}.owner_id`),
+        `${String(table)} is read without naming the owner`,
+      ).toBe(true);
+    }
+    expect(RETRIEVAL_SUMMARY_SOURCE_STATEMENT).toContain('pr.owner_id = $1');
+  });
+
+  it('writes nothing, anywhere on the generation path', async () => {
+    for (const path of [
+      join(SRC, 'db', 'retrieval-summary-source.ts'),
+      join(SRC, 'repository', 'retrieval-summary-source-reader.ts'),
+      join(SRC, 'app', 'retrieval-summary-service.ts'),
+    ]) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      for (const write of ['insert into', 'update public.', 'delete from']) {
+        expect(code.toLowerCase().includes(write), `${path} performs a ${write}`).toBe(false);
+      }
+    }
+  });
+
+  it('has no search, no ranking and no embedding', async () => {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter((module) => module.path.includes('retrieval-summary'))
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+
+    expect(code.length).toBeGreaterThan(0);
+    // P4-02 turns one Problem into one summary. Finding, ordering and
+    // comparing are separate tasks, and a vector operator or a text-search
+    // call appearing here would be one of them arriving early.
+    for (const later of ['tsvector', 'to_tsquery', 'plainto_tsquery', '<=>', '<->', 'embedding']) {
+      expect(code.includes(later), `the summary path already does ${later}`).toBe(false);
+    }
+  });
+});
