@@ -446,13 +446,33 @@ Eighteen mutations fail between 1 and 7 tests each: the raw URL, the `Host`, the
 
 Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations, export schema "1", queue schema "2". 2542 tests across 83 files.
 
-### P3-11 — NEXT
+### P3-11 — DONE
 
 Security tests.
 
-Depends on P3-10, satisfied. See the private Phase 3 breakdown for the completion condition.
+**No production source changed.** No migration, no dependency, no endpoint, no OpenAPI change. P3-11 is a regression proof over what P3-01 through P3-10 built (D-192), and the investigation attacked the running system before assuming that — 21 cross-owner operations, six credential shapes, both two-ended writes, a dedup key replayed against another owner’s Problem, sixteen malformed classes, against a real database and a real credential. No defect was found.
 
-Secret fixtures, owner crossing, delete residuals, retry duplication and malformed input, across the whole surface rather than a representative sample. P3-10 covered one entry point per log surface and built the apparatus — a twenty-marker fixture set and a field-inventory helper, both driven by the production `createLoggerOptions` — which P3-11 can reuse rather than rebuild. What it deliberately did not do is sweep all 27 operations, which is P3-11’s to do.
+Two new files, one extended. Suites that already prove a category at a real boundary are cited rather than copied (D-193): secret rests on the sanitization boundary suite, the detector/policy/redactor units, the retry queue’s filesystem redaction proof, logging and export; retry rests on `idempotent-replay` and `server-down` and is untouched.
+
+`tests/security/owner-boundary.security.integration.test.ts` reads the generated contract at runtime and asserts the owner-scoped operation set is exactly the twenty-six classified in the file (D-194) — an operation added without a decision about its boundary fails there. Twenty-two are attacked with another owner’s identifier and their refusals compared to each other, which says more than each being 404 alone; the other four are checked for the thing that can actually go wrong with them.
+
+`tests/security/malformed-input.security.integration.test.ts` covers fifteen schema classes rather than 27 routes (D-195), because `openapi.test.ts` already pins route breadth literally. Each attack must leave the database byte-identical, answer in the shared envelope, echo nothing, and reach the log with none of it.
+
+`tests/delete/physical-delete.integration.test.ts` gained a clean-marker proof (D-196) that does not depend on the secret detector, with a control marker in the surviving parent and neighbour so an over-broad delete cannot pass it.
+
+Two behaviours were deliberately left alone (D-197): an unknown query parameter is still ignored, and the validation-before-auth lifecycle order is not promoted into an invariant. No manifest test was added (D-198).
+
+Fifteen mutations were injected and every one is killed by a **named** target test, not merely by the suite going red somewhere: unsanitized transactional repository, confirmed secret kept, caller-written secret key accepted, `getProblem` unscoped, relation refusal unmapped, export owner predicate dropped, ownership checked after the dedup key, change logs surviving a delete, the incoming relation surviving, the delete unscoped, a retry inventing a key, event dedup removed, `removeAdditional`, `coerceTypes`, and a parse failure logged with its error.
+
+Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations, export schema "1", queue schema "2". 2561 tests across 85 files.
+
+### P3-12 — NEXT
+
+Phase 3 E2E / Definition of Done.
+
+Depends on P3-11, satisfied. See the private Phase 3 breakdown for the five required steps.
+
+P3-11 deliberately did not assemble them into a flow: its assertions are parts, and the continuity between them — a secret-bearing Event surviving an outage, arriving exactly once on recovery, then being deleted and exported — is what P3-12 owes. The apparatus to reuse is in `tests/security/` and in the clean-marker delete proof.
 
 ## BLOCKED
 

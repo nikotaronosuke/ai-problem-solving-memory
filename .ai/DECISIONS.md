@@ -1827,3 +1827,61 @@ The operational logger is written from exactly two modules: the transport bounda
 UsageLog and ChangeLog remain Memory data — rows an owner reads, exports and deletes. They are not mirrored into the process log, and process events are not written into them. The first would copy Memory content somewhere none of those operations reach; the second would make Memory the place operations get audited, which is the Global Audit warehouse the OS boundary addendum puts outside this module.
 
 No log table, no log endpoint, no retention, no rotation, no external sink. P3-10 is a policy about what may be emitted to stdout, and the runtime dependency count is unchanged at three.
+
+## D-192 — P3-11 proves what is already there, and changes none of it (P3-11)
+
+Nothing in `src/` moved. The five things the task names — secret fixtures, owner crossing, delete residuals, retry duplication, malformed input — are behaviours P3-01 through P3-10 built and defended one at a time. What was missing was not a mechanism but a *cross-cutting* claim: an attacker's view of the system rather than a feature's view of itself.
+
+The investigation looked for real defects before assuming that, and found none. Every attack it ran — 21 cross-owner operations, six credential shapes, both two-ended writes, a dedup key replayed against another owner's Problem, sixteen malformed classes — behaved correctly against a real database and a real credential. The one thing it did find was a harness bug of its own, twice.
+
+So the test that would have justified a production change does not exist, and P3-11 adds none.
+
+## D-193 — A strong suite is cited, not copied (P3-11)
+
+The secret and retry categories were already proved at a real boundary, and copying those proofs into a file named "security" would have added assertions without adding claims — while creating a second place for them to drift.
+
+Secret rests on `secret-boundary.integration` (the sanitization boundary attacked over HTTP, with a database-wide sweep, a response sweep and a log sweep from the same fixtures, including the transactional close path), the detector, policy and redactor units, `retry-queue`'s proof that a credential is redacted before a queue file is written and a payload that cannot be redacted is refused a file at all, `logging`, and the export security suite.
+
+Retry rests on `idempotent-replay.integration` and `server-down.integration`: sequential and concurrent duplicates, an answer lost after the server stored the write, a restart, two drains racing, first-write-wins, Event and Verification keeping separate key spaces, two owners sharing one key, the key never regenerated, and a queued write for a deleted Problem that does not resurrect it.
+
+The one thing added on the secret side is a citation rather than a test: the false-positive half of the policy — a suspected value kept, prose about credentials kept — is part of the security contract too. A security suite that grew into "refuse anything suspicious" would break it, and it is listed as evidence so that reading the category shows both directions.
+
+## D-194 — The owner-scoped operation set is classified exhaustively (P3-11)
+
+Each resource suite proves its own route refuses another owner. None of them can prove the *set* is covered: a new owner-scoped operation arrives with its own tests, and nothing notices that nobody attacked it.
+
+So the owner suite reads the generated OpenAPI document at runtime, splits operations by whether they opt out of the document's security requirement, and asserts that the owner-scoped half is exactly the set classified in the file. Twenty-six operations, one public (`healthCheck`). An operation added without a decision about its owner boundary fails here, which is the failure this file exists to produce.
+
+The classification is not decoration. It splits operations by *how* they can be attacked, because "is this safe" is a different question for one that takes another owner's identifier than for one that takes none. Twenty-two take one and are attacked with one, in a table whose coverage is itself checked against the classification. The other four — `getCurrentOwner`, `listProjects`, `createProject`, `exportOwnerMemory` — cannot be attacked that way and are checked for what can actually go wrong with them: another owner's data appearing in the answer.
+
+Deliberately not a twenty-six-way repetition of the same assertion. Twenty-two refusals are compared to each other and required to be *identical*, which is a stronger claim than each being 404 on its own — a caller cannot tell which attack touched something real.
+
+## D-195 — Malformed input is tested by schema class, not by route (P3-11)
+
+Fifteen classes: malformed bytes, a missing required field, a caller-invented property, a wrong primitive, a null where none is allowed, an invalid enum, a bad UUID in a path and in a body, a string where an integer belongs, a blank violating a non-blank pattern, an empty object under `minProperties`, a one-value enum given the other value, a number below its minimum, an array where an object belongs, and the one query parameter in the contract given a non-number.
+
+Walking all 27 operations instead would restate what `openapi.test.ts` already pins literally — every route's schema, field by field — while adding no claim. What no route test covers is the class *against the behaviour that matters*, and "it returned 400" is the weakest part of that. Each attack is also required to leave the database byte-identical, answer in the shared error envelope and nothing else, echo no fragment of what was sent, name no Ajv internal, and put none of it in the log.
+
+The fingerprint is the assertion doing the work. Row counts would miss a field overwritten in place or a version advanced; every row of the owner, as text, before and after the whole matrix, does not.
+
+## D-196 — The clean-marker delete proof does not depend on the detector (P3-11)
+
+The existing residual proofs plant secret-shaped markers with raw SQL, because the data a physical delete exists for was written before the sanitization boundary. That makes them depend on two things at once: the delete removing the rows, and the detector still recognising what is in them. A pattern change could make a marker stop being found for a reason that has nothing to do with deletion.
+
+So a second proof plants ordinary prose, through the ordinary API, into every caller-written field the aggregate has, and asks only the question the delete is answerable for.
+
+It carries a second marker, and that is the point of the pair. Sweeping for one string and finding nothing also happens when the delete removed far too much, so a control marker goes into the parent Project and Environment — which survive a Problem delete by design — and into the neighbouring Problem. The test passes only if one marker is gone and the other is still there, in all eight tables and in the export.
+
+The export half matters separately: an artifact is the form the Memory takes when it leaves, so a residual surviving only there is still a residual.
+
+## D-197 — Two behaviours were left exactly as they are (P3-11)
+
+An unknown *query* parameter is ignored — `GET /v1/projects?filter=x` answers 200 — while an unknown *body* property is refused. That asymmetry is real and is written down rather than fixed: nothing reaches storage or the log either way, so it is a contract question rather than a security one, and P3-11 does not change production behaviour.
+
+Schema validation runs before authentication, so a malformed body is refused with 400 even without a credential. That was measured rather than assumed, and it is not promoted into a security invariant. It reveals nothing — the contract document is deliberately public — no handler runs, and nothing is written. It is a Fastify lifecycle detail that could safely change, and a test asserting it would freeze an implementation detail as though it were a guarantee. What P3-11 fixes is that a malformed request writes nothing and bypasses nothing, which is true whichever order they run in.
+
+## D-198 — Security is proved by named behaviour, not by a manifest (P3-11)
+
+A test asserting that a file exists and appears in a mapping proves nothing about the system; it proves something about the repository's filing. The temptation is real because it makes coverage feel checkable.
+
+What is checked instead is behaviour, in two places where a list can go stale silently: the owner-scoped operation inventory, taken from the running contract, and the malformed class list, compared against the attacks that claim to cover it. Both fail when reality moves. The five-category map lives in `.ai/CURRENT.md` as prose naming real suites, because that is documentation and does not need a test framework to pretend otherwise.
