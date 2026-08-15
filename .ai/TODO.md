@@ -531,9 +531,29 @@ Fourteen discrimination mutations each killed by a named test.
 
 2759 tests across 91 files. Nothing about the schema, the contract or the dependencies moved: migrations 14, tables 12, DOMAINs 8, FKs 13 all RESTRICT, `vector` installed, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3, `MemoryRepository` 25 operations.
 
-### NEXT — P4-03 Full-text search
+### P4-03 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. PostgreSQL full-text search, owner scope, minimal Project filtering. Two things to settle first: there is text to search but nowhere it is stored yet (an artifact needs P4-04's embedding to exist at all), and a search has to honour `memory_read_enabled` the way generation already does (D-217, D-224).
+Full-text search. Lexical candidate retrieval over stored artifacts.
+
+It searches what exists and creates nothing (D-230), which means **in production it returns nothing today**: generation stops at a draft and a row needs an embedding. That is sequencing rather than a defect, and the shortcuts that would have hidden it — persisting the draft, a placeholder vector, pulling the provider forward — were each refused. Tests seed real artifacts through P4-01's repository.
+
+The document is the artifact's `normalized_summary` and `keywords` and nothing else (D-231): not the Problem's own text, which would give the system a second definition of the searchable text and bypass P4-02's translation, and not `structural_features`, which P4-07 compares by meaning. Marker tests fix both exclusions.
+
+`pg_catalog.simple`, named in full on both sides (D-232), because the server default is `english` and stems `Fastify` to `fastifi`. The cost — `deployment` no longer matches `deployed` — is measured and accepted; cross-word recall is the semantic half's job. Keywords weigh `A` and the summary `B` (D-233).
+
+A generated stored column with a GIN index rather than an expression index (D-234): both use the index, but an expression index degrades *silently* when the query drifts — 218 ms against 0.1 ms on twenty thousand rows. `not null`, caught by the existing nullable-column inventory. No trigger; the database recomputes it, proven by a replace-and-research test.
+
+The helper is genuinely immutable (D-235). `array_to_string` is STABLE, so the natural expression cannot be indexed, and the usual workaround is a false IMMUTABLE declaration — refused. The array is walked in plpgsql using only immutable primitives, and a test strips the function's comments to assert it.
+
+`websearch_to_tsquery` (D-236); `to_tsquery` errors on ordinary prose. Terms are ANDed and that limitation is left visible rather than papered over. Owner and `memory_read_enabled` filter in SQL (D-237) — the read control matters here because the flag can be flipped after the artifact was written — while suppression, freshness, confidence and staleness do not filter at all. A query is ephemeral and never logged or stored (D-238). Japanese segmentation is a recorded limitation with a positive keyword-based mitigation and deliberately no negative test (D-239).
+
+Fifteen discrimination mutations each killed by a named test.
+
+2818 tests across 93 files. migrations 14 → **15**, public user-defined functions 0 → **1**, `retrieval_artifacts` columns 10 → **11**, plus one GIN index. Unchanged: tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, extensions 7, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-04 Embedding provider abstraction
+
+**NOT STARTED.** See the private Phase 4 breakdown. It owns the first production path that writes an artifact: draft plus embedding plus `generated_at`, composed into the complete row that P4-01 storage and P4-03 search are both already waiting for. A provider port with no vendor, as with the summary generator (D-217, D-223, D-230).
 
 ## BLOCKED
 

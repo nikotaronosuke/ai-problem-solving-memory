@@ -2182,3 +2182,111 @@ The severity was low and is worth stating accurately rather than inflating: an u
 The check runs before any field is read, which matters for the same reason the structural-feature version does: an unexpected field is never looked at, never measured, and never carried anywhere. Neither the key nor the value reaches the error — a key is text a generator wrote from somebody's Memory and can be anything, including a credential — so the refusal names the object and the kind of problem and nothing else. There are tests for both the value and the key case, asserted as booleans so a failure prints `true` rather than the thing it was checking for.
 
 Nothing else moved: no schema, no migration, no API change, no dependency, no change to `retrieval_artifacts`, and no change to any other P4-02 decision.
+
+## D-230 — P4-03 searches the artifacts that exist, and creates none (P4-03)
+
+Lexical search is a read over `retrieval_artifacts`. It does not generate a summary, does not call P4-02's service, and does not write an artifact for a Problem that has none.
+
+The consequence has to be stated plainly rather than discovered later: **in production this returns nothing today**, because nothing populates artifacts yet. Generation exists (P4-02) but stops at a draft, and a draft cannot become a row until there is an embedding, which is P4-04's. So the pipeline is generation → embedding → storage → search, and this task builds the last link while the third is still missing.
+
+That is a sequencing fact, not a defect, and the alternative ways to make the demonstration prettier were all refused: persisting the draft would undo the complete-or-absent rule (D-209, D-217), a zero or placeholder embedding is the row D-211 named as the worst outcome, and pulling the provider forward is a different task. What P4-03 can honestly claim is that an artifact which exists is findable, owner-safely, boundedly and deterministically — and that is proven against real artifacts seeded through P4-01's own repository.
+
+Generating on demand was never a candidate. A search that created what it could not find would turn a read into a write, at the moment somebody is waiting for an answer.
+
+## D-231 — The lexical document is the artifact's summary and keywords, and nothing else (P4-03)
+
+`normalized_summary` and `keywords`. Not the Problem's `title`, `symptoms` or `problem_domain`; not the Environment, the Events or the Verifications; and not `structural_features`.
+
+The Problem's own text is excluded because P4-02 exists to translate an investigation into something comparable. Indexing the source alongside the translation would put two definitions of "the searchable text" in one system, and the second one would quietly route around the first. There are tests that put a unique marker in a Problem's title and symptoms and search for it, and they must find nothing.
+
+`structural_features` is excluded for a different reason: comparing structure is P4-07's, and it compares *meaning* — "state read before the thing that owns it finished writing" matches a React problem to a Fastify one, and matching that as a bag of words would do it badly while looking like it had been done. A marker-in-the-features test fixes that too.
+
+## D-232 — `pg_catalog.simple`, named in full on both sides (P4-03)
+
+The configuration is written out in the stored document and in the query parser, and is never left to `default_text_search_config` — which is `english` on the server this runs against.
+
+Two reasons, either sufficient. A session that changed the setting would build queries that disagree with the stored column, so the same search would answer differently depending on how the connection was configured. And `english` stemming damages exactly the vocabulary this corpus is made of, which was measured rather than assumed: `Fastify` → `fastifi`, `memory_read_enabled` → `memori read enabl`. `simple` keeps `postgresql`, `node.js`, `v5.1.2`, `@fastify/swagger`, `client_event_id` and `foo-bar` intact.
+
+The cost is real and accepted: under `simple`, `deployment` does not match `deployed` — measured, and true. Finding a Memory that used different words for the same idea is what the semantic half of retrieval is for. The lexical half should be the half that is exact, and a hybrid whose both halves are fuzzy in the same way is worse than one where they fail differently.
+
+## D-233 — Keywords outrank the summary (P4-03)
+
+Keywords at weight `A`, the summary at weight `B`.
+
+A keyword is a term the generator chose deliberately as a way to find this Problem; a word in the summary may be there because the sentence needed it. Measured on fixtures: the same term as a keyword scores 1.0 where the same term buried in prose scores 0.4. A test fixes the ordering rather than the numbers, which are floats.
+
+This is not a statement about which Memory is better. Ranking by confidence, freshness, suppression and project proximity is a later task's, and `lexicalScore` is deliberately named so it cannot be mistaken for one — it says how well the words matched and nothing else, and it is not on a scale comparable with a vector similarity.
+
+## D-234 — A generated stored column, not an expression index (P4-03)
+
+`search_document` is `generated always as (...) stored`, with a GIN index on the column.
+
+The alternative — an expression index, with the query repeating the indexed expression — was measured and rejected. Both work and both use the index. But an expression index requires the query's expression to match the index's *exactly*, and when it drifts nothing fails: the query returns identical results and stops using the index. Measured on twenty thousand rows, that was 218 ms against 0.1 ms, silently. A column is referred to by name, so the same mistake is a missing-column error rather than a search that still works and is two thousand times slower.
+
+The cost is storage — the stored vector roughly doubled the table in the probe — and it is worth it. There is also a test that the search statement names the column rather than rebuilding the document.
+
+`not null`, because it genuinely cannot be unknown: both inputs are `not null` and the helper always returns a vector. An artifact with no keywords and a summary of nothing but stop words yields an empty tsvector, which is an answer rather than a missing value. This was caught by the existing nullable-column inventory, which is exactly what that guard is for.
+
+No trigger. A generated column is recomputed by the database on every write, including through the artifact upsert, so there is nothing to keep in step and nothing that can fall out of step. The trigger count stays at zero, and a test asserts a replaced artifact is a replaced document.
+
+## D-235 — The helper is immutable in fact, not merely in its declaration (P4-03)
+
+`public.retrieval_fts_document(text, text[])` walks the keyword array in plpgsql instead of calling `array_to_string`.
+
+The obvious implementation is `to_tsvector('simple', array_to_string(keywords, ' '))`, and PostgreSQL refuses it in a generated column or an index: `array_to_string(anyarray, text)` is STABLE, because for some element types the output depends on session settings. The documented workaround is to wrap it in a function declared IMMUTABLE — and that declaration would be false. For `text[]` the operation genuinely is immutable, so the lie would be harmless in practice, which is precisely what makes it the kind of thing that gets copied to a case where it is not.
+
+So the array is walked. Every primitive used is IMMUTABLE in its own right — `to_tsvector(regconfig, text)`, `setweight`, tsvector concatenation — the result depends on the arguments and nothing else, and the declaration is true. A test reads the stored function definition, strips its comments, and asserts `array_to_string` does not appear in it.
+
+Walking has a second benefit that came out of writing it: each keyword becomes its own vector, so a keyword containing a space stays one term instead of silently becoming two.
+
+This is the first user-defined function in `public` — the other 118 belong to extensions. It is a deterministic derivation used by a generated column, not a trigger and not business logic.
+
+## D-236 — `websearch_to_tsquery`, and the conjunction it implies (P4-03)
+
+`to_tsquery` raises a syntax error on ordinary prose — `oauth redirect` is not valid input — and a search whose failure mode is a database error for normal text is not a search. `plainto_tsquery` never errors but understands no operators. `websearch_to_tsquery` never errors *and* understands quoted phrases, `OR`, and a leading `-`, so it is the one used. No query language of this system's own was invented.
+
+The limitation it carries is recorded rather than worked around: ordinary terms are joined with **AND**. Handing it a whole paragraph finds nothing unless every word appears — measured, and a test asserts that adding one absent term empties the result. Dropping terms silently to improve recall would be this layer inventing a relevance policy. Query composition, term extraction and any OR-relaxation belong to the task that merges lexical and semantic candidates.
+
+## D-237 — Two things filter; judgements about a Memory do not (P4-03)
+
+Removed from results, in SQL: an artifact that is not this owner's, and one whose Problem has `memory_read_enabled = false`.
+
+The read control has to be enforced *here*, and the reasoning is easy to get wrong. Generation already refuses a Problem whose owner turned reading off (D-224), so it can look as though no artifact could exist for one. It can: the flag may be turned off *after* the artifact was written, and the row stays — turning off automatic reading is not a delete, and the specification keeps those separate. A test flips the flag on a Problem that already has an artifact and asserts the search misses it while the row remains.
+
+Filtering above the query was refused. Rows fetched, ranked and counted towards the limit and then discarded is the wrong shape for a decision the owner made about their own Memory.
+
+Not filtered: `suppressed`, `freshness` of `STALE_UNKNOWN` / `SUPERSEDED` / `INVALID`, low `confidence`, and low `importance`. Suppression lowers priority rather than removing data; an invalid Memory may be worth surfacing as a warning or as counterevidence. Being findable and being recommended are different questions, and answering the second one here would make it impossible for the task that owns ranking to answer it properly.
+
+Staleness is in the same category. An artifact whose `source_fingerprint` no longer describes its Problem is still returned: recomputing fingerprints would mean reading every candidate's whole source during a search, and deleting stale artifacts would trade a slightly wrong answer for no answer. Telling a caller that a Memory is historical is a separate contract.
+
+## D-238 — A search query is ephemeral, and stays that way (P4-03)
+
+The secret detector is deliberately **not** applied to search text. A query is not a long-lived Memory write — it is bound as a parameter, used, and gone — and the boundary Phase 3 built is about what gets stored. Refusing queries containing credential-shaped text would also break a legitimate use: searching for the Memory about how a credential leak was handled.
+
+What that permits, it also obliges. A query must never reach an operational log, a UsageLog, a ChangeLog, or an error message. The validation errors here name a field and a fixed reason and never the text — with a test that a refused oversized query does not appear in the message — and this module writes no log at all. When search usage logging arrives, it records that a search happened and what was done with the results, not what was typed.
+
+## D-239 — Japanese is a standing limitation of built-in text search (P4-03)
+
+Measured: PostgreSQL's built-in configurations do not segment Japanese. `デプロイ後だけ認証に失敗する` becomes a single lexeme, so `認証` does not match it. This is a property of the parser and applies to `simple` and `english` alike.
+
+No extension was installed to fix it. `pgroonga`, `pg_trgm` and `unaccent` are available on this server and remain uninstalled: the task is PostgreSQL full-text search, and turning it into a morphological-analysis adoption is a different decision with its own operational weight.
+
+Two mitigations exist and are real. P4-02's keywords arrive already separated, so a Japanese Memory is findable through them — there is a test that seeds a Japanese summary with Japanese keywords and finds it by each keyword. And semantic search does not tokenise at all.
+
+Deliberately **not** written as a test: nothing asserts that a substring of a Japanese sentence fails to match. Encoding the limitation as a contract would make a future improvement look like a regression. The positive case is fixed; the negative one is recorded here.
+
+## D-240 — What P4-03 changed, and what it did not build (P4-03)
+
+Schema: migrations 14 → **15**, one new user-defined function in `public` (0 → 1), one generated column on `retrieval_artifacts` (10 → 11), one GIN index. Unchanged: 12 tables, 13 foreign keys all RESTRICT, 8 DOMAINs, 0 native enums, 0 triggers, 0 views, 7 extensions — no new one. `MemoryRepository` still 25 operations; the search reader is its own boundary, because finding Problems worth looking at is a different question from storing one Problem's artifact.
+
+No HTTP. The contract stays at 0.4.0 with 27 operations, and no debug route was added. Exposing a lexical-only search now would publish a response shape that the hybrid version has to change, and the search surface should be published once, when it means what it will keep meaning.
+
+Runtime dependencies still three. Export `"1"`, queue `"2"`.
+
+D-202 does not fire: an index, a generated column and a function are parts of `retrieval_artifacts`, not a new derived store. The delete path is unchanged — removing an artifact row removes its document with it — and the Phase 3 table inventory stays at 12.
+
+Not built: embedding provider, vector search, hybrid retrieval, structural reranking, ranking policy, search cache, search UsageLog, the revalidation response, dead-end handling, conflict handling, evaluation fixtures. No UsageLog, ChangeLog or Relation is written by a search; searching is a read.
+
+Fifteen discrimination mutations, each killed by a named test.
+
+P4-03 is done. P4-04 Embedding provider abstraction is NOT STARTED.

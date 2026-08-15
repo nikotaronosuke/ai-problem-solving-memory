@@ -1595,3 +1595,106 @@ describe('the retrieval summary generator', () => {
     }
   });
 });
+
+describe('lexical search', () => {
+  it('names the owner and the read control in the statement itself', async () => {
+    const { FULL_TEXT_SEARCH_STATEMENT } = await import('../src/db/retrieval-full-text-search.js');
+
+    // Both are filters rather than something applied to the rows afterwards.
+    // Another owner's artifact must not be scored, ordered or counted towards
+    // the limit; and a Problem whose owner turned automatic reading off must
+    // not be fetched in order to be discarded above.
+    expect(FULL_TEXT_SEARCH_STATEMENT).toContain('ra.owner_id = $1');
+    expect(FULL_TEXT_SEARCH_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(FULL_TEXT_SEARCH_STATEMENT).toContain('pr.owner_id = ra.owner_id');
+  });
+
+  it('orders by the score and breaks every tie', async () => {
+    const { FULL_TEXT_SEARCH_STATEMENT } = await import('../src/db/retrieval-full-text-search.js');
+
+    // Without a total order, a smaller limit could return a different subset of
+    // equally-scoring candidates on each run.
+    expect(FULL_TEXT_SEARCH_STATEMENT).toContain('order by lexical_score desc, ra.problem_id asc');
+    expect(FULL_TEXT_SEARCH_STATEMENT).toContain('limit $5');
+    // `generated_at` is not evidence about currency, so it is not a tie-break.
+    expect(FULL_TEXT_SEARCH_STATEMENT).not.toContain('generated_at');
+  });
+
+  it('builds its document from the artifact and nothing else', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    const files = await readdir(migrations);
+    const search = files.find((name) => name.includes('p4_03'));
+    expect(search).toBeDefined();
+
+    const sql = await readFile(join(migrations, search ?? ''), 'utf8');
+    const statements = sql
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('--'))
+      .join('\n');
+
+    // The artifact is the searchable representation, and P4-02 exists to
+    // produce it. Indexing the Problem's own text alongside would put two
+    // definitions of "the searchable text" in the system; indexing the
+    // structural features would take work that compares meaning and hand it to
+    // something that compares words.
+    for (const absent of ['title', 'symptoms', 'problem_domain', 'structural_features']) {
+      expect(statements.includes(absent), `the document includes ${absent}`).toBe(false);
+    }
+    expect(statements).toContain('normalized_summary');
+    expect(statements).toContain('keywords');
+    // Named in full, so a session setting cannot change what a stored document
+    // means.
+    expect(statements).toContain('pg_catalog.simple');
+  });
+
+  it('searches without writing anything', async () => {
+    for (const path of [
+      join(SRC, 'db', 'retrieval-full-text-search.ts'),
+      join(SRC, 'repository', 'retrieval-search-reader.ts'),
+      join(SRC, 'domain', 'retrieval-search.ts'),
+    ]) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      // Search is a read. Recording that a search happened is a later task's,
+      // and doing it here would make every query a write.
+      for (const write of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'createUsageLog',
+        'createChangeLog',
+      ]) {
+        expect(code.toLowerCase().includes(write.toLowerCase()), `${path} performs ${write}`).toBe(
+          false,
+        );
+      }
+    }
+  });
+
+  it('has no vector search, no ranking policy and no generation', async () => {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter(
+        (module) =>
+          module.path.includes('retrieval-search') || module.path.includes('retrieval-full-text'),
+      )
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+
+    expect(code.length).toBeGreaterThan(0);
+    // Lexical candidates only. Distance operators, embeddings, a hybrid merge
+    // and a confidence-aware ordering are each a later task, and a search that
+    // generated what it could not find would turn a read into a write.
+    for (const later of [
+      '<=>',
+      '<->',
+      'embedding',
+      'cosine',
+      'upsertArtifact',
+      'generateSummary',
+    ]) {
+      expect(code.includes(later), `lexical search already does ${later}`).toBe(false);
+    }
+  });
+});
