@@ -836,4 +836,244 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
       expect(await sweep([other.ownerId])).toContain(marker);
     });
   });
+
+  /**
+   * The same claim, without a credential anywhere in it (P3-11).
+   *
+   * Everything above plants secret-shaped markers with raw SQL, because the
+   * data a delete exists for was written before the sanitization boundary. That
+   * makes those proofs depend on two things at once: the delete removing the
+   * rows, and the detector recognising what is in them. If the detector's
+   * patterns changed, a marker could stop being found for a reason that has
+   * nothing to do with deletion.
+   *
+   * So this plants ordinary prose instead, through the ordinary API, and asks
+   * only the question the delete is responsible for: is any of it still
+   * reachable? Nothing here is redacted on the way in, which the fixture
+   * asserts before deleting anything.
+   *
+   * The second marker is the point of the pair. Sweeping for one string and
+   * finding nothing also happens when the delete removed far too much, so a
+   * control string is planted in the parent Project and Environment — which
+   * survive a Problem delete by design — and in the neighbouring Problem. The
+   * test passes only if one marker is gone and the other is still there.
+   */
+  describe('after deleting an aggregate built entirely through the API', () => {
+    interface CleanAggregate {
+      readonly projectId: string;
+      readonly environmentId: string;
+      readonly targetId: string;
+      readonly targetVersion: number;
+      readonly neighbourId: string;
+      /** Written only into the target and the rows that refer to it. */
+      readonly doomed: string;
+      /** Written only into things that must survive. */
+      readonly kept: string;
+    }
+
+    /** Everything in every Memory table for one owner, as text. */
+    async function sweepOwner(owner: Owner): Promise<string> {
+      const dumps: string[] = [];
+      for (const table of MEMORY_TABLES) {
+        const rows = await pool.query(
+          `select to_jsonb(t) as row from public.${table} t where owner_id = $1`,
+          [owner.ownerId],
+        );
+        dumps.push(JSON.stringify(rows.rows));
+      }
+      return dumps.join('\n');
+    }
+
+    /**
+     * Builds the aggregate with a marker in every caller-written field it has.
+     *
+     * The markers are plain words. Nothing here is secret-shaped, so the
+     * sanitizer has no reason to touch it — and the fixture check below
+     * confirms that rather than assuming it.
+     */
+    async function seedCleanAggregate(owner: Owner): Promise<CleanAggregate> {
+      const doomed = `p311doomed${randomUUID().replaceAll('-', '')}`;
+      const kept = `p311kept${randomUUID().replaceAll('-', '')}`;
+
+      // The parent survives a Problem delete, so it carries the control marker.
+      const project = await post(owner, '/v1/projects', {
+        project_name: `project holding ${kept}`,
+        repo: `notes about ${kept}`,
+        platform: `platform ${kept}`,
+      });
+      const projectId = project['project_id'] ?? '';
+
+      const environment = await post(owner, `/v1/projects/${projectId}/environments`, {
+        snapshot: { runtime: 'node 22.12.0', note: `environment holding ${kept}` },
+      });
+      const environmentId = environment['environment_id'] ?? '';
+
+      const target = await post(owner, `/v1/projects/${projectId}/problems`, {
+        environment_id: environmentId,
+        title: `the problem holding ${doomed}`,
+        symptoms: `symptoms mentioning ${doomed}`,
+        problem_domain: `domain ${doomed}`,
+        suspected_boundary: `boundary ${doomed}`,
+        source_ai: `assistant ${doomed}`,
+      });
+      const targetId = target['problem_id'] ?? '';
+
+      const neighbour = await post(owner, `/v1/projects/${projectId}/problems`, {
+        environment_id: environmentId,
+        title: `the problem that survives, holding ${kept}`,
+        symptoms: `symptoms mentioning ${kept}`,
+      });
+      const neighbourId = neighbour['problem_id'] ?? '';
+
+      await post(owner, `/v1/problems/${targetId}/events`, {
+        event_type: 'HYPOTHESIS',
+        summary: `hypothesis about ${doomed}`,
+        result: `result mentioning ${doomed}`,
+        reason: `reason mentioning ${doomed}`,
+        evidence_ref: `evidence ${doomed}`,
+        source_ai: `assistant ${doomed}`,
+        client_event_id: randomUUID(),
+      });
+      await post(owner, `/v1/problems/${targetId}/verifications`, {
+        verification_type: 'TEST',
+        result: true,
+        summary: `verified something about ${doomed}`,
+        evidence_ref: `run log ${doomed}`,
+        verified_by: `runner ${doomed}`,
+        client_event_id: randomUUID(),
+      });
+
+      // Both directions, so the incoming reference from a surviving Problem is
+      // planted too — that is the one an implementation forgets.
+      await post(owner, `/v1/problems/${targetId}/relations`, {
+        to_id: neighbourId,
+        relation_type: 'RELATED_TO',
+        reason: `target points outward, ${doomed}`,
+      });
+      await post(owner, `/v1/problems/${neighbourId}/relations`, {
+        to_id: targetId,
+        relation_type: 'SIMILAR_TO',
+        reason: `neighbour points inward, ${doomed}`,
+      });
+      await post(owner, `/v1/problems/${targetId}/usage-logs`, {
+        source_ai: `assistant ${doomed}`,
+        action: 'REFERENCED',
+        memory_id: targetId,
+        reason: `the target used itself, ${doomed}`,
+        result: `result ${doomed}`,
+      });
+      await post(owner, `/v1/problems/${neighbourId}/usage-logs`, {
+        source_ai: `assistant ${doomed}`,
+        action: 'ADOPTED',
+        memory_id: targetId,
+        reason: `the neighbour drew on the target, ${doomed}`,
+        result: `result ${doomed}`,
+      });
+
+      // A change, so a change log exists — its `changed_by` is caller-written.
+      const patched = await app.inject({
+        method: 'PATCH',
+        url: `/v1/problems/${targetId}`,
+        headers: auth(owner),
+        payload: {
+          expected_version: 1,
+          changed_by: `author ${doomed}`,
+          title: `retitled, still holding ${doomed}`,
+        },
+      });
+      expect(patched.statusCode).toBe(200);
+
+      return {
+        projectId,
+        environmentId,
+        targetId,
+        targetVersion: patched.json<{ version: number }>().version,
+        neighbourId,
+        doomed,
+        kept,
+      };
+    }
+
+    it('leaves nothing of it in any Memory table, and everything else alone', async () => {
+      const owner = await makeOwner();
+      const seeded = await seedCleanAggregate(owner);
+
+      // The fixture has to be real first. This also confirms the markers were
+      // stored as written: had the sanitizer redacted them, the sweep
+      // afterwards would prove nothing.
+      const before = await sweepOwner(owner);
+      expect(before).toContain(seeded.doomed);
+      expect(before).toContain(seeded.kept);
+
+      const populated = await census(owner, seeded.targetId);
+      expect(populated).toEqual({
+        problems: 1,
+        events: 1,
+        verifications: 1,
+        changeLogs: 1,
+        relationsFrom: 1,
+        relationsTo: 1,
+        usageLogsOwn: 1,
+        usageLogsReference: 2,
+      });
+
+      expect((await deleteProblem(owner, seeded.targetId, seeded.targetVersion)).statusCode).toBe(
+        204,
+      );
+
+      const after = await sweepOwner(owner);
+
+      // Nothing the deleted Problem carried, in any of the eight tables.
+      expect(after).not.toContain(seeded.doomed);
+      expect(after).not.toContain(seeded.targetId);
+
+      // And this is why the pair exists: the Project, the Environment and the
+      // neighbouring Problem are all still there, so the absence above is a
+      // delete rather than an empty database.
+      expect(after).toContain(seeded.kept);
+      expect(after).toContain(seeded.neighbourId);
+      expect(after).toContain(seeded.projectId);
+      expect(after).toContain(seeded.environmentId);
+
+      expect(await census(owner, seeded.targetId)).toEqual({
+        problems: 0,
+        events: 0,
+        verifications: 0,
+        changeLogs: 0,
+        relationsFrom: 0,
+        relationsTo: 0,
+        usageLogsOwn: 0,
+        usageLogsReference: 0,
+      });
+    });
+
+    it('leaves nothing of it in the export either', async () => {
+      const owner = await makeOwner();
+      const seeded = await seedCleanAggregate(owner);
+
+      const before = await app.inject({
+        method: 'GET',
+        url: '/v1/export',
+        headers: auth(owner),
+      });
+      expect(before.statusCode).toBe(200);
+      expect(before.body).toContain(seeded.doomed);
+
+      expect((await deleteProblem(owner, seeded.targetId, seeded.targetVersion)).statusCode).toBe(
+        204,
+      );
+
+      const after = await app.inject({ method: 'GET', url: '/v1/export', headers: auth(owner) });
+      expect(after.statusCode).toBe(200);
+
+      // The artifact is the form the Memory takes when it leaves, so a
+      // residual that survives only there is still a residual.
+      expect(after.body).not.toContain(seeded.doomed);
+      expect(after.body).not.toContain(seeded.targetId);
+
+      // Still a real export of what remains.
+      expect(after.body).toContain(seeded.kept);
+      expect(after.body).toContain(seeded.neighbourId);
+    });
+  });
 });

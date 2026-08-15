@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-15
+Updated: 2026-08-16
 
 ## Current phase
 
@@ -8,7 +8,7 @@ Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
 Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
-Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 … P3-10 done; P3-11 next)
+Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 … P3-11 done; P3-12 next)
 
 ## Source of truth
 
@@ -570,6 +570,47 @@ Transport maps a refusal to the existing `INVALID_REQUEST`; no new error code, a
 
 **Two layers of test, because either alone passes for the wrong reason.** An exact JSON field inventory fails the moment a field appears, whatever is in it; an adversarial sweep of twenty markers — credentials, JWTs, an AWS secret, a private key, a password-bearing database URL, an email, Memory prose, prompt, chain-of-thought and conversation markers, a filesystem path, a caller-invented key — fails when a permitted field starts carrying something it should not. Both run against `createLoggerOptions('trace')`, which is more verbose than any level `LOG_LEVELS` allows an operator to select.
 
+## What exists now — Security tests (P3-11)
+
+**Nothing in `src/` changed** (D-192). P3-11 is a regression proof over the boundaries P3-01 through P3-10 built, not a new mechanism. The investigation attacked the running system first — 21 cross-owner operations, six credential shapes, both two-ended writes, a dedup key replayed against another owner's Problem, sixteen malformed classes, all against a real database and a real credential — and found no production defect.
+
+Two files were added and one extended. Detailed suites that already prove a category at a real boundary are **cited rather than copied** (D-193), because a second copy adds assertions without adding claims and gives them somewhere to drift.
+
+### The five categories, and what proves each
+
+**SECRET** — plaintext does not reach storage or any egress.
+`tests/sanitization/secret-boundary.integration.test.ts` attacks the boundary over HTTP and sweeps the database, every response body and the operational log from the same fixtures, including the transactional close path. `secret-detector` / `secret-policy` / `secret-redactor` / `sanitizing-repository` cover the rules and the wrapper. `tests/reliability/retry-queue.test.ts` proves a credential is redacted before a queue file is written and that a payload which cannot be redacted gets no file at all. `tests/http/logging.test.ts` and `tests/export/memory-export.integration.test.ts` close the log and export sides. The false-positive half is evidence too: a suspected value is kept and prose about credentials is kept, so a security suite cannot drift into "refuse anything suspicious".
+
+**OWNER** — cross-owner read and write are impossible, and owner-wide surfaces mix nobody in.
+`tests/security/owner-boundary.security.integration.test.ts` is new. The resource suites, `tests/credentials/authentication.integration.test.ts` and `tests/export/memory-export.integration.test.ts` remain the depth behind it.
+
+**DELETE_RESIDUAL** — after a physical delete nothing of the aggregate is still reachable.
+`tests/delete/physical-delete.integration.test.ts`, now with a clean-marker proof (D-196) beside the historical-secret one. `tests/db/integrity.integration.test.ts` pins the seven incoming foreign keys, which is what makes "no derived search data" a structural fact rather than a fake table. `tests/reliability/server-down.integration.test.ts` proves a queued write does not resurrect a deleted Problem.
+
+**RETRY_DUPLICATE** — a replay or a race leaves one observable row.
+`tests/reliability/idempotent-replay.integration.test.ts` and `server-down.integration.test.ts`, with the Event and Verification route suites and the architecture guard on key generation. Unchanged by P3-11.
+
+**MALFORMED_INPUT** — a controlled refusal, no mutation, no leak.
+`tests/security/malformed-input.security.integration.test.ts` is new. `tests/http/openapi.test.ts` carries route and schema breadth; `tests/http/logging.test.ts` carries the log side.
+
+### What the two new suites actually assert
+
+**The owner-scoped operation set is classified exhaustively** (D-194). The suite reads the generated OpenAPI document at runtime, splits operations by whether they opt out of the document's security requirement, and asserts the owner-scoped half is exactly the twenty-six classified in the file — `healthCheck` being the one public operation. An operation added without a decision about its owner boundary fails here.
+
+Twenty-two of them take another owner's identifier and are attacked with one, in a table whose own coverage is checked against the classification. Their refusals are compared to **each other** and required to be identical, which says more than each being 404 alone: a caller cannot tell which attack touched something real. Alice's rows are fingerprinted before and after the whole table and must be byte-identical. The remaining four take no identifier and are checked for what can go wrong with them instead — the export is asserted to hold none of the other owner's ids or text and nothing from the credential boundary, while still being a real export of its own owner's memory.
+
+Also here: a version guard never answers what ownership refused, at any version; an idempotency key already spent cannot reach another owner's Problem and cannot be used to ask whether an id is real; one key can be spent by two owners; and linking across projects still works, because refusing across owners must not have quietly become refusing across projects.
+
+**Malformed input is tested by schema class, not by route** (D-195). Fifteen classes, one representative attack each. Every attack must leave the database byte-identical, answer in the shared envelope and nothing else, echo no fragment of what was sent, name no Ajv internal, and put none of it in the operational log — swept with the production `createLoggerOptions`, stream replaced and nothing else. A bad identifier in a path is logged as `/v1/problems/:problem_id`, which is the 400-path counterpart to P3-10's 404-path proof.
+
+### Two behaviours deliberately left alone (D-197)
+
+An unknown query parameter is ignored while an unknown body property is refused. Nothing reaches storage or the log either way, so it is recorded as a contract asymmetry rather than fixed under a security heading.
+
+Schema validation runs before authentication. Measured, not assumed, and not promoted into an invariant: no handler runs, nothing is written, and the contract document is deliberately public. Freezing a framework's lifecycle order as though it were a guarantee would be the wrong thing to protect.
+
+**No manifest test** (D-198). What is checked is behaviour, in the two places a list can go stale silently — the runtime operation inventory and the malformed class table. A test asserting that a file exists proves something about filing, not about the system.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -603,16 +644,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-11 — Security tests.
+P3-12 — Phase 3 E2E / Definition of Done.
 
-Not started. See the private Phase 3 breakdown for the task.
+Not started. See the private Phase 3 breakdown for the five required steps.
 
 Notes for whoever picks this up:
-- P3-10 built the log-leak apparatus P3-11 can reuse: `tests/http/logging.test.ts` holds a twenty-marker fixture set and a field-inventory helper, both driven by the production `createLoggerOptions`
-- P3-10 covered a representative entry point per log surface, not all 27 operations. Sweeping every operation with secret fixtures is P3-11’s
-- Owner crossing, delete residuals, retry duplication and malformed input across the whole surface were deliberately left to P3-11 rather than partly done here
-- `HealthReport.detail` is gone. Anything reading a health failure now reads a closed `reason` (D-187)
-- `RequestContextUnavailableError` now takes a closed union rather than a `string`; a new failure needs a new member of `REQUEST_CONTEXT_FAILURES`
+- P3-11 deliberately did **not** build the five-step flow. Its assertions are parts a flow can be assembled from; the continuity between them is what P3-12 owes
+- The apparatus is there to reuse: `tests/security/` holds an owner attack table driven by the runtime operation inventory and a malformed class matrix, both with database fingerprinting
+- The clean-marker delete proof (D-196) is the pattern for step 4 — plant, delete, sweep, and keep a control marker so an over-broad delete cannot pass
+- No production source changed in P3-11, and none is expected to change in P3-12 either unless a defect appears
 
 ## Core MVP milestone
 
