@@ -52,6 +52,17 @@ export interface RetrievalArtifactContent {
   readonly normalizedSummary: string;
   readonly keywords: readonly string[];
   readonly structuralFeatures: Record<string, unknown>;
+  /**
+   * Which summariser wrote the text above, and which version of it.
+   *
+   * Separate from the fingerprint on purpose: a generator change does not move
+   * the source fingerprint — the fingerprint describes what was read, not who
+   * wrote — so this pair is the only way an artifact written by a superseded
+   * summariser can be identified for regeneration. The same reason the
+   * embedding model is recorded, applied to the pipeline's other generator.
+   */
+  readonly summaryGeneratorId: string;
+  readonly summaryGeneratorVersion: string;
   readonly embedding: Embedding;
   readonly embeddingModel: string;
   readonly embeddingModelVersion: string;
@@ -103,10 +114,21 @@ export function toEmbedding(values: readonly number[]): Embedding {
   if (values.length === 0) {
     throw new InvalidRetrievalArtifactError('embedding', 'it has no dimensions');
   }
+  let magnitude = 0;
   for (const value of values) {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw new InvalidRetrievalArtifactError('embedding', 'it holds a value that is not a number');
     }
+    magnitude += Math.abs(value);
+  }
+  if (magnitude === 0) {
+    // All zero. PostgreSQL stores it and cosine distance against it is NULL —
+    // measured, not assumed — so the row would save cleanly and then vanish
+    // from, or corrupt the ordering of, every similarity query. No real model
+    // emits a zero vector for real text; one arriving here means something
+    // upstream is broken, and the honest response is refusal rather than a row
+    // that fails later and elsewhere.
+    throw new InvalidRetrievalArtifactError('embedding', 'every dimension is zero');
   }
   return [...values];
 }
@@ -130,6 +152,11 @@ export function toRetrievalArtifactContent(
       requireText(keyword, `keyword at ${String(index)}`),
     ),
     structuralFeatures: input.structuralFeatures,
+    summaryGeneratorId: requireText(input.summaryGeneratorId, 'summary generator id'),
+    summaryGeneratorVersion: requireText(
+      input.summaryGeneratorVersion,
+      'summary generator version',
+    ),
     embedding: toEmbedding(input.embedding),
     embeddingModel: requireText(input.embeddingModel, 'embedding model'),
     embeddingModelVersion: requireText(input.embeddingModelVersion, 'embedding model version'),

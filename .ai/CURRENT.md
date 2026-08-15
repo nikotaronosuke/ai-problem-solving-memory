@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-03)
+Updated: 2026-08-16 (P4-04)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01, P4-02, P4-03 done; P4-04 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-04 done; P4-05 next)
 
 ## Source of truth
 
@@ -715,23 +715,47 @@ Lexical candidate retrieval over stored artifacts. A migration (14 → **15**), 
 
 **Fifteen discrimination mutations, each killed by a named test**: the owner predicate, the read control, the project filter, the self-exclusion, keywords out of the document, the summary out of the document, the weights swapped, the configuration changed to `english`, the index dropped, the search rebuilding the document instead of reading it, the Problem's own text joining the document, the structural features joining it, the tie-break dropped, the limit unbounded, and a blank query accepted.
 
+## What exists now — Embedding provider abstraction and the full pipeline (P4-04)
+
+The composition point three tasks were building towards: a Problem in, a stored, searchable artifact out. `EmbeddingProvider` port (modelId / modelVersion / dimensions / `embed → unknown`), provider-output validation, the generation service, an atomic final gate, and provenance for the pipeline's other generator. Migration 15 → **16**.
+
+**A port with no vendor, recording the model, not the provider** (D-241). No SDK, no HTTP client, no credential, deps still three. Two providers serving one model share a vector space, so provider identity has no column. `dimensions` is required — it is the one property of output checkable without understanding it, and a wrong-size vector is unfindable, since cross-dimension distance is an error (measured).
+
+**Output validated, zero vectors refused everywhere** (D-242). Exact declared length, all finite, not all zero; nothing coerced, truncated or padded. The zero rule is a measurement: PostgreSQL stores an all-zero vector and its cosine distance is NULL — the "saves cleanly, breaks every later search" row. The refusal was promoted into `toEmbedding` itself, so no repository caller can store one either.
+
+**The embedding input is `normalizedSummary`, verbatim** (D-243). The summary's contract already covers what should be embedded; provenance is free because the model's input is byte-for-byte the stored column; and the hybrid stays a hybrid — keywords are the lexical channel's, features are the structural task's.
+
+**Summary generator provenance is stored** (D-244): `summary_generator_id` / `summary_generator_version`, NOT NULL, closing D-227's deferred gap — a summariser change leaves the fingerprint untouched, so these columns are the only way an old-summary artifact stays identifiable. The migration deleted the existing derived rows rather than backfilling fake provenance; nothing touched a Memory table. Four separate provenance axes: what was read, who wrote, what vectorised, when complete.
+
+**`generated_at` = when the complete content first existed** (D-245): clock read once, after embedding validation, before the gate. First injected clock in the codebase (`now` defaulting to `new Date`), pinned by a call-order test: embed → now → transaction.
+
+**The final gate is one short transaction under `FOR UPDATE` on the Problem row** (D-246). Measured against the real schema: while held, Event and Verification appends block (their FK checks need a key-share lock on the row), every Problem update blocks — read control included — deletes block, and so does a competing artifact upsert. So the re-read, the fingerprint check and the write are one act, and concurrent generations serialise with no half-writes. External calls happen strictly before the transaction. The Environment is not locked because it is immutable — **a change making it mutable must revisit this gate in the same change set**.
+
+**The commit guarantees exactly one thing** (D-247): at that moment, the fingerprint described the source. Staleness a moment later is ordinary and belongs to revalidation. Outcomes are the summary service's three plus `STORED`; no created/replaced distinction. Failed generations preserve an existing artifact — except a mid-generation Problem delete, which correctly takes its artifact with it. Concurrent model rollout is an accepted, recorded limitation: **one configured provider per deployment** is the standing assumption.
+
+**Service-owned flow** (D-248): no draft-accepting API exists, so the only text that can reach a provider is a draft that survived P4-02's validation, privacy inspection and race check — proven by a credential-bearing summary being refused with the provider call count at zero. Provider failures are a fixed sentence, no cause chained. The artifact write still crosses the sanitized repository, built inside the gate — the second approved construction site, both guarded.
+
+**Proven end to end with scripted ports on the real database** (D-249): generate → embed → gate → store → find with the lexical search. What a deployed server still cannot do — and is not claimed to do — is generate artifacts by itself: no concrete generator, no concrete provider, no caller, no scheduler.
+
+**Sixteen discrimination mutations, each killed by a named test**: the dimension check dropped, both zero-vector rejections dropped in turn, the provider error passed through, the fingerprint comparison dropped, the read-control recheck dropped, the lock dropped, the repository used raw, the model identity unstored, the generator provenance unstored, the clock read early, a failure deleting the existing artifact, a placeholder-vector fallback, a vendor SDK import, a UsageLog write, and a distance operator in the generation path.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
-- No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI. Since P4-01 there is somewhere to *put* an embedding, and still nothing that produces or reads one
-- No embedding, no embedding provider and no model. P4-02 generates the text half of an artifact and stops; nothing computes a vector, and no vendor SDK or HTTP client is a dependency (D-217, D-223)
-- No artifact is ever written by the generation path. A draft lives in memory and is returned; there is no fake vector, no placeholder model and no nullable-embedding migration (D-217)
-- No vector search, no distance query, no hybrid merge, no reranking, no ranking policy, no search cache — and still no vector index, since an untyped `vector` cannot carry one (D-211, D-240)
-- No production path that puts an artifact in the database. Generation stops at a draft and storage needs an embedding, so lexical search finds nothing in production until P4-04 exists (D-230)
+- No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI
+- No concrete summary generator and no concrete embedding provider. Both are ports (D-223, D-241); no vendor SDK or HTTP client is a dependency, and no provider credential exists anywhere. A deployed server therefore still cannot generate artifacts by itself — the orchestration path exists and is proven with scripted ports (D-249)
+- No caller of the generation pipeline. Nothing invokes `generateArtifact` in production: no route, no scheduler, no backfill worker, no adapter. Who calls it, and when, is a later wiring decision (D-249)
+- No vector search, no distance query, no hybrid merge, no reranking, no ranking policy, no search cache — and still no vector index, since an untyped `vector` cannot carry one and no model is chosen (D-211, D-240, D-249)
+- No model router. One injected provider per deployment is the standing assumption; fallback, selection, cost routing and A/B are all absent, and concurrent-rollout overwrites are an accepted, recorded limitation (D-247)
+- No retries around the embedding provider, and no reuse of the Phase 3 retry queue for it. A provider failure is a safe error, and trying again is the caller's decision (D-248)
 - No search that writes. No UsageLog, no ChangeLog, no Relation, and nothing generated on demand to satisfy a query (D-230, D-240)
 - No morphological analysis. `pgroonga`, `pg_trgm` and `unaccent` are available on the server and deliberately not installed; Japanese sentences are one lexeme to the built-in parser (D-239)
 - No query language of this system's own, and no term extraction, OR-relaxation or query expansion — ordinary terms are joined with AND and that is left visible (D-236)
 - No HTTP surface for artifacts or for generation. No route, no OpenAPI operation, no debug endpoint; the contract stays at 0.4.0 with 27 operations. Generation is background work, and what a client may ask of a search belongs to the task that has one to expose (D-216, D-228)
 - No claim that a summary is true. Structure, bounds, the success-claim evidence gate, privacy and source consistency are checked; a well-formed summary of a version nobody mentioned passes all of them. Semantic quality is P4-14's, measured against fixtures (D-228)
-- No stored record of which generator produced a summary. The identity is carried on the result and no column was added; where it should live is a storage decision for the task that first writes an artifact down (D-227)
 - No link from a `FIX` Event to a Verification, and nothing that invents one (D-221)
 - No way to tell a close-review Event from an ordinary one. No marker exists, and nothing guesses from authorship or timing (D-221)
 - No artifact list, query or delete. The repository is exactly `upsertArtifact` and `getArtifact`; the only removal is the Problem's own delete path (D-216)
@@ -762,16 +786,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-04 — Embedding provider abstraction.
+P4-05 — Vector search.
 
-**NOT STARTED.** P4-01, P4-02 and P4-03 are done; nothing of P4-04 has been implemented.
+**NOT STARTED.** P4-01 through P4-04 are done; nothing of P4-05 has been implemented.
 
-Notes for whoever picks this up:
-- This is the task that finally makes an artifact storable. Generation produces a draft (D-217) and storage refuses anything incomplete (D-209), so P4-04 owns the composition — draft plus embedding plus `generated_at` — and with it the first production path that writes a row. Until it exists, lexical search is correct and finds nothing
-- The provider is a port, like the summary generator (D-223). The same reasoning applies twice over: no vendor SDK, no HTTP client, runtime dependencies stay at three, and the credential question the OS boundary is careful about stays unanswered until something has to answer it
-- `generated_at` belongs to this task, and means the moment the *complete* content existed — not when the summary was written (D-217). The specification requires artifacts to be regenerable when the model changes, so whatever is stored must make "which model made this?" answerable
-- Whether an artifact records which *summary* generator produced its text is still open (D-227). The identity is carried on P4-02's result and stored nowhere; this is the task where that gap first bites, since it is the one writing rows
-- A fixed `vector(n)` and an ANN index become possible once a model is chosen (D-211). Neither is needed before vector search exists, and both are cheap while the data is small
+Notes for whoever picks this up, all of them measured facts:
+- The store holds vectors of any dimension side by side, and a distance across different dimensions is an *error*, not a low score. A vector query must filter to compatible rows first — `embedding_model`, `embedding_model_version` and `vector_dims(embedding)` are all available per row (D-241, D-249)
+- An ANN index (HNSW/IVFFlat) cannot be built on the untyped `vector` column — "column does not have dimensions" — and works on a typed one. Whether to cast-index to the configured model's dimension is P4-05's decision, made when a model is configured (D-211)
+- An all-zero vector cannot reach storage from any path (D-242), so cosine distance NULLs from zero vectors are structurally impossible — but distance *metric* choice is still open, and `<=>` returns NULL against a zero query vector; validate the query side too
+- Owner scope in the SQL, as everywhere: the lexical search statement is the template (D-237), and `memory_read_enabled` filters in the same statement
+- The lexical candidate shape (`problemId`, `projectId`, `lexicalScore`) was kept deliberately minimal so the hybrid merge can define its own; a vector candidate probably mirrors it, and `lexicalScore` vs whatever the vector score is named must not be presented as comparable before P4-06 decides how they combine (D-233)
 
 ## Core MVP milestone
 

@@ -551,9 +551,25 @@ Fifteen discrimination mutations each killed by a named test.
 
 2818 tests across 93 files. migrations 14 → **15**, public user-defined functions 0 → **1**, `retrieval_artifacts` columns 10 → **11**, plus one GIN index. Unchanged: tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, extensions 7, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-04 Embedding provider abstraction
+### P4-04 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. It owns the first production path that writes an artifact: draft plus embedding plus `generated_at`, composed into the complete row that P4-01 storage and P4-03 search are both already waiting for. A provider port with no vendor, as with the summary generator (D-217, D-223, D-230).
+Embedding provider abstraction, and the full pipeline it unlocked.
+
+`EmbeddingProvider` is a vendor-free port — modelId, modelVersion, required `dimensions`, `embed → unknown` — and the artifact records the model, never the provider, because two providers serving one model share a vector space (D-241). Output is validated to the declared dimension, all finite, not all zero; the zero rule is a measurement (stored zero vector ⇒ cosine distance NULL) and was promoted into `toEmbedding` itself so no storage path accepts one (D-242). The embedding input is `normalizedSummary` verbatim, which makes the model's input reproducible from the row it lands in (D-243).
+
+`summary_generator_id` / `summary_generator_version` are now stored NOT NULL (migration 16), closing D-227: a summariser change leaves the fingerprint untouched, so provenance is the only way an old-summary artifact stays identifiable. The migration deleted the existing derived rows rather than inventing fake provenance; no Memory table was touched (D-244). `generated_at` is stamped by an injected clock when the complete content first exists — after embedding validation, before the gate — pinned by a call-order test (D-245).
+
+The final gate is one short transaction under `FOR UPDATE` on the Problem row (D-246). Measured: Event/Verification appends, every Problem update, deletes and competing artifact upserts all block until the commit, so the re-read, the fingerprint check and the write are one act and concurrent generations serialise. External calls happen strictly before the transaction. The commit guarantees the fingerprint described the source *at that moment*; staleness afterwards is ordinary and belongs to revalidation (D-247). The flow is service-owned — no draft-accepting API — so only P4-02-inspected text can reach a provider, proven with the provider call count at zero for a refused draft (D-248).
+
+End to end with scripted ports on the real database: generate → embed → gate → store → **find with the lexical search**. Not claimed: a deployed server generating artifacts by itself — there is no concrete generator, no concrete provider, and no caller (D-249).
+
+Sixteen discrimination mutations each killed by a named test.
+
+2872 tests across 95 files. Migrations 15 → **16**, `retrieval_artifacts` 11 → **13** columns. Unchanged: tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, extensions 7, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-05 Vector search
+
+**NOT STARTED.** See the private Phase 4 breakdown. Semantic candidate retrieval with owner scope mandatory. The measured groundwork: cross-dimension distance errors rather than scoring low, so compatible-model filtering comes first; ANN indexes need a typed column, so the cast-index decision arrives with the configured model; zero vectors cannot reach storage, but the query side needs its own validation (D-241, D-242, D-249).
 
 ## BLOCKED
 

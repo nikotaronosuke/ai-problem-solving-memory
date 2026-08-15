@@ -42,6 +42,8 @@ interface ArtifactRow {
   normalized_summary: string;
   keywords: string[];
   structural_features: Record<string, unknown>;
+  summary_generator_id: string;
+  summary_generator_version: string;
   /** `vector` has no driver type, so it arrives as its text form. */
   embedding: string;
   embedding_model: string;
@@ -57,6 +59,8 @@ function toRecord(row: ArtifactRow): RetrievalArtifactRecord {
     normalizedSummary: row.normalized_summary,
     keywords: row.keywords,
     structuralFeatures: row.structural_features,
+    summaryGeneratorId: row.summary_generator_id,
+    summaryGeneratorVersion: row.summary_generator_version,
     embedding: parseEmbedding(row.embedding),
     embeddingModel: row.embedding_model,
     embeddingModelVersion: row.embedding_model_version,
@@ -70,7 +74,8 @@ function toRecord(row: ArtifactRow): RetrievalArtifactRecord {
  * Everything else comes back in its own type.
  */
 const ARTIFACT_COLUMNS = `owner_id, problem_id, normalized_summary, keywords,
-  structural_features, embedding::text as embedding, embedding_model,
+  structural_features, summary_generator_id, summary_generator_version,
+  embedding::text as embedding, embedding_model,
   embedding_model_version, source_fingerprint, generated_at`;
 
 /**
@@ -96,13 +101,16 @@ export async function upsertRetrievalArtifact(
     written = await executor.query<ArtifactRow>(
       `insert into public.retrieval_artifacts
               (owner_id, problem_id, normalized_summary, keywords, structural_features,
+               summary_generator_id, summary_generator_version,
                embedding, embedding_model, embedding_model_version, source_fingerprint,
                generated_at)
-            values ($1, $2, $3, $4, $5, $6::vector, $7, $8, $9, $10)
+            values ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9, $10, $11, $12)
        on conflict (owner_id, problem_id) do update
                set normalized_summary = excluded.normalized_summary,
                    keywords = excluded.keywords,
                    structural_features = excluded.structural_features,
+                   summary_generator_id = excluded.summary_generator_id,
+                   summary_generator_version = excluded.summary_generator_version,
                    embedding = excluded.embedding,
                    embedding_model = excluded.embedding_model,
                    embedding_model_version = excluded.embedding_model_version,
@@ -115,6 +123,8 @@ export async function upsertRetrievalArtifact(
         content.normalizedSummary,
         content.keywords,
         JSON.stringify(content.structuralFeatures),
+        content.summaryGeneratorId,
+        content.summaryGeneratorVersion,
         // Bound as a parameter and cast in the statement. The numbers never
         // become part of the SQL text.
         formatEmbedding(content.embedding),

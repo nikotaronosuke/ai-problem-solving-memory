@@ -2290,3 +2290,79 @@ Not built: embedding provider, vector search, hybrid retrieval, structural reran
 Fifteen discrimination mutations, each killed by a named test.
 
 P4-03 is done. P4-04 Embedding provider abstraction is NOT STARTED.
+
+## D-241 — The embedding provider is a port, and the identity stored is the model's (P4-04)
+
+`EmbeddingProvider` declares `modelId`, `modelVersion`, `dimensions` and one `embed` call returning `unknown`. No vendor implementation ships, no SDK and no HTTP client was added, runtime dependencies stay at three, and no provider credential exists anywhere — the same posture the summary generator took (D-223), for the same reasons: the specification says the model is not part of the contract, and the credential question the OS boundary is careful about stays unanswered until something has to answer it.
+
+What the artifact records is the *model*, not the provider. Two providers serving the same model produce vectors in the same space, and a schema recording the provider would treat those as different when sameness of space is the one thing similarity search cares about. So there is no `embedding_provider` column and no vendor vocabulary anywhere in the schema.
+
+`dimensions` is a required declaration because it is the one property of a model's output checkable without understanding the output — and because vectors of different lengths cannot even be compared (measured: a cross-dimension distance is an error), a wrong-size stored vector would be unfindable rather than merely wrong. The pgvector storage ceiling (16000, measured) is deliberately not repeated in TypeScript; the database refuses it with its own clear error.
+
+## D-242 — Provider output is validated, and a zero vector is refused everywhere (P4-04)
+
+Output must be an array of exactly the declared dimensions, every element a finite number, not all of them zero. Nothing is coerced, truncated, padded or normalised to fit — every silent repair would store a vector the model never produced.
+
+The zero rule rests on a measurement rather than a preference: PostgreSQL stores an all-zero vector without complaint, and cosine distance against one is NULL — the exact shape P4-01 called the worst outcome, a row that saves cleanly and then vanishes from or corrupts the ordering of every later similarity query. No real model emits a zero vector for real text; one arriving means something upstream is broken.
+
+The refusal was also promoted into the artifact domain itself: `toEmbedding` now rejects an all-zero embedding, so no caller of the artifact repository — not just this pipeline — can persist one. This is forward hardening occasioned by P4-04 making embedding semantics concrete, not a rewrite of P4-01's decisions. NaN and Infinity were already refused at both layers, and the database refuses them too (measured, error 22000), so the boundary is doubled everywhere it matters.
+
+## D-243 — The embedding input is the normalized summary, verbatim (P4-04)
+
+The provider is handed `draft.normalizedSummary` and nothing else — not trimmed, not composed, no keywords appended, no features serialised, never the source document.
+
+Three reasons, in order of weight. The summary's own contract already covers what an embedding should capture: symptoms, boundary, occurrence conditions, directions and environment (D-222). Provenance comes free: the text the model saw is byte-for-byte the `normalized_summary` stored in the same row, so the embedding input is always reproducible from the artifact itself, and no `embedding-input-v1` versioning scheme needs to exist until someone actually composes a different input. And the hybrid stays a hybrid: keywords are the lexical channel's strong signal (D-233) — embedding them too would double-count the same words in both channels and make the two halves fail the same way, which D-232 already argued against; structural features are P4-07's, which compares meaning.
+
+## D-244 — Summary generator provenance is stored, and old derived rows were cleared to make it honest (P4-04)
+
+Two new columns, `summary_generator_id` and `summary_generator_version`, both `not null` and non-blank. This closes the gap D-227 recorded and deferred to "the task that first writes an artifact down" — which is this one. The reasoning is the specification's own model-regeneration requirement applied to the pipeline's other generator: a summariser change leaves `source_fingerprint` untouched, because the fingerprint describes what was read rather than who wrote, so without these columns an artifact written by a superseded summariser is permanently indistinguishable from a current one.
+
+Four provenance axes now, deliberately separate: what was read (`source_fingerprint`), who wrote the text (`summary_generator_*`), what vectorised it (`embedding_model*`), when the complete content existed (`generated_at`). Folding any into another would make one value answer two questions badly — which is why the generator identity went into neither the fingerprint (D-220) nor the structural features (D-227).
+
+The migration deletes the existing artifact rows before adding the columns. Existing rows had no recorded generator because nothing that generates summaries had ever written a row — every row was seeded by hand or by a test — and the alternatives were both worse: fake provenance ("unknown") is a permanent lie in a column whose purpose is to be believed later, and nullable-forever carries the gap for the sake of rows a regeneration reproduces in full. Only derived data was touched; the migration contains no statement against any Memory table, and the deletion is the kind D-209 priced: losing every artifact costs the time to regenerate and nothing else.
+
+## D-245 — `generated_at` is set when the complete content first exists (P4-04)
+
+The service reads its injected clock once, after the embedding has been validated and before the gate transaction begins: the first moment at which summary and vector both exist and are both believed. Not the insert time — the row commits a moment later — and not the summary's time, which was only part of the content. D-212 stands untouched: the timestamp remains no evidence of currency, ordering or freshness; the fingerprint owns that question.
+
+The clock is an injected `now: () => Date` defaulting to `new Date` — the first injected clock in this codebase, admitted because a test asserting *when* the moment is stamped needs to observe the call's position in the sequence, and one closure is the entire cost. The call-order test pins it: embed, then now, then the transaction.
+
+## D-246 — The final gate: one short transaction under a lock on the Problem row (P4-04)
+
+The draft's own race check ends the moment the draft exists; the embedding call that follows takes real time, and a re-read *followed by* a write leaves a gap a concurrent Event can land in. So the final check and the write are one act: begin, lock the Problem row `FOR UPDATE`, re-read the source through the same reader over the same executor, check existence, the read control and the fingerprint, upsert through the sanitized repository over that executor, commit.
+
+The lock works because of how the schema is built, and it was measured rather than trusted: while the row is held, an Event append blocks (its foreign-key check needs a key-share lock on the row), a Verification append blocks, every Problem update blocks — the read control included — a delete blocks, and so does *another session's artifact upsert*, whose own foreign key points at the same row. Plain reads proceed untouched. Everything that could invalidate the fingerprint, and every competing artifact write, therefore waits for the commit; concurrent generations serialise on the same lock with no half-writes possible. One row, only ever one, so there is no lock ordering and no deadlock to have.
+
+Both external calls happen strictly before the transaction: a provider invoked inside it would turn its inference latency into everybody's lock time. The lock helper lives in the database layer (`problem-lock.ts`) and is re-exported through the repository boundary, keeping the application layer free of SQL.
+
+The Environment is deliberately not locked: it is immutable — no update path exists and a Problem cannot be re-pointed — so the lock would guard against a write that cannot be expressed. **Standing rule: a change that makes Environments mutable, or lets a Problem change Environment, must revisit this gate in the same change set.**
+
+## D-247 — What the commit guarantees, and what it deliberately does not (P4-04)
+
+The guarantee is exact: *at the moment the artifact committed, its fingerprint described the source*. One moment later an Event may land — the lock releases on commit and the blocked append proceeds — and the artifact is stale. That is ordinary life for derived data: it is not prevented, not detected here, and not this service's problem; staleness afterwards belongs to revalidation and regeneration. "Artifacts are always current" is a claim this system does not make.
+
+Outcomes are the summary service's three ordinary answers passed through unchanged, plus `STORED`. No created-versus-replaced distinction: the store keeps one current row, so the difference is a fact about what happened to be there before, would cost an extra read inside the gate, and tells a caller nothing it can act on. On every non-`STORED` outcome an existing artifact is untouched — with one honest exception, recorded rather than hidden: a Problem deleted mid-generation takes its artifact with it, because the delete path removes both, and that is the delete path's answer.
+
+Concurrent model rollout is an accepted MVP limitation: with old-model and new-model services running side by side, an old-model generation can commit after a new-model one and win. Model version strings have no ordering, `generated_at` comparison is forbidden (D-212), and a CAS or desired-generation scheme is machinery the problem does not yet justify — the damage is one row of regenerable data, recovered by regenerating. **Standing assumption: one configured embedding provider per running deployment.**
+
+## D-248 — The pipeline is service-owned, and the provider sees only what survived P4-02 (P4-04)
+
+There is no method accepting a caller's draft. The generation service calls the summary service itself, so the only thing a caller can supply is a Problem id — and therefore the only text that can reach the embedding provider is a draft that passed P4-02's validation, privacy inspection and race check. A draft-accepting API would be a door around every one of those boundaries; the integration proof is that a credential-bearing summary is refused with the provider's call count at zero.
+
+Provider failure is a fixed sentence with no chained cause, exactly like the summary generator's (D-225): a provider error is the likeliest place for the sent text, a request body or the provider's own credential to be quoted back, and `cause` is followed by formatters into the operational log.
+
+The artifact write still crosses the sanitized repository — built inside the gate over the transactional executor, which makes it the second approved construction site (the architecture guard now names both and checks each is wrapped). P4-02's inspection being upstream is a fact about today's call graph, not a property of storage, so the write boundary stays.
+
+Memory controls keep their P4-02 meanings: `memory_read_enabled` blocks — at entry via the summary service, and again in the gate, because a control toggled mid-embedding is invisible to the fingerprint — while `memory_write_enabled` does not, since an artifact is a derived index and not an assistant writing to the Memory (D-224). Suppressed and invalid Memories still generate. No UsageLog, ChangeLog or Relation is written; the Memory tables are byte-for-byte unchanged by a successful generation, `version` and `updated_at` included.
+
+## D-249 — What P4-04 changed, and what it did not build (P4-04)
+
+Schema: migrations 15 → **16**, `retrieval_artifacts` 11 → **13** columns. Unchanged: 12 tables, 13 foreign keys all RESTRICT, 8 DOMAINs, 0 enums, 0 triggers, 0 views, 1 user-defined function, no new extension, **0 vector indexes**. API 0.4.0 / 27 operations, export `"1"` — the artifact remains excluded (D-214), so its new columns change nothing there — queue `"2"`, runtime dependencies 3, `MemoryRepository` 25. D-202 does not fire: no new store, and the delete path already removes the artifact, provenance columns included.
+
+What now exists is a **production-quality orchestration path, proven end to end with scripted ports on the real database**: generate, embed, gate, store, and find with the lexical search — the first time the four retrieval tasks hold hands. What does not exist: a concrete summary generator, a concrete embedding provider, any HTTP or adapter caller, any scheduler or backfill. "A deployed server generates artifacts by itself" is not claimed, and P4-04's DONE is the pipeline, not the vendor.
+
+Not built, deliberately: vector search, distance operators, HNSW/IVFFlat, hybrid retrieval, reranking, ranking, caching, search UsageLogs, retries, a provider queue, a model router, fallback providers.
+
+Sixteen discrimination mutations, each killed by a named test.
+
+P4-04 is done. P4-05 Vector search is NOT STARTED.

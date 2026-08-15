@@ -520,13 +520,18 @@ describe('credential boundary', () => {
     // digest for signs of a credential, and a policy could decide to redact
     // the one column that has to survive verbatim.
     //
-    // One module calls it, and it wraps two repositories there: the Memory
-    // repository under the write policy, and the retrieval artifacts under the
-    // artifact policy. The credential store is wrapped by neither. (The
-    // definition itself no longer matches this pattern — the function became
-    // generic when a second kind of repository needed it — which leaves the
-    // list saying exactly what it means: the call sites.)
-    expect(wrapped).toEqual(['app/request-context.ts']);
+    // Two modules call it, and both wrap Memory-content repositories: the
+    // request context wraps the Memory repository and the retrieval artifacts,
+    // and the artifact generation service wraps the artifact repository it
+    // builds over its gate's transactional executor. The credential store is
+    // wrapped by neither. (The definition itself no longer matches this
+    // pattern — the function became generic when a second kind of repository
+    // needed it — which leaves the list saying exactly what it means: the
+    // call sites.)
+    expect(wrapped).toEqual([
+      'app/request-context.ts',
+      'app/retrieval-artifact-generation-service.ts',
+    ]);
   });
 
   it('reads the Authorization header in exactly one place', async () => {
@@ -1411,26 +1416,31 @@ describe('the retrieval artifact', () => {
       .sort();
 
     // The same rule the Memory repository lives under, for the same reason:
-    // one place where the boundary could be forgotten. A second construction
-    // site is how a repository ends up handed out unwrapped.
-    expect(builders).toEqual(['app/request-context.ts']);
+    // few, named places where the boundary could be forgotten. The request
+    // context hands one out per request; the generation service builds one
+    // over its gate's transactional executor, so the write commits or
+    // vanishes with the gate. A construction site beyond these is how a
+    // repository ends up handed out unwrapped.
+    const approved = ['app/request-context.ts', 'app/retrieval-artifact-generation-service.ts'];
+    expect(builders).toEqual(approved);
 
-    const context = modules.find((module) => module.path === 'app/request-context.ts');
-    const source = context?.source ?? '';
-    const constructions = source.split('createRetrievalArtifactRepository(').length - 1;
-    // Every construction is wrapped. Counted by looking at what precedes each
-    // one rather than by matching across the line break between them.
-    const unwrapped = source
-      .split('createRetrievalArtifactRepository(')
-      .slice(0, -1)
-      .filter((before) => !/withSanitization\(\s*$/.test(before)).length;
+    for (const path of approved) {
+      const source = modules.find((module) => module.path === path)?.source ?? '';
+      const constructions = source.split('createRetrievalArtifactRepository(').length - 1;
+      // Every construction is wrapped. Counted by looking at what precedes
+      // each one rather than by matching across the line break between them.
+      const unwrapped = source
+        .split('createRetrievalArtifactRepository(')
+        .slice(0, -1)
+        .filter((before) => !/withSanitization\(\s*$/.test(before)).length;
 
-    expect(constructions).toBeGreaterThan(0);
-    expect(unwrapped).toBe(0);
-    // Its own policy, not the write boundary's. An artifact is refused whole
-    // rather than redacted, because its embedding was built from the text
-    // before a redaction could apply.
-    expect(context?.source).toContain('createArtifactInspectionPolicy');
+      expect(constructions, `${path} builds none`).toBeGreaterThan(0);
+      expect(unwrapped, `${path} builds one unwrapped`).toBe(0);
+      // Its own policy, not the write boundary's. An artifact is refused whole
+      // rather than redacted, because its embedding was built from the text
+      // before a redaction could apply.
+      expect(source).toContain('createArtifactInspectionPolicy');
+    }
   });
 
   it('is removed by the delete path', async () => {
@@ -1695,6 +1705,60 @@ describe('lexical search', () => {
       'generateSummary',
     ]) {
       expect(code.includes(later), `lexical search already does ${later}`).toBe(false);
+    }
+  });
+});
+
+describe('the artifact generation pipeline', () => {
+  it('takes the lock inside its gate, and calls the provider outside it', async () => {
+    const source = await readFile(
+      join(SRC, 'app', 'retrieval-artifact-generation-service.ts'),
+      'utf8',
+    );
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The gate is only atomic because the row is locked; a version that reads,
+    // compares and writes without the lock returns identical results and
+    // quietly reopens the gap the lock exists to close.
+    expect(code).toContain('lockProblemForArtifactWrite');
+    const gate = code.slice(code.indexOf('transactionRunner.run'));
+    expect(gate).toContain('lockProblemForArtifactWrite');
+    // And the slow call stays outside: a provider invoked inside the
+    // transaction would turn its latency into everybody's lock time.
+    expect(gate.includes('.embed('), 'the provider is called inside the gate').toBe(false);
+  });
+
+  it('gives the provider port no way to reach storage', async () => {
+    const source = await readFile(join(SRC, 'domain', 'retrieval-embedding.ts'), 'utf8');
+    const port = source.slice(source.indexOf('export interface EmbeddingProvider {'));
+    const body = port.slice(0, port.indexOf('\n}'));
+
+    // The port is handed a string and returns a value. A provider that could
+    // reach a repository, an executor or a context would be able to act on
+    // the Memory it is embedding.
+    for (const reachable of ['Repository', 'Executor', 'DatabasePool', 'OwnerContext']) {
+      expect(body.includes(reachable), `the provider port can reach a ${reachable}`).toBe(false);
+    }
+    expect(body).toContain('EmbeddingProviderInput');
+  });
+
+  it('has no vector search and no distance operator', async () => {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter(
+        (module) =>
+          module.path.includes('retrieval-embedding') ||
+          module.path.includes('retrieval-artifact-generation') ||
+          module.path.includes('problem-lock'),
+      )
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+
+    expect(code.length).toBeGreaterThan(0);
+    // P4-04 produces and stores vectors. Comparing them is the next task, and
+    // an operator arriving early is that task starting unannounced.
+    for (const later of ['<=>', '<#>', '<->', 'cosine', 'hnsw', 'ivfflat', 'l2_distance']) {
+      expect(code.includes(later), `the generation path already uses ${later}`).toBe(false);
     }
   });
 });

@@ -80,6 +80,8 @@ describe.skipIf(databaseUrl === undefined)('a retrieval artifact holding a crede
       // Always present, so a rejection is known to discard a *complete*
       // candidate rather than one that was going to fail anyway.
       embedding: [0.5, 0.25, 0.125],
+      summaryGeneratorId: 'fixture-summary-generator',
+      summaryGeneratorVersion: '1',
       embeddingModel: 'fixture-model',
       embeddingModelVersion: '1',
       sourceFingerprint: 'source-state-A',

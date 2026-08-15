@@ -648,6 +648,8 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
       keywords: [TARGET_MARKER, 'rotation'],
       structuralFeatures: { boundary: 'credentials', note: TARGET_MARKER },
       embedding: [0.5, 0.25, 0.125],
+      summaryGeneratorId: 'fixture-summary-generator',
+      summaryGeneratorVersion: '1',
       embeddingModel: 'fixture-model',
       embeddingModelVersion: '1',
       sourceFingerprint: `fingerprint-${TARGET_MARKER}`,

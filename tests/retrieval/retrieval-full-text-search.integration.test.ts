@@ -131,6 +131,8 @@ describe.skipIf(databaseUrl === undefined)('lexical search over retrieval artifa
       structuralFeatures: options.structuralFeatures ?? { boundary: 'configuration' },
       // Complete, because a partial artifact is not a state this system has.
       embedding: [0.5, 0.25, 0.125],
+      summaryGeneratorId: 'fixture-summary-generator',
+      summaryGeneratorVersion: '1',
       embeddingModel: 'fixture-model',
       embeddingModelVersion: '1',
       sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
@@ -419,6 +421,8 @@ describe.skipIf(databaseUrl === undefined)('lexical search over retrieval artifa
         keywords: ['betakeyword'],
         structuralFeatures: { boundary: 'configuration' },
         embedding: [0.1, 0.2],
+        summaryGeneratorId: 'fixture-summary-generator',
+        summaryGeneratorVersion: '1',
         embeddingModel: 'fixture-model',
         embeddingModelVersion: '2',
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,

@@ -702,6 +702,8 @@ describe.skipIf(databaseUrl === undefined)('generating a retrieval summary', () 
         keywords: ['existing'],
         structuralFeatures: { boundary: 'configuration' },
         embedding: [0.5, 0.25],
+        summaryGeneratorId: 'fixture-summary-generator',
+        summaryGeneratorVersion: '1',
         embeddingModel: 'fixture-model',
         embeddingModelVersion: '1',
         sourceFingerprint: 'retrieval-source-v1:whatever-was-current-then',
