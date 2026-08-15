@@ -82,6 +82,22 @@ export {
   type AppendVerificationCommand,
   type VerificationService,
 } from './verification-service.js';
+// The full pipeline: summary, embedding, atomic persistence. Still no route —
+// what invokes generation in production is an adapter decision that has not
+// been made.
+export {
+  createRetrievalArtifactGenerationService,
+  EmbeddingGenerationFailedError,
+  type GenerateRetrievalArtifactOutcome,
+  type RetrievalArtifactGenerationService,
+} from './retrieval-artifact-generation-service.js';
+export {
+  InvalidEmbeddingProviderOutputError,
+  requireEmbeddingProviderIdentity,
+  toProviderEmbedding,
+  type EmbeddingProvider,
+  type EmbeddingProviderInput,
+} from '../domain/retrieval-embedding.js';
 // Generation only: it produces a draft and stores nothing. There is no route
 // to it, deliberately — what a client may ask of a search belongs to the task
 // that has a search to expose.

@@ -59,6 +59,11 @@ export {
 } from './retrieval-summary-source-reader.js';
 export type { RetrievalSummarySource } from '../db/retrieval-summary-source.js';
 
+// The row lock the artifact generation gate takes. A storage operation like
+// everything else on this surface: the application layer names what it needs
+// held still, and how that is expressed to PostgreSQL stays down here.
+export { lockProblemForArtifactWrite } from '../db/problem-lock.js';
+
 // Lexical candidate search. Its own reader rather than a method on the artifact
 // repository: finding Problems worth looking at is a different question from
 // storing one Problem's artifact, and the search side is where a vector query
