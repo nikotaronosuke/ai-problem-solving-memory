@@ -80,6 +80,11 @@ const SECRET = {
   awsAssignment: 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/fakeLl2Mv6Y0123456789',
   awsValue: 'wJalrXUtnFEMI/K7MDENG/fakeMm3Wn7Z0123456789',
   awsSecurityToken: 'AWS_SECURITY_TOKEN=fake-Nn4Rt8A-0123456789abcdef',
+  // An assignment inside another assignment's value. Found by the
+  // independent Phase 3 audit: with no space after the outer `=`, the inner
+  // credential was read by nothing at all.
+  nestedAssignment:
+    'ran x=AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/fakeOo5Nd1B0123456789 then failed',
 } as const;
 
 /**
@@ -118,6 +123,7 @@ const MARKERS = [
   'Ll2Mv6Y',
   'Mm3Wn7Z',
   'Nn4Rt8A',
+  'Oo5Nd1B',
   'zorbak',
   'plimth',
   'vandrel',
@@ -613,6 +619,36 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
       });
 
       expect(response.statusCode).toBe(201);
+    });
+  });
+
+  describe('a credential nested inside another assignment', () => {
+    it('is stripped by the server, keeping the sentence it sat in', async () => {
+      // Straight at the running server, with the secret still raw. The retry
+      // queue redacts before it sends, so a queued write could never prove
+      // this: what is under test is the server's own boundary.
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/problems/${problemId}/events`,
+        payload: {
+          event_type: 'DISCOVERY',
+          summary: SECRET.nestedAssignment,
+          client_event_id: generateClientEventId(),
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      const stored = await app.inject({
+        method: 'GET',
+        url: `/v1/problems/${problemId}/events`,
+      });
+
+      // The credential is gone, the account of what happened is not.
+      expect(stored.body).not.toContain('Oo5Nd1B');
+      expect(stored.body).toContain('AWS_SECRET_ACCESS_KEY=[REDACTED]');
+      expect(stored.body).toContain('ran x=');
+      expect(stored.body).toContain('then failed');
     });
   });
 

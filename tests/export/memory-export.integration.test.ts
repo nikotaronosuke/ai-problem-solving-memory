@@ -740,6 +740,35 @@ export AWS_REGION=eu-west-1`,
       expect(written).not.toContain('AWS_SECRET_ACCESS_KEY');
     });
 
+    it('refuses one nested inside another assignment', async () => {
+      // A behaviour change, and the safe direction. Before the Phase 3 audit's
+      // F1 was closed, this shape read as ordinary prose, so a Memory holding
+      // it exported in full. Now it is recognised, and an export carrying a
+      // credential is refused until the owner removes it — which is the P3-06
+      // contract, not a new one. Nothing is redacted on the way out: an
+      // artifact that differs from the database is no longer a copy of it.
+      const owner = await makeOwner();
+      const seeded = await seed(owner);
+      const secret = `wJalrXUtnFEMI/K7MDENG/${randomUUID().replaceAll('-', '').slice(0, 18)}`;
+      await writeHistoricalSecret(
+        owner,
+        seeded.problemId,
+        `ran x=AWS_SECRET_ACCESS_KEY=${secret} then failed`,
+      );
+
+      const before = logLines.length;
+      const response = await app.inject({ method: 'GET', url: '/v1/export', headers: auth(owner) });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: { code: 'EXPORT_BLOCKED' } });
+      expect(response.body).not.toContain(secret);
+      expect(response.body).not.toContain('[REDACTED]');
+
+      const written = logLines.slice(before).join('\n');
+      expect(written).not.toContain(secret);
+      expect(written).not.toContain('AWS_SECRET_ACCESS_KEY');
+    });
+
     it('refuses one written into an environment snapshot key', async () => {
       const owner = await makeOwner();
       const seeded = await seed(owner);

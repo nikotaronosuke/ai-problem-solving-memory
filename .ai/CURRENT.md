@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P3-12)
+Updated: 2026-08-16 (P3-12, F1 hardening)
 
 ## Current phase
 
@@ -622,6 +622,22 @@ Schema validation runs before authentication. Measured, not assumed, and not pro
 **"Deleted including search derivatives" is claimed honestly** (D-201). Phase 3 builds no search and P3-12 builds no fake one. The claim's true form today: the persisted aggregate is physically gone, and the catalog holds no relation a derivative could live in — zero views, materialized views, foreign tables or partitioned tables in the public schema, beside the exact eleven regular tables. This corrects the FK-inventory explanation from P3-11's report: a foreign-key inventory proves that everything *referencing* problems is known, not that no derived store exists. The guard is a Phase 3 boundary, not an architecture rule — P4-01 and P4-09 are expected to fail it, and the change that does must extend the delete path, the delete tests and the guard in the same change set (D-202). Its reach is PostgreSQL: the absence of external or in-process derived stores rests on the dependency count and the absence of any search module, and is not claimed as a catalog proof.
 
 **Eleven discrimination mutations, each killed by a named step** (D-203): the sanitizer keeping a confirmed secret (step 4), the queue writing raw (step 7), the server never stopping (step 5), a queued write reported unsaved (step 6), a key regenerated on read (step 10), server dedup removed (`idempotent-replay`), a delivered item left in the queue (step 10), events surviving the delete (step 11), the problem row surviving (step 11), the export emptied (step 13), and a real view planted in the schema (step 12, named in the failure).
+
+## Post-Phase-3 hardening — nested credential assignments (audit finding F1)
+
+The independent final audit passed Phase 3 with one LOW finding, now closed. `x=AWS_SECRET_ACCESS_KEY=<value>` was read as ordinary prose — not detected, not redacted, stored as written — and it was wider than first reported: `ran x=AWS_SECRET_ACCESS_KEY=<value> then failed` missed too (D-204).
+
+**Two mechanisms, not one.** A name needed two characters, so `x=` formed no assignment, and the inner name could not begin one because `=` is not a boundary. Separately, with a longer outer name the assignment did form and `\S+` swallowed the inner one, which `matchAll` then never revisited. Adding `=` to the boundary class fixes only the first — and corrupts quoted values — so it was prototyped and rejected on evidence.
+
+**The walk is a cursor, with no depth limit** (D-205). Recursion overflows the stack on 10KB of nested input, and a depth cap would replace one blind spot with a smaller one. Termination is structural: each step advances past a name and a separator, so no offset is revisited. The first working version was quadratic (64KB took 1.7s); reading only `NAME=` and taking the value's end from the caller made it linear — 64KB now ≈50ms, 256KB ≈160ms.
+
+**One parser, unchanged false-positive contract** (D-206). The fix is in `findAssignmentValues`, which the detector and redactor share. Nested values are judged by the same `certaintyFor`, so `x=token=expired`, `x=API_KEY=CHANGE_ME` and `x=API_KEY=[REDACTED]` are still kept. A strong outer name still claims its whole value, and a header with its own parser is still judged once — walking into `Set-Cookie: session=<token>; HttpOnly` misreads it, which is a regression that appeared during this work and is why the walk stops there.
+
+**Export now refuses a Memory holding one** (D-207). Export inspects with the same detector and refuses rather than redacts, so a row stored before this fix exports today as `409 EXPORT_BLOCKED` until the owner deletes it. Safe direction, existing contract, recorded because an owner meets it as a failure.
+
+Six mutations each killed by a named test: the walk removed, the two-character name restored, the span shifted one character, the quote bound dropped, status words counted as credentials, and the walk made recursive again (which fails with `RangeError` on the deep-nesting test).
+
+Phase 3 remains **COMPLETE** and P4-01 remains **NOT STARTED** (D-208).
 
 ## What is deliberately absent
 

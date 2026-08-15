@@ -534,6 +534,25 @@ describe('a queue of writes that have not reached the server', () => {
       expect(text).toContain('AWS_SECRET_ACCESS_KEY');
     });
 
+    it('redacts one nested inside another assignment', async () => {
+      const secret = `AKIA${randomUUID().replaceAll('-', '').toUpperCase().slice(0, 16)}`;
+      const write = eventWrite({
+        payload: {
+          eventType: 'DISCOVERY',
+          summary: `ran x=AWS_SECRET_ACCESS_KEY=${secret} then failed`,
+        },
+      });
+
+      await queue.enqueue(write, AT);
+
+      // The queue inspects with the server's own policy, so a reading the
+      // server gained is a reading the disk gains in the same change.
+      const text = (await readItemFiles())[0] ?? '';
+      expect(text).not.toContain(secret);
+      expect(text).toContain('AWS_SECRET_ACCESS_KEY=[REDACTED]');
+      expect(text).toContain('then failed');
+    });
+
     it('writes no file at all when the credential cannot be removed safely', async () => {
       const secret = `AKIA${randomUUID().replaceAll('-', '').toUpperCase().slice(0, 16)}`;
       const write = eventWrite({

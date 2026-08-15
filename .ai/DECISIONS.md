@@ -1921,3 +1921,49 @@ The five mandatory steps run continuously in `tests/e2e/phase3.e2e.test.ts`, and
 Ten source-level discrimination mutations each kill a named step — sanitizer kept a secret, queue wrote raw, server never stopped, queued reported unsaved, key regenerated on read, dedup removed, delivered item left in queue, events left behind, problem row left behind, export emptied — and an eleventh planted a real view in the schema and was caught by the catalog guard by name.
 
 What Phase 3 leaves deliberately absent is unchanged from D-192's inventory, and the numbers current code verifies: 27 operations at API 0.4.0, export schema "1", queue schema "2", 13 migrations, 11 tables, 8 domains, 12 RESTRICT foreign keys, 25 repository operations, 3 runtime dependencies. Next is P4-01, not started.
+
+## D-204 — An assignment can sit inside another one's value (post-Phase-3 hardening)
+
+The independent Phase 3 audit passed with one LOW finding, and this closes it. `x=AWS_SECRET_ACCESS_KEY=<value>` was read as ordinary prose: not detected, not redacted, stored as written.
+
+It was wider than the finding first said. It is not confined to the whole value being the nested assignment — `ran x=AWS_SECRET_ACCESS_KEY=<value> then failed` missed too, so any whitespace-delimited token in a sentence could carry one.
+
+**Two independent mechanisms, which is why the obvious fix does not work.** A name needed at least two characters, so `x` never formed an assignment at all — and the inner name could not begin one either, because the character before it is `=`, which is not a boundary in this pattern. That is one miss. With a longer outer name — `config=AWS_SECRET_ACCESS_KEY=…` — the assignment *did* form, `\S+` greedily took the inner one as its value, the outer name was ordinary so nothing was reported, and `matchAll` resumed past everything it had consumed. That is the other.
+
+Each mechanism was measured separately before anything was changed. Adding `=` to the boundary class fixes only the first and leaves the second open; it also breaks quoted values, because a match then starts inside the quotes and takes the closing one with it. Both were prototyped and rejected on evidence rather than argued about.
+
+What is here instead: names may be one character, and an assignment whose name is ordinary has its value read again as an assignment in its own right.
+
+## D-205 — The nested walk is iterative, with no depth limit (post-Phase-3 hardening)
+
+The natural way to write this is recursion, and it fails on exactly the input it exists for: 10KB of nested assignments overflows the call stack. Measured — the recursive form throws `RangeError` at around five thousand levels, which would be a worse defect than the one being fixed, since a thrown error inside the sanitizer refuses a write that should have been stored.
+
+A depth cap avoids the crash by choosing a depth beyond which a credential becomes invisible again. That is the original hole with a smaller number attached, and it was rejected: this hardening should not close one blind spot by installing another.
+
+So the walk is a cursor. There is no stack to exhaust and no depth to exceed. Termination is structural rather than counted — each step moves to the start of a value, which is past a name of at least one character and a separator, so the cursor advances by at least two and can never revisit an offset.
+
+Cost had to be measured too, and the first working version was quadratic: re-matching `\S+` at every step rescanned the rest of the token, and 64KB of nested assignments took 1.7 seconds. The walk already knows where the value it is reading ends, because the search that found it measured that. Reading only `NAME=` at each step and taking the end from the caller makes it linear — the same 64KB now takes about 50ms, and 256KB about 160ms.
+
+## D-206 — One parser, and the false-positive contract is unchanged (post-Phase-3 hardening)
+
+The change is in `findAssignmentValues`, which the detector and the redactor both read, so neither can recognise something the other cannot locate. Fixing one alone was never an option.
+
+Nothing was loosened to achieve it. The nested reading calls the same `certaintyFor`, so a nested value gets exactly the judgement an outer one would: `x=token=expired` is a status note, `x=API_KEY=CHANGE_ME` is a placeholder, `x=API_KEY=[REDACTED]` is already handled — all kept, as before. UUIDs, commit SHAs, hashes, URLs, paths, emails, package versions, public keys and contextless strings are unaffected, and were checked against the previous behaviour case by case rather than merely re-run.
+
+Two things stayed as they were on purpose. A strong outer name still claims its whole value — `PASSWORD=AWS_SECRET_ACCESS_KEY=…` redacts to `PASSWORD=[REDACTED]`, because reading inside it would narrow what gets removed. And a header with a parser of its own is still judged once: walking into `Set-Cookie: session=<token>; HttpOnly` reads it a second time as a variable assignment, where the trailing `;` hides the placeholder the cookie parser sees correctly. That regression appeared during this work and is the reason the walk stops at header names.
+
+## D-207 — A Memory holding a nested credential now refuses to export (post-Phase-3 hardening)
+
+Export inspects with the same detector and refuses rather than redacts (D-…, P3-06): an artifact that differs from the database is not a copy of it. So a reading the detector gains is a refusal the export gains.
+
+This is a behaviour change for data already stored. A row written before this fix, holding `x=AWS_SECRET_ACCESS_KEY=<value>`, exported in full yesterday and answers `409 EXPORT_BLOCKED` today, until the owner removes it with the delete path P3-05 built.
+
+That is the safe direction and the existing contract rather than a new one, and it is recorded here because it is the kind of change an owner meets as a failure without being told why. Redacting on the way out instead was not considered: it would make the artifact disagree with the database, which is the one thing export must not do.
+
+## D-208 — Phase 3 stays complete (post-Phase-3 hardening)
+
+This is hardening on a passed audit, not a reopening. Phase 3 remains COMPLETE, the audit verdict remains PASS WITH NON-BLOCKING FINDINGS, and its one finding is now closed. No task number was invented for it; the work is a fix to P3-02 and P3-03's parser, recorded here.
+
+Nothing about the contract moved: no migration, no schema change, no dependency, no endpoint, no OpenAPI change, and no new secret category — a nested credential is a `CREDENTIAL_ASSIGNMENT`, and `SecretFinding` is still a category and a certainty with no offset, span or fragment in it.
+
+P4-01 RetrievalArtifact remains NOT STARTED.
