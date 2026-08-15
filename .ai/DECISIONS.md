@@ -1967,3 +1967,74 @@ This is hardening on a passed audit, not a reopening. Phase 3 remains COMPLETE, 
 Nothing about the contract moved: no migration, no schema change, no dependency, no endpoint, no OpenAPI change, and no new secret category — a nested credential is a `CREDENTIAL_ASSIGNMENT`, and `SecretFinding` is still a category and a certainty with no offset, span or fragment in it.
 
 P4-01 RetrievalArtifact remains NOT STARTED.
+
+## D-209 — A Problem has one current artifact, or none (P4-01)
+
+There is no artifact history and no artifact identity. A regeneration replaces what was there; it does not add a row beside it.
+
+The reason is what an artifact *is*. It is derived: a rendering of a Problem built so a search can find it, rebuilt from the Problem, its Events and its Verifications at any time. Nothing about it is a record, so keeping the previous rendering preserves nothing — it costs storage to hold a worse answer to a question the current row already answers better. Losing every artifact in the system costs the time to regenerate them and nothing else.
+
+That absence of identity is why there is no `artifact_id` and no `version`. Optimistic locking (D-…, P2-07) exists because two people can disagree about a Problem and one of them must be told. Two generators disagreeing about an artifact is not a conflict — the later rendering is simply the one that is kept.
+
+## D-210 — The artifact is identified by owner and Problem together (P4-01)
+
+The primary key is `(owner_id, problem_id)`, and the foreign key names both columns against `problems (owner_id, problem_id)`.
+
+`problem_id` alone would have been enough to be unique, since a Problem belongs to one owner. It is refused anyway, for the same reason every other table in this schema carries `owner_id`: a read scoped by owner must be scoped by owner in the storage, not only in the code that happens to be calling. The composite foreign key means the database itself refuses an artifact whose owner and Problem disagree — one owner cannot store a rendering of another owner's Problem even if a bug hands the repository the wrong pair.
+
+`on delete restrict`, like every other foreign key here (D-…). The delete path removes the artifact explicitly and in order; nothing is removed as a side effect of something else being removed.
+
+## D-211 — pgvector, with an untyped `vector` column (P4-01)
+
+The embedding column is `vector`, from the `vector` extension. This is the first extension this schema requires.
+
+`real[]` was considered and is not used. It stores the numbers correctly, but it is a list of floats to PostgreSQL — no distance operator, no index, and no way to gain either later without rewriting the column and every row in it. The choice was made now because a column type is the expensive thing to change once there is data, and the storage decision is P4-01's whether or not the search that uses it is.
+
+No dimension is declared. `vector` without one accepts any length, which was verified before the migration was written: rows of 3 and 5 dimensions coexisted in the same column in a probe that was rolled back. That matters because the model is not chosen yet, models change, and a declared `vector(1536)` would make the *first* model's dimension a schema fact — every later model then needing a migration. The dimension is a property of whatever produced the embedding, so it is reported by the row (`embedding_model`, `embedding_model_version`) rather than demanded by the column.
+
+The cost is stated plainly: an untyped `vector` cannot carry an ANN index, because pgvector's indexes need a fixed dimension. There is no vector index yet and none is needed yet — there is no search. Whichever task builds retrieval decides the model, and a fixed dimension is available then, with data small enough to migrate.
+
+## D-212 — `source_fingerprint` is opaque here, and `generated_at` proves nothing (P4-01)
+
+Every artifact records the source state it was built from. This module stores that string and compares it for equality; it never computes one, never parses one, and has no opinion about what goes into it. Producing the fingerprint means reading the Problem, its Events and its Verifications, which is the generator's work — P4-02's — not storage's.
+
+`generated_at` is stored and is deliberately **not** used to decide whether an artifact is current. A generation that read the source, then took a second while an Event was appended, produces a *later* timestamp for an *earlier* state. A timestamp answers "when did this run", which is not the question; "what was it looking at" is, and only the fingerprint answers it.
+
+So the upsert is unconditional. There is no `where generated_at > excluded.generated_at` and no winner policy: an artifact with an earlier timestamp than the row it replaces is accepted, and a test asserts it, because storage does not judge freshness. The gate that refuses a stale regeneration belongs with the code that can compute the current fingerprint and compare it, which is P4-02.
+
+## D-213 — An artifact holding a credential is refused whole, never redacted (P4-01)
+
+Every other persistent write in this system redacts a confirmed credential (D-…, P3-03). An artifact write rejects instead: nothing is stored at all.
+
+Being derived is not an exemption from the check — the text in an artifact is *new*, written by a generator rather than copied, so a clean source does not make a clean artifact, and the specification's answer to secrets is a check on the server side of every write. What differs is what redaction would leave behind. A Memory can be redacted because the stored thing *is* the text: remove the credential and the sentence still says what somebody wrote. An artifact is several renderings of one source and one of them is an embedding, computed from the text *before* any redaction could apply. A redacted artifact would be a row whose words read `[REDACTED]` and whose vector still encodes what was taken out — and the half nobody can read is the half that would still be wrong.
+
+So the policy is `createArtifactInspectionPolicy`: confirmed ⇒ reject, everything else ⇒ keep. The false-positive line is the one the rest of the system already draws — a summary saying a token expired is stored — because it is the same detector, including the nested form F1 closed (D-204).
+
+## D-214 — The artifact is excluded from the export (P4-01)
+
+The export carries eight Memory tables and does not carry artifacts. The inventory guard in `tests/architecture.test.ts` still asserts exactly eight, and a mutation that joins artifacts into the statement fails it.
+
+Two reasons, and either would be enough. An artifact is rebuildable from the eight tables the export already carries, so including it would inflate every backup with data a restore can regenerate (D-141). And an export is a file that travels: an artifact is a rendering plus a vector, and it is the kind of thing to think twice about copying out of the database by default. The default is therefore no, and a later phase that finds a reason may say yes — a rebuildable store is a safe thing to leave out and an awkward thing to take back.
+
+The same reasoning makes the artifact absent from the clean-restore proof: what is not exported cannot be restored, and does not need to be.
+
+## D-215 — D-202 is fulfilled, in this change set (P4-01)
+
+D-202 required that Phase 4's first derived store arrive with its deletion. It has:
+
+- `src/db/problem-deletion.ts` deletes the artifact, before `change_logs`, in the same ordered transaction
+- the physical-delete test asserts the Problem leaves nothing in any Memory table, artifacts included
+- `tests/e2e/phase3.e2e.test.ts` step 11 now creates an artifact and asserts zero rows after the delete, and step 12 — which asserted no derived store existed — is reworded as the forward-looking boundary it now has to be
+- the exact table inventories in `tests/db/connection.integration.test.ts`, `tests/db/integrity.integration.test.ts` and `tests/db/enums.integration.test.ts` moved from 11 tables to 12, and the foreign key counts from 12 to 13, in this same change
+
+Phase 3 remains **COMPLETE**. Nothing in Phase 3's behaviour changed; its guards were updated because they are exact inventories and the schema legitimately grew, which is the mechanism D-202 was written to force.
+
+## D-216 — What P4-01 deliberately does not build (P4-01)
+
+Storage and its rules, and nothing else.
+
+There is no generator: nothing computes a summary, keywords, structural features, a fingerprint or an embedding, and no model is named or called. There is no HTTP surface — no route, no OpenAPI operation, the contract stays at 0.4.0 with 27 operations — because an artifact is written by a background generation, and what a client may ask for is a decision for the task that has a search to expose. There is no search, no distance query, no ranking and no index. There is no list, no query and no delete on the repository: exactly `upsertArtifact` and `getArtifact`, since the only removal is the Problem's own delete path.
+
+The shape of `structural_features` is not fixed either, beyond being a JSON object. Naming its keys now would fix them before anyone knows what a retrieval needs from them.
+
+Phase 4 has started, through P4-01 only. P4-02 is NOT STARTED.

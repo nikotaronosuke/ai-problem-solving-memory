@@ -77,6 +77,9 @@ import {
 } from '../../src/domain/credential.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
+import { resolveOwnerContextFor } from '../../src/owner/context.js';
+import { createRetrievalArtifactRepository } from '../../src/repository/index.js';
+import { createArtifactInspectionPolicy, withSanitization } from '../../src/sanitization/index.js';
 import type { ErrorCode } from '../../src/http/errors.js';
 import { buildMemoryHttpApp, createLoggerOptions } from '../../src/http/index.js';
 import {
@@ -95,7 +98,26 @@ const databaseUrl = readDatabaseUrl();
 const LIMITS = { maxItems: 100, maxItemBytes: 64 * 1024, maxTotalBytes: 4 * 1024 * 1024 };
 const POLICY = { baseDelayMs: 1_000, maxDelayMs: 30_000, maxAttempts: 5 };
 
-/** Every table holding Memory content, for owner-scoped sweeps. */
+/**
+ * The eight collections an export carries.
+ *
+ * Deliberately not the same list as the tables swept below. An export is the
+ * Memory somebody owns; `retrieval_artifacts` is a rendering of it built for a
+ * search, regenerable and tied to whichever embedding model made it, so it does
+ * not travel. The two lists differing by exactly that one name is the point.
+ */
+const EXPORT_COLLECTIONS = [
+  'projects',
+  'environments',
+  'problems',
+  'events',
+  'verifications',
+  'relations',
+  'usage_logs',
+  'change_logs',
+] as const;
+
+/** Every owner-scoped table holding anything, for sweeps. */
 const MEMORY_TABLES = [
   'projects',
   'environments',
@@ -105,6 +127,8 @@ const MEMORY_TABLES = [
   'relations',
   'usage_logs',
   'change_logs',
+  // Derived rather than recorded, and swept with the rest since P4-01.
+  'retrieval_artifacts',
 ] as const;
 
 /**
@@ -356,6 +380,7 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
         [ownersCreated],
       );
       for (const table of [
+        'retrieval_artifacts',
         'change_logs',
         'usage_logs',
         'relations',
@@ -608,6 +633,28 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
   });
 
   it('11. removes the problem and everything it carried', async () => {
+    // The derived store, given something to lose. P4-01 added the first one,
+    // and a delete that is never asked to remove an artifact proves nothing
+    // about artifacts — so the target gets one, written through the same
+    // boundary production writes through, carrying the same marker.
+    const context = await resolveOwnerContextFor(pool, ownerId);
+    const artifacts = withSanitization(
+      createRetrievalArtifactRepository(pool, context),
+      createArtifactInspectionPolicy(),
+    );
+    await artifacts.upsertArtifact({
+      problemId: targetId as ProblemId,
+      normalizedSummary: `a searchable rendering of ${TARGET_MARKER}`,
+      keywords: [TARGET_MARKER, 'rotation'],
+      structuralFeatures: { boundary: 'credentials', note: TARGET_MARKER },
+      embedding: [0.5, 0.25, 0.125],
+      embeddingModel: 'fixture-model',
+      embeddingModelVersion: '1',
+      sourceFingerprint: `fingerprint-${TARGET_MARKER}`,
+      generatedAt: new Date('2026-08-15T10:00:00.000Z'),
+    });
+    expect(await artifacts.getArtifact(targetId as ProblemId)).toBeDefined();
+
     // The version from step 3's response. Appends do not advance it, and the
     // read here proves that rather than assuming it.
     const current = await request('GET', `/v1/problems/${targetId}`);
@@ -644,22 +691,33 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
       [ownerId, targetId],
     );
     expect(Number(changeLogs.rows[0]?.n)).toBe(0);
+
+    // And the derived rendering with it — summary, keywords, features and the
+    // embedding built from them. Regenerable is a reason it is cheap to lose,
+    // not a reason to leave it behind when somebody asked for a delete.
+    const remaining = await pool.query<{ n: string }>(
+      `select count(*) as n from public.retrieval_artifacts where owner_id = $1`,
+      [ownerId],
+    );
+    expect(Number(remaining.rows[0]?.n)).toBe(0);
   });
 
-  it('12. has no derived search storage that could still hold it', async () => {
-    // "Deleted including search derivatives" is claimed honestly for the
-    // phase that makes it: Phase 3 builds no search, so the truthful form is
-    // that no derived storage exists to hold a residue, and the persisted
-    // aggregate itself is gone (step 11). What FK inventories prove is that
-    // everything *referencing* problems is known — not that no derived store
-    // exists, since a derived store need not carry a foreign key.
+  it('12. leaves no derived search storage holding it either', async () => {
+    // "Deleted including search derivatives" started as a claim about a phase
+    // that had none: Phase 3 built no search, so the truthful form was that no
+    // derived storage existed to hold a residue. P4-01 introduced the first —
+    // `retrieval_artifacts` — and the standing rule it arrived under is the
+    // reason this step changed with it rather than after it.
     //
-    // So this asks the catalog directly: no view, no materialized view, no
-    // foreign table, no partitioned table in the public schema. A Phase 3
-    // boundary guard, not an architecture rule — P4-01 (RetrievalArtifact)
-    // and P4-09 (search cache) are expected to fail it, and the change that
-    // does must extend the physical delete path and these tests in the same
-    // commit. That is the standing rule this assertion enforces by breaking.
+    // The claim is now the forward-looking one: every derived store is known
+    // here, and physical deletion covers all of them. Step 11 already swept
+    // the target's artifact away with the rest of the aggregate; what this
+    // step adds is that the list of derived stores is closed, so one appearing
+    // without a decision about deleting it fails here.
+    //
+    // The catalog is asked directly, because a foreign-key inventory proves
+    // only that everything *referencing* problems is known — a derived store
+    // need not carry a foreign key at all.
     const derived = await pool.query<{ relname: string; relkind: string }>(
       `select k.relname, k.relkind
          from pg_class k
@@ -669,9 +727,10 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
     );
     expect(derived.rows).toEqual([]);
 
-    // And the regular tables are exactly the eleven the phases added — the
-    // same inventory `connection.integration` pins, repeated here because it
-    // is the other half of this claim: nothing persisted exists outside them.
+    // And the regular tables are exactly the twelve the phases have added —
+    // the same inventory `connection.integration` pins, repeated here because
+    // it is the other half of the claim: nothing persisted exists outside
+    // them, so `retrieval_artifacts` is the only derived store there is.
     const tables = await pool.query<{ relname: string }>(
       `select k.relname
          from pg_class k
@@ -689,6 +748,7 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
       'problems',
       'projects',
       'relations',
+      'retrieval_artifacts',
       'usage_logs',
       'verifications',
     ]);
@@ -701,9 +761,12 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
     const artifact = JSON.parse(response.body) as Record<string, unknown>;
     expect(artifact['schema_version']).toBe('1');
     expect(artifact['source_owner_id']).toBe(ownerId);
-    for (const key of MEMORY_TABLES) {
+    for (const key of EXPORT_COLLECTIONS) {
       expect(Array.isArray(artifact[key]), `collection ${key}`).toBe(true);
     }
+    // And nothing else: the derived store stays behind, so a restore rebuilds
+    // it rather than carrying one model's vectors into another's world.
+    expect(Object.keys(artifact)).not.toContain('retrieval_artifacts');
 
     // A real export of what survived — not an empty document that trivially
     // contains nothing.

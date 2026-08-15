@@ -23,8 +23,12 @@ import type { DatabaseExecutor } from '../../src/db/executor.js';
 import { generateClientId } from '../../src/domain/client.js';
 import type { OwnerId } from '../../src/domain/owner.js';
 import { resolveOwnerContextFor } from '../../src/owner/context.js';
-import { createMemoryRepository } from '../../src/repository/index.js';
 import {
+  createRetrievalArtifactRepository,
+  createMemoryRepository,
+} from '../../src/repository/index.js';
+import {
+  createArtifactInspectionPolicy,
   createSecretDetectionPolicy,
   withSanitization,
   type SanitizationPolicy,
@@ -54,6 +58,11 @@ export function createFixedRequestContextService(
       return {
         clientId,
         repository: withSanitization(createMemoryRepository(executor, ownerContext), policy),
+        // Mirrors production: the same wrapper, under the artifact policy.
+        retrievalArtifacts: withSanitization(
+          createRetrievalArtifactRepository(executor, ownerContext),
+          createArtifactInspectionPolicy(),
+        ),
         runInTransaction: (work) =>
           transactionRunner.run((transactional) =>
             work(withSanitization(createMemoryRepository(transactional, ownerContext), policy)),

@@ -491,9 +491,29 @@ Definition of Done, mapped:
 
 2576 tests across 86 files. Schema and contracts unchanged since P3-04: API 0.4.0 / 27 operations, export "1", queue "2", migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, repository 25, runtime dependencies 3.
 
-### NEXT — Implementation Phase 4
+## PHASE 4 — IN PROGRESS
 
-P4-01 RetrievalArtifact — **NOT STARTED**. See the private Phase 4 breakdown. The first derived persistent store arrives under D-202: delete path, delete tests and the Phase 3 boundary guard move in the same change set.
+### P4-01 — DONE
+
+RetrievalArtifact. The first derived persistent store, and storage only.
+
+`public.retrieval_artifacts` is the twelfth table: primary key `(owner_id, problem_id)`, a composite RESTRICT foreign key naming both columns against `problems`, and the first extension this schema requires — `vector`. One current artifact per Problem or none, no artifact id, no history, no version, because a regeneration replaces rather than adds and the whole store is rebuildable (D-209, D-210).
+
+The embedding column is an untyped `vector`, not `real[]` and not `vector(1536)` (D-211). An array of floats has no distance operator and no path to one; a declared dimension would make the first model's dimension a schema fact before any model is chosen. Verified before writing the migration: 3- and 5-dimension rows coexist. The cost — no ANN index is possible — is accepted, since there is no search yet and the dimension can be fixed by the task that picks the model.
+
+`source_fingerprint` is stored and compared for equality and computed nowhere here; `generated_at` is deliberately not a freshness test, because a slow generation timestamps an earlier state later. The upsert is unconditional and a test asserts an earlier `generated_at` is accepted. The gate belongs to P4-02 (D-212).
+
+An artifact holding a confirmed credential is refused whole rather than redacted (D-213) — an embedding is computed before any redaction could apply, so a redacted row would still encode the secret in the half nobody can read. Excluded from the export, still exactly eight collections (D-214).
+
+D-202 is fulfilled in this change set (D-215): the delete path, the physical-delete test, phase 3 E2E steps 11 and 12, and the exact catalog inventories (11 → 12 tables, 12 → 13 foreign keys) all moved together. Phase 3 stays COMPLETE.
+
+Ten discrimination mutations each killed by a named test, one of them schema-level with a full `db:reset` around it.
+
+2643 tests across 88 files. Migrations 14, tables 12, DOMAINs 8, FKs 13 all RESTRICT, runtime dependencies 3. API 0.4.0 / 27 operations, export "1", queue "2" — all unchanged, because P4-01 adds no HTTP surface.
+
+### NEXT — P4-02 Retrieval summary generation
+
+**NOT STARTED.** See the private Phase 4 breakdown. It owns what P4-01 deliberately does not build: the summary, keywords, structural features, the fingerprint's definition, the embedding and the model — and the current-state gate, which needs the fingerprint and therefore cannot live in storage (D-212, D-216).
 
 ## BLOCKED
 
@@ -532,6 +552,8 @@ The same applies to export: a derived store that is regenerated needs no place i
 Inside PostgreSQL this is partly self-enforcing: give the table a RESTRICT foreign key to `problems` like everything else, and a delete that forgets it fails rather than silently leaving rows. The literal foreign key inventory in `tests/db/integrity.integration.test.ts` fails first, which is the intended prompt to decide.
 
 Outside PostgreSQL — a vector store, an external search index — nothing enforces it. That integration has to be written deliberately when the store is introduced, and this line exists so the question is asked rather than remembered.
+
+**P4-01 met this rule and it stays in force.** `retrieval_artifacts` joined the delete path, the delete tests, the phase 3 boundary guard and the catalog inventories in one change set (D-215), and was deliberately left out of the export because it is rebuildable (D-214). The rule applies unchanged to the next derived store — including any that lives outside PostgreSQL, where nothing will fail first.
 
 ## LATER
 

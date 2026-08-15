@@ -67,6 +67,7 @@ function recordingContext(outcome: DeleteProblemOutcome): Recorded {
 
   const context: AuthenticatedRequestContext = {
     clientId: 'client' as unknown as ClientId,
+    retrievalArtifacts: undefined as unknown as AuthenticatedRequestContext['retrievalArtifacts'],
     repository: repositoryFor(false),
     runInTransaction: async (work) => {
       recorded.transactions += 1;

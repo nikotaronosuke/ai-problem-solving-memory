@@ -39,3 +39,13 @@ export {
 export { ProblemNotAvailableError } from '../db/errors.js';
 export { ProjectNotAvailableError } from '../db/environments.js';
 export { EnvironmentNotAvailableError } from '../db/problems.js';
+export {
+  createRetrievalArtifactRepository,
+  type RetrievalArtifactRepository,
+} from './retrieval-artifact-repository.js';
+export type {
+  Embedding,
+  RetrievalArtifactContent,
+  RetrievalArtifactRecord,
+  UpsertRetrievalArtifactInput,
+} from '../domain/retrieval-artifact.js';

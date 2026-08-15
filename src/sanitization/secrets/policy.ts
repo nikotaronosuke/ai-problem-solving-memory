@@ -103,6 +103,41 @@ export function createSecretDetectionPolicy(
  * with it. An architecture test pins that nothing outside this directory names
  * the detector at all.
  */
+/**
+ * The policy a derived artifact is written under.
+ *
+ * Reject on confirmed, like the export policy and unlike the write boundary,
+ * and for a reason particular to derived data rather than by analogy.
+ *
+ * Redaction works on a Memory because what is stored *is* the text: remove the
+ * credential and the sentence that remains is still the thing somebody wrote.
+ * A retrieval artifact is not one text but several renderings of the same
+ * source, and one of them is an embedding — a vector produced from the text
+ * *before* any redaction could apply. Redacting the summary would leave a row
+ * whose words say `[REDACTED]` and whose vector still encodes what was removed,
+ * searchable by anything that compares vectors. The two halves would disagree,
+ * and the half that cannot be read is the half that would still be wrong.
+ *
+ * So an artifact carrying a confirmed credential is refused whole. Nothing is
+ * lost by refusing: the artifact is derived, the source is untouched, and the
+ * fix is to remove the credential from the Memory and generate again.
+ *
+ * `suspected` keeps, as everywhere else. The certainty line is the same one the
+ * write boundary and the export draw, and moving it here would mean a Problem
+ * could be stored and then found unsearchable for a guess.
+ */
+export function createArtifactInspectionPolicy(
+  detector: SecretDetector = createSecretDetector(),
+): SanitizationPolicy {
+  return {
+    inspect(text, at) {
+      return detector.detect(text, at)?.certainty === 'confirmed'
+        ? { kind: 'reject' }
+        : { kind: 'keep' };
+    },
+  };
+}
+
 export function createExportInspectionPolicy(
   detector: SecretDetector = createSecretDetector(),
 ): SanitizationPolicy {

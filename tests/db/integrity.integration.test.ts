@@ -45,6 +45,7 @@ const OWNED_TABLES = [
   'relations',
   'usage_logs',
   'change_logs',
+  'retrieval_artifacts',
 ] as const;
 
 /**
@@ -148,6 +149,12 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         // the link exists.
         'relations: FOREIGN KEY (owner_id, from_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         'relations: FOREIGN KEY (owner_id, to_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
+        // A retrieval artifact belongs to the problem it describes. Composite
+        // like the rest, so a derived row cannot name one owner and another
+        // owner's problem; RESTRICT like the rest, so the delete path removes
+        // it deliberately rather than the database discarding it as a side
+        // effect of something above.
+        'retrieval_artifacts: FOREIGN KEY (owner_id, problem_id) REFERENCES problems(owner_id, problem_id) ON DELETE RESTRICT',
         // A usage log names two problems too: the one being worked on and the
         // one used as memory. Neither may be another owner's, and neither can
         // be removed while the record of the use exists.
@@ -167,12 +174,13 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       // 'r' is RESTRICT. Anything else here would mean Memory could be
       // discarded as a side effect of deleting something above it.
       expect(result.rows.every((row) => row.confdeltype === 'r')).toBe(true);
-      // Twelve: relations and usage_logs bring one per end, change_logs one,
-      // and P3-04 adds the client and its credentials.
-      expect(result.rows).toHaveLength(12);
+      // Thirteen: relations and usage_logs bring one per end, change_logs one,
+      // P3-04 adds the client and its credentials, and P4-01 the retrieval
+      // artifact — the first reference that exists for a derived store.
+      expect(result.rows).toHaveLength(13);
     });
 
-    it('has exactly seven references into problems, all of which the delete path removes', async () => {
+    it('has exactly eight references into problems, all of which the delete path removes', async () => {
       const result = await pool.query<{ child: string; columns: string }>(
         `select
            con.conrelid::regclass::text as child,
@@ -201,14 +209,17 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
       // RESTRICT foreign key like everything else, and this test is the
       // reminder that P3-05 and the Phase 3 delete end-to-end have to grow
       // with it.
-      // Seven, not six: `relations` and `usage_logs` each contribute two, so
+      // Eight, not seven: `relations` and `usage_logs` each contribute two, so
       // counting tables rather than keys undercounts exactly the references
-      // that point in from a Problem that survives.
+      // that point in from a Problem that survives. The eighth is P4-01's
+      // retrieval artifact — the first derived store, and the first reference
+      // that exists for the search layer's benefit rather than the record's.
       expect(incoming).toEqual([
         'change_logs(owner_id,problem_id)',
         'events(owner_id,problem_id)',
         'relations(owner_id,from_id)',
         'relations(owner_id,to_id)',
+        'retrieval_artifacts(owner_id,problem_id)',
         'usage_logs(owner_id,memory_id)',
         'usage_logs(owner_id,problem_id)',
         'verifications(owner_id,problem_id)',
