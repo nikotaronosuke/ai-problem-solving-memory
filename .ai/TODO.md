@@ -466,13 +466,34 @@ Fifteen mutations were injected and every one is killed by a **named** target te
 
 Schema unchanged: migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, 25 repository operations, 3 runtime dependencies, OpenAPI 0.4.0 with 27 operations, export schema "1", queue schema "2". 2561 tests across 85 files.
 
-### P3-12 — NEXT
+### P3-12 — DONE
 
 Phase 3 E2E / Definition of Done.
 
-Depends on P3-11, satisfied. See the private Phase 3 breakdown for the five required steps.
+**No production source changed.** One new file, `tests/e2e/phase3.e2e.test.ts`: fifteen explicitly-sequential steps carrying one secret-bearing investigation through everything Phase 3 built, on one owner, one credential, one Problem, one queue directory and one server lifecycle (D-199). Real socket, real connection failure, real filesystem queue, production logger configuration; the retry runs at the persisted `nextAttemptAt`, never after a sleep.
 
-P3-11 deliberately did not assemble them into a flow: its assertions are parts, and the continuity between them — a secret-bearing Event surviving an outage, arriving exactly once on recovery, then being deleted and exported — is what P3-12 owes. The apparatus to reuse is in `tests/security/` and in the clean-marker delete proof.
+Two secret Events, because the queue redacts before its disk and therefore before any delivery — an outage write can never present a raw secret to the server (D-200). Event A attacks the running server raw and proves server-side sanitization; Event B carries a second secret through the outage and proves the queue’s boundary, restart persistence, and exactly-once recovery under the key assigned before the failure.
+
+"Deleted including search derivatives" is claimed in the form that is true before search exists (D-201): the aggregate is physically gone and the catalog holds no relation a derivative could live in — zero views, materialized views, foreign tables or partitioned tables beside the exact eleven tables. This corrects P3-11’s FK-inventory explanation: reference inventories do not prove store absence. The guard is expected to fail at P4-01/P4-09, and the change that fails it must extend the delete path, the delete tests and the guard together (D-202).
+
+Eleven discrimination mutations each killed by a named step, including a real view planted in the schema and caught by name (D-203).
+
+## PHASE 3 — COMPLETE
+
+Definition of Done, mapped:
+- server-side sanitization → P3-12 Event A + `secret-boundary.integration`
+- credential separation → P3-12 whole-flow single credential, absent from queue/DB/export + `authentication.integration`
+- retry/idempotency → P3-12 outage→recovery count 1 + `idempotent-replay.integration`
+- failure fallback → P3-12 PENDING/continue/quiet sentinel + `fallback.test`
+- physical delete → P3-12 same-target continuity + `physical-delete.integration` clean-marker proof
+- export → P3-12 post-delete export with survivor + `memory-export` / `clean-restore`
+- security E2E → P3-12 continuous flow + P3-11 five-category evidence
+
+2576 tests across 86 files. Schema and contracts unchanged since P3-04: API 0.4.0 / 27 operations, export "1", queue "2", migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, repository 25, runtime dependencies 3.
+
+### NEXT — Implementation Phase 4
+
+P4-01 RetrievalArtifact — **NOT STARTED**. See the private Phase 4 breakdown. The first derived persistent store arrives under D-202: delete path, delete tests and the Phase 3 boundary guard move in the same change set.
 
 ## BLOCKED
 
