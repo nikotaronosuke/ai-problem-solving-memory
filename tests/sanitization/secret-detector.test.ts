@@ -637,3 +637,84 @@ describe('the detector is a function of its input', () => {
     );
   });
 });
+
+/**
+ * An assignment can sit inside another one's value.
+ *
+ * Found by the independent Phase 3 audit. `x=AWS_SECRET_ACCESS_KEY=…` read as
+ * nothing at all, for two separate reasons: a one-character name did not form
+ * an assignment, and the inner name could not begin one because the character
+ * before it is `=`, which is not a boundary. With a longer outer name the
+ * assignment did form, and its value — greedily the rest of the token —
+ * swallowed the inner one, which was then never looked at again.
+ *
+ * Both readings now happen, at any depth. The depth is not a contract: these
+ * cases are a sample of a class, not a limit being documented.
+ */
+describe('a credential assignment inside another assignment', () => {
+  it.each([
+    ['a one-character outer name', 'x=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057'],
+    ['a two-character outer name', 'xy=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057'],
+    ['a word outer name', 'config=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057'],
+    ['prose around it', 'ran x=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057 then failed'],
+    ['two ordinary names first', 'x=foo=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057'],
+    ['several ordinary names first', 'x=y=z=PASSWORD=fake-9f2c4d8a1b6e3057'],
+    ['an ambiguous inner name', 'foo=client_secret=fake-9f2c4d8a1b6e3057'],
+    ['a quoted outer value', 'x="AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057"'],
+    ['a single-quoted outer value', "x='PASSWORD=fake-9f2c4d8a1b6e3057'"],
+    ['a quoted value holding two', 'config="foo=CLIENT_SECRET=fake-9f2c4d8a1b6e3057"'],
+  ])('finds one behind %s', (_label, text) => {
+    expect(detect(text)).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'confirmed',
+    });
+  });
+
+  it.each([1, 4, 8, 32, 200])('finds one behind %i ordinary assignments', (depth) => {
+    // Generated rather than written out, because the point is that no depth is
+    // special. A fixed limit here would be a limit in the parser.
+    const text = `${'a='.repeat(depth)}AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057`;
+
+    expect(detect(text)).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'confirmed',
+    });
+  });
+
+  it('reads a deeply nested value without exhausting the stack', () => {
+    // The recursive form of this walk overflows here. The iterative one does
+    // not, and there is no depth at which it stops looking.
+    const text = `${'a='.repeat(32_000)}AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057`;
+
+    expect(detect(text)).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'confirmed',
+    });
+  });
+
+  it.each([
+    ['a status word', 'x=token=expired'],
+    ['an unknown value', 'x=password=unknown'],
+    ['a placeholder', 'x=API_KEY=CHANGE_ME'],
+    ['the word placeholder', 'x=token=placeholder'],
+    ['a rotated note', 'x=secret=rotated'],
+    ['something already redacted', 'x=API_KEY=[REDACTED]'],
+    ['a changeme default', 'x=password=changeme'],
+    ['no credential name anywhere', 'x=y=z'],
+    ['two ordinary names', 'a=b'],
+    ['a ratio', 'ratio=1=2'],
+  ])('still keeps %s', (_label, text) => {
+    // Reading further inside a value must not lower the bar for what counts.
+    // The nested reading uses the same certainty rules as the outer one.
+    expect(detect(text)).toBeNull();
+  });
+
+  it('leaves the outer credential whole when the outer name is the credential', () => {
+    // `PASSWORD=` claims its entire value, whatever that value looks like.
+    // Reading inside it would narrow what gets removed.
+    expect(detect('PASSWORD=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057')).toEqual({
+      category: 'CREDENTIAL_ASSIGNMENT',
+      certainty: 'confirmed',
+    });
+  });
+});

@@ -261,3 +261,69 @@ describe('nothing to remove', () => {
     expect(redact('morning', under('snapshot', 'session'))).toBeNull();
   });
 });
+
+/**
+ * Removing a credential that sits inside another assignment's value.
+ *
+ * Every expectation here is the whole string, not a search for `[REDACTED]`.
+ * The offsets are the point: an off-by-one eats the `=` before the value, the
+ * last character of the name, or — for a quoted value — the quote that closes
+ * it. `toContain` would pass through all of those.
+ */
+describe('a credential nested inside another assignment', () => {
+  it.each([
+    ['x=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057', 'x=AWS_SECRET_ACCESS_KEY=[REDACTED]'],
+    [
+      'config=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057',
+      'config=AWS_SECRET_ACCESS_KEY=[REDACTED]',
+    ],
+    [
+      'ran x=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057 then failed',
+      'ran x=AWS_SECRET_ACCESS_KEY=[REDACTED] then failed',
+    ],
+    ['x=foo=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057', 'x=foo=AWS_SECRET_ACCESS_KEY=[REDACTED]'],
+    ['x=y=z=PASSWORD=fake-9f2c4d8a1b6e3057', 'x=y=z=PASSWORD=[REDACTED]'],
+    ['foo=client_secret=fake-9f2c4d8a1b6e3057', 'foo=client_secret=[REDACTED]'],
+  ])('removes the value and nothing else from %s', (text, expected) => {
+    expect(redact(text)).toBe(expected);
+  });
+
+  it.each([
+    ['x="AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057"', 'x="AWS_SECRET_ACCESS_KEY=[REDACTED]"'],
+    ["x='PASSWORD=fake-9f2c4d8a1b6e3057'", "x='PASSWORD=[REDACTED]'"],
+    ['config="foo=CLIENT_SECRET=fake-9f2c4d8a1b6e3057"', 'config="foo=CLIENT_SECRET=[REDACTED]"'],
+  ])('keeps the quotes that close the value in %s', (text, expected) => {
+    // The pattern that locates a nested value would run past a closing quote
+    // if it were allowed to; the value it is reading inside ends first.
+    expect(redact(text)).toBe(expected);
+  });
+
+  it('keeps the surrounding sentence when the nesting is deep', () => {
+    const text = `before ${'a='.repeat(40)}PASSWORD=fake-9f2c4d8a1b6e3057 after`;
+
+    expect(redact(text)).toBe(`before ${'a='.repeat(40)}PASSWORD=[REDACTED] after`);
+  });
+
+  it('removes both when two assignments follow one ordinary name', () => {
+    expect(redact('x=API_KEY=fake-9f2c4d8a1b6e3057 and PASSWORD=fake-1a2b3c4d5e6f')).toBe(
+      'x=API_KEY=[REDACTED] and PASSWORD=[REDACTED]',
+    );
+  });
+
+  it('is idempotent on a nested credential', () => {
+    const once = redact('x=AWS_SECRET_ACCESS_KEY=fake-9f2c4d8a1b6e3057');
+
+    expect(once).toBe('x=AWS_SECRET_ACCESS_KEY=[REDACTED]');
+    // The marker is a recognised placeholder, so a second pass finds nothing
+    // left to remove — the same answer this module gives for any text it has
+    // no span in, and what lets a redacted record be re-processed later.
+    expect(redact(once ?? '')).toBeNull();
+  });
+
+  it('finds nothing to remove behind a nested placeholder', () => {
+    // Reading further inside a value does not lower the bar: `CHANGE_ME` under
+    // a credential name is still a placeholder, so there is no span and this
+    // refuses rather than rewriting something nobody identified.
+    expect(redact('x=API_KEY=CHANGE_ME')).toBeNull();
+  });
+});
