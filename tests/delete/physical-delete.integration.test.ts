@@ -1013,6 +1013,8 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         keywords: [marker, 'deployment'],
         structuralFeatures: { boundary: 'configuration', note: marker },
         embedding: [0.5, 0.25, 0.125],
+        summaryGeneratorId: 'fixture-summary-generator',
+        summaryGeneratorVersion: '1',
         embeddingModel: 'fixture-model',
         embeddingModelVersion: '1',
         sourceFingerprint: `fingerprint-${marker}`,
