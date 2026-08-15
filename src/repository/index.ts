@@ -58,3 +58,21 @@ export {
   type RetrievalSummarySourceReader,
 } from './retrieval-summary-source-reader.js';
 export type { RetrievalSummarySource } from '../db/retrieval-summary-source.js';
+
+// Lexical candidate search. Its own reader rather than a method on the artifact
+// repository: finding Problems worth looking at is a different question from
+// storing one Problem's artifact, and the search side is where a vector query
+// and a reranking stage will arrive.
+export {
+  createRetrievalSearchReader,
+  type RetrievalSearchReader,
+} from './retrieval-search-reader.js';
+export {
+  DEFAULT_SEARCH_LIMIT,
+  InvalidFullTextSearchError,
+  MAX_SEARCH_LIMIT,
+  MAX_SEARCH_TEXT_LENGTH,
+  RETRIEVAL_TEXT_SEARCH_CONFIG,
+  type FullTextCandidate,
+  type FullTextSearchQuery,
+} from '../domain/retrieval-search.js';

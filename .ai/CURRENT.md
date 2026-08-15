@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-02)
+Updated: 2026-08-16 (P4-03)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01, P4-02 done; P4-03 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01, P4-02, P4-03 done; P4-04 next)
 
 ## Source of truth
 
@@ -689,6 +689,32 @@ Turning one Problem into something a search can compare. A `RetrievalSummaryDraf
 
 **Fourteen discrimination mutations, each killed by a named test**: the owner predicate dropped, the Environment removed, `DISCOVERY` filtered out, `USER_CORRECTION` filtered out, the document rebuilt through JavaScript, the second read removed, the recheck comparing the new source with itself, the privacy inspection removed, the read touching the Problem, a placeholder embedding on the draft, confidence joining the document, and each of the three gates — initial read control, final read control, successful-direction evidence — disabled in turn.
 
+## What exists now — Full-text search (P4-03)
+
+Lexical candidate retrieval over stored artifacts. A migration (14 → **15**), a domain query type, one SQL statement and an owner-scoped reader. No HTTP, no new dependency, no new table.
+
+**It searches what exists and creates nothing** (D-230). In production this returns nothing today: P4-02 stops at a draft and a draft cannot become a row without an embedding, which is P4-04's. That is sequencing, not a defect — and every way to make the demo prettier was refused, because a zero vector is the row D-211 called the worst outcome. The tests seed real artifacts through P4-01's own repository. A search that generated what it could not find would turn a read into a write while somebody waits.
+
+**The document is the artifact's summary and keywords, and nothing else** (D-231). Not the Problem's title, symptoms or domain — indexing the source beside the translation would give the system two definitions of "the searchable text" and let the second quietly bypass P4-02. Not `structural_features` either: comparing structure is P4-07's and it compares meaning, which a bag of words would do badly while looking done. Marker tests in the Problem's own text and in the features both must find nothing.
+
+**`pg_catalog.simple`, written out on both sides** (D-232). The server's default is `english`, which stems `Fastify` to `fastifi` and `memory_read_enabled` to `memori read enabl` — measured. `simple` keeps `postgresql`, `node.js`, `v5.1.2`, `@fastify/swagger`, `client_event_id` and `foo-bar` intact. The accepted cost, also measured: `deployment` no longer matches `deployed`. Recall across different words is the semantic half's job; the lexical half should be the exact one.
+
+**Keywords at weight A, summary at B** (D-233). A keyword was chosen as a way to find this Problem; a word in prose may just be there. Measured 1.0 against 0.4 on the same term. `lexicalScore` is named so it cannot be mistaken for confidence, verification strength, or anything comparable with a vector similarity.
+
+**A generated stored column, not an expression index** (D-234). Both use the index; only one fails loudly. An expression index needs the query to repeat its expression exactly, and when it drifts the search still returns correct results and silently stops using the index — 218 ms against 0.1 ms on twenty thousand rows. A column is named, so the same mistake is a missing-column error. `not null`, because it can never be unknown — caught by the existing nullable-column inventory. No trigger: the database recomputes it on every write, and a test proves a replaced artifact is a replaced document.
+
+**The helper is immutable in fact, not just in its declaration** (D-235). `array_to_string` is STABLE, so the natural one-liner cannot be indexed, and the documented workaround — declare the wrapper IMMUTABLE anyway — would be a false declaration that happens to be harmless here and would not be somewhere else. The array is walked in plpgsql instead, using only genuinely immutable primitives. A test strips the function's comments and asserts `array_to_string` is not in it. First user-defined function in `public`; the other 118 belong to extensions.
+
+**`websearch_to_tsquery`** (D-236). `to_tsquery` raises a syntax error on ordinary prose. The limitation carried is recorded rather than hidden: ordinary terms are joined with AND, so one absent word empties the result, and silently dropping terms would be this layer inventing a relevance policy.
+
+**Two things filter; judgements do not** (D-237). Owner and `memory_read_enabled`, both in SQL. The read control matters *here* specifically because the flag can be turned off after the artifact was written — turning off automatic reading is not a delete, and a test flips it and asserts the search misses while the row stays. Suppressed, stale, superseded, invalid, low-confidence and low-importance artifacts are all still returned: being findable and being recommended are different questions.
+
+**A query is ephemeral** (D-238). The secret detector is deliberately not applied to search text — a query is not a stored Memory, and refusing credential-shaped text would break searching for the Memory about a credential leak. What that permits it also obliges: no query text in a log, a UsageLog, a ChangeLog or an error message.
+
+**Japanese is a standing limitation** (D-239). Built-in text search does not segment it, so a Japanese sentence is one lexeme and a word inside it does not match. No extension was installed. Keywords arrive already separated and recover the case that matters, and there is a positive test for it. Deliberately no test asserting the failure, so a future improvement is not a regression.
+
+**Fifteen discrimination mutations, each killed by a named test**: the owner predicate, the read control, the project filter, the self-exclusion, keywords out of the document, the summary out of the document, the weights swapped, the configuration changed to `english`, the index dropped, the search rebuilding the document instead of reading it, the Problem's own text joining the document, the structural features joining it, the tie-break dropped, the limit unbounded, and a blank query accepted.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -698,7 +724,11 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI. Since P4-01 there is somewhere to *put* an embedding, and still nothing that produces or reads one
 - No embedding, no embedding provider and no model. P4-02 generates the text half of an artifact and stops; nothing computes a vector, and no vendor SDK or HTTP client is a dependency (D-217, D-223)
 - No artifact is ever written by the generation path. A draft lives in memory and is returned; there is no fake vector, no placeholder model and no nullable-embedding migration (D-217)
-- No search, no full-text query, no distance query, no ranking, and no vector index — an untyped `vector` cannot carry one, deliberately (D-211, D-228)
+- No vector search, no distance query, no hybrid merge, no reranking, no ranking policy, no search cache — and still no vector index, since an untyped `vector` cannot carry one (D-211, D-240)
+- No production path that puts an artifact in the database. Generation stops at a draft and storage needs an embedding, so lexical search finds nothing in production until P4-04 exists (D-230)
+- No search that writes. No UsageLog, no ChangeLog, no Relation, and nothing generated on demand to satisfy a query (D-230, D-240)
+- No morphological analysis. `pgroonga`, `pg_trgm` and `unaccent` are available on the server and deliberately not installed; Japanese sentences are one lexeme to the built-in parser (D-239)
+- No query language of this system's own, and no term extraction, OR-relaxation or query expansion — ordinary terms are joined with AND and that is left visible (D-236)
 - No HTTP surface for artifacts or for generation. No route, no OpenAPI operation, no debug endpoint; the contract stays at 0.4.0 with 27 operations. Generation is background work, and what a client may ask of a search belongs to the task that has one to expose (D-216, D-228)
 - No claim that a summary is true. Structure, bounds, the success-claim evidence gate, privacy and source consistency are checked; a well-formed summary of a version nobody mentioned passes all of them. Semantic quality is P4-14's, measured against fixtures (D-228)
 - No stored record of which generator produced a summary. The identity is carried on the result and no column was added; where it should live is a storage decision for the task that first writes an artifact down (D-227)
@@ -732,16 +762,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-03 — Full-text search.
+P4-04 — Embedding provider abstraction.
 
-**NOT STARTED.** P4-01 and P4-02 are done; nothing of P4-03 has been implemented.
+**NOT STARTED.** P4-01, P4-02 and P4-03 are done; nothing of P4-04 has been implemented.
 
 Notes for whoever picks this up:
-- There is text to search now, and nowhere it is stored. P4-02 produces `normalized_summary` and `keywords` as a draft; they reach `retrieval_artifacts` only once P4-04 supplies an embedding, since an artifact is complete or absent (D-209, D-217). Whether full-text search can be built before that, or has to wait for a row to exist, is the first thing to settle
-- Keyword case is preserved on purpose (D-222), because PostgreSQL's own text search normalises it. A `tsvector` built here should not be given pre-folded input as though it needed it
-- `memory_read_enabled=false` already blocks generation (D-224). A search must filter on it too — the control means no automatic search or reference, and blocking one half is not honouring it
-- Ranking is P4-08's. `confidence`, `freshness`, `suppressed` and `importance` are deliberately outside the artifact and outside the fingerprint (D-219), so a search reads them live from the Problem
-- The owner boundary is the one thing every read here has in common: the source query names the owner in every subquery even though the composite foreign keys already make a cross-owner row unstorable
+- This is the task that finally makes an artifact storable. Generation produces a draft (D-217) and storage refuses anything incomplete (D-209), so P4-04 owns the composition — draft plus embedding plus `generated_at` — and with it the first production path that writes a row. Until it exists, lexical search is correct and finds nothing
+- The provider is a port, like the summary generator (D-223). The same reasoning applies twice over: no vendor SDK, no HTTP client, runtime dependencies stay at three, and the credential question the OS boundary is careful about stays unanswered until something has to answer it
+- `generated_at` belongs to this task, and means the moment the *complete* content existed — not when the summary was written (D-217). The specification requires artifacts to be regenerable when the model changes, so whatever is stored must make "which model made this?" answerable
+- Whether an artifact records which *summary* generator produced its text is still open (D-227). The identity is carried on P4-02's result and stored nowhere; this is the task where that gap first bites, since it is the one writing rows
+- A fixed `vector(n)` and an ANN index become possible once a model is chosen (D-211). Neither is needed before vector search exists, and both are cheap while the data is small
 
 ## Core MVP milestone
 
