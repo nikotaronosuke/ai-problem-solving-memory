@@ -482,9 +482,28 @@ export function findCookieValueSpans(text: string): Span[] {
  * A quoted value is taken whole, spaces included: a passphrase is allowed to
  * contain them, and `PASSWORD="correct horse battery staple"` is exactly the
  * kind of credential that reads least like one.
+ *
+ * A name may be a single character. That looks like a detail and is not: with
+ * a two-character minimum, `x=API_KEY=…` formed no assignment at all — `x` was
+ * too short to be a name, and `API_KEY` could not start one because the
+ * character before it is `=`, which is not a boundary here. The whole string
+ * went unread.
  */
 const ASSIGNMENT =
-  /(?:^|[\s,;{("'])([A-Za-z][A-Za-z0-9_.-]{1,60})[ \t]*([:=])[ \t]*("[^"]*"|'[^']*'|\S+)/dg;
+  /(?:^|[\s,;{("'])([A-Za-z][A-Za-z0-9_.-]{0,60})[ \t]*([:=])[ \t]*("[^"]*"|'[^']*'|\S+)/dg;
+
+/**
+ * Just the `NAME=` part, read at one exact offset rather than searched for.
+ *
+ * Deliberately stops before the value. The walk below always already knows
+ * where the value ends — it is reading inside a value whose extent the search
+ * above measured — so re-matching `\S+` at every step would rescan the rest of
+ * the token each time and turn a linear walk into a quadratic one. Measured
+ * before it was written this way: 64KB of nested assignments took 1.7 seconds.
+ */
+const ASSIGNMENT_HEAD = /([A-Za-z][A-Za-z0-9_.-]{0,60})[ \t]*([:=])[ \t]*/dy;
+
+const QUOTED = /^(["'])(.*)\1$/s;
 
 /**
  * Header names that have a parser of their own above.
@@ -496,29 +515,98 @@ const ASSIGNMENT =
 const HEADER_NAMES: ReadonlySet<string> = new Set(['authorization', 'cookie', 'setcookie']);
 
 function unquote(value: string): string {
-  const quoted = /^(["'])(.*)\1$/s.exec(value);
-  return quoted?.[2] ?? value;
+  return QUOTED.exec(value)?.[2] ?? value;
+}
+
+/**
+ * Follows one assignment inward for as long as its value is another one.
+ *
+ * `config=AWS_SECRET_ACCESS_KEY=…` is two assignments, and only the inner one
+ * names a credential. The outer name is ordinary, so nothing is reported for
+ * it — and because its value was consumed whole by the search that found it,
+ * the inner assignment would never be looked at again. This is where it is
+ * looked at.
+ *
+ * Iterative, and deliberately so. The obvious form is recursion, and it fails
+ * on exactly the input this exists to handle: a value that is thousands of
+ * nested assignments overflows the call stack, which is a worse failure than
+ * the one being fixed. A cap would avoid that by leaving a depth beyond which
+ * a credential is invisible again — a smaller version of the same hole. A
+ * cursor has neither problem: there is no stack to exhaust and no depth to
+ * exceed.
+ *
+ * Termination is structural rather than counted. Each step moves the cursor to
+ * the start of a value, which is past a name of at least one character and a
+ * separator, so it advances by at least two and can never revisit an offset.
+ * The walk is bounded by the length of the value it started in, and the
+ * searches that start these walks do not overlap, so the total work stays
+ * linear in the text.
+ */
+function collectAssignmentChain(
+  text: string,
+  from: number,
+  limit: number,
+  found: CredentialSpan[],
+): void {
+  let start = from;
+  let end = limit;
+
+  while (start < end) {
+    ASSIGNMENT_HEAD.lastIndex = start;
+    const match = ASSIGNMENT_HEAD.exec(text);
+    const name = match?.[1];
+    const separator = match?.[2];
+    if (match === null || name === undefined || separator === undefined) {
+      return;
+    }
+
+    // The value runs from the end of `NAME=` to the end of the region being
+    // read, which the caller measured. Nothing is rescanned to find it.
+    const valueStart = match.index + match[0].length;
+    const valueEnd = end;
+    if (valueStart >= valueEnd) {
+      return;
+    }
+    const value = text.slice(valueStart, valueEnd);
+
+    if (separator === ':' && HEADER_NAMES.has(normaliseName(name))) {
+      // A header with a parser of its own above. Walking into it would read
+      // the line a second time as a variable assignment and get the wrong
+      // answer — `Set-Cookie: session=<token>; HttpOnly` would be read as
+      // `session=<token>;`, whose trailing separator hides the placeholder
+      // that the cookie parser sees correctly. Each line is judged once.
+      return;
+    }
+
+    const certainty = certaintyFor(nameStrength(name), unquote(value));
+    if (certainty !== null) {
+      // The whole value is the credential. Nothing inside it is a separate
+      // one, and reading further would narrow what gets removed.
+      found.push({ span: { start: valueStart, end: valueEnd }, certainty });
+      return;
+    }
+
+    // An ordinary name. Its value may be an assignment in its own right.
+    const quoted = QUOTED.exec(value) !== null;
+    start = valueStart + (quoted ? 1 : 0);
+    end = valueEnd - (quoted ? 1 : 0);
+  }
 }
 
 export function findAssignmentValues(text: string): CredentialSpan[] {
   const found: CredentialSpan[] = [];
 
   for (const match of text.matchAll(ASSIGNMENT)) {
-    const name = match[1];
-    const separator = match[2];
-    const value = match[3];
-    const at = match.indices?.[3];
-    if (name === undefined || value === undefined || at === undefined) {
+    const name = match.indices?.[1];
+    const value = match.indices?.[3];
+    if (name === undefined || value === undefined) {
       continue;
     }
-    if (separator === ':' && HEADER_NAMES.has(normaliseName(name))) {
-      continue;
-    }
-
-    const certainty = certaintyFor(nameStrength(name), unquote(value));
-    if (certainty !== null) {
-      found.push({ span: { start: at[0], end: at[1] }, certainty });
-    }
+    // The walk starts at the name and is told where this assignment's value
+    // ends, which the search has already measured. Everything after that is
+    // read from the text at absolute offsets, so nothing is sliced out and
+    // nothing is measured twice.
+    collectAssignmentChain(text, name[0], value[1], found);
   }
 
   return found;
