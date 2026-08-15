@@ -112,6 +112,84 @@ describe('reading what a generator returned', () => {
     );
   });
 
+  describe('the exact set of top-level fields', () => {
+    it('accepts exactly the three a generator is asked for', () => {
+      const summary = toGeneratedRetrievalSummary(outputWith(), false);
+
+      expect(Object.keys(summary).sort()).toEqual([
+        'keywords',
+        'normalizedSummary',
+        'structuralFeatures',
+      ]);
+    });
+
+    it('refuses a field nobody defined', () => {
+      // The same rule the structural features have always been held to, one
+      // level up. Dropping the extra field instead would be the quiet option:
+      // a generator whose idea of the contract differs from this one's is
+      // worth finding out about from a refusal, not from a value that turns
+      // out to have been ignored.
+      expect(() =>
+        toGeneratedRetrievalSummary(outputWith({ unexpected: 'something' }), false),
+      ).toThrow(InvalidRetrievalSummaryError);
+    });
+
+    it.each([
+      ['a Problem of its own', 'problemId'],
+      ['a source fingerprint', 'sourceFingerprint'],
+      ['an embedding', 'embedding'],
+      ['a model name', 'embeddingModel'],
+      ['a generation time', 'generatedAt'],
+    ])('refuses one that supplies %s', (_label, key) => {
+      // These are the fields a generator has no way to know: the identity and
+      // the digest are the caller's, and the embedding, its model and the time
+      // its complete content existed belong to a later task. A generator
+      // offering any of them is guessing.
+      expect(() => toGeneratedRetrievalSummary(outputWith({ [key]: 'anything' }), false)).toThrow(
+        InvalidRetrievalSummaryError,
+      );
+    });
+
+    it('refuses one whose extra field holds a credential, without quoting it', () => {
+      // Synthetic. An unknown key is text a generator wrote from somebody's
+      // Memory and can be anything, including this — so it is refused before
+      // it is read, and neither the key nor its value reaches the error.
+      const secret = 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/fakeGg7Kp9R0123456789';
+      let raised: unknown;
+      try {
+        toGeneratedRetrievalSummary(outputWith({ leaked: secret }), false);
+      } catch (error) {
+        raised = error;
+      }
+
+      expect(raised).toBeInstanceOf(InvalidRetrievalSummaryError);
+      // Booleans rather than string matchers, so a failure prints `true` and
+      // never the value it was checking for.
+      const message = (raised as Error).message;
+      expect(message.includes('Gg7Kp9R'), 'the error quoted the value').toBe(false);
+      expect(message.includes('leaked'), 'the error quoted the key').toBe(false);
+    });
+
+    it('refuses one whose extra field is named after a credential', () => {
+      const secretKey = 'API_KEY=fake-Hh8Vq2N-0123456789abcdef';
+      let raised: unknown;
+      try {
+        toGeneratedRetrievalSummary(outputWith({ [secretKey]: 'present' }), false);
+      } catch (error) {
+        raised = error;
+      }
+
+      expect(raised).toBeInstanceOf(InvalidRetrievalSummaryError);
+      expect((raised as Error).message.includes('Hh8Vq2N'), 'the error quoted the key').toBe(false);
+    });
+
+    it('refuses an undefined extra field, which is still a field', () => {
+      expect(() => toGeneratedRetrievalSummary(outputWith({ extra: undefined }), false)).toThrow(
+        InvalidRetrievalSummaryError,
+      );
+    });
+  });
+
   describe('the summary itself', () => {
     it.each([
       ['missing', { normalizedSummary: undefined }],

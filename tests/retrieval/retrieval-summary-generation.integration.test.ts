@@ -74,9 +74,12 @@ const SECRET = {
   // The nested form the Phase 3 audit found, which read as prose until it was
   // closed. A generator writing prose is exactly where this shape appears.
   nested: 'ran x=AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/fakeEe5Bz3Q0123456789 then failed',
+  // In a field this code never asked for, which is refused by the shape before
+  // the detector is reached. The value still must not survive anywhere.
+  inUnknownField: 'API_KEY=fake-Ii9Rt3M-0123456789abcdef',
 } as const;
 
-const MARKERS = ['Aa1Qv7X', 'Bb2Lm2P', 'Cc3Tr8K', 'Dd4Nw5J', 'Ee5Bz3Q'] as const;
+const MARKERS = ['Aa1Qv7X', 'Bb2Lm2P', 'Cc3Tr8K', 'Dd4Nw5J', 'Ee5Bz3Q', 'Ii9Rt3M'] as const;
 
 const ALL_TABLES = [
   'projects',
@@ -585,6 +588,24 @@ describe.skipIf(databaseUrl === undefined)('generating a retrieval summary', () 
           ),
         ).generateSummary(problemId),
       ).rejects.toBeInstanceOf(InvalidRetrievalSummaryError);
+    });
+
+    it('refuses one carrying it in a field nobody asked for', async () => {
+      const problemId = await makeProblem(actor, 'secret-extra');
+
+      // The output is otherwise perfectly well formed — summary, keywords and
+      // features all valid — with one field this code does not produce. That
+      // field is refused before it is read, so nothing decides what to do with
+      // its contents and nothing carries them onward. The marker sweep below
+      // covers the value itself.
+      await expect(
+        serviceFor(
+          actor,
+          scriptedGenerator(() => outputWith({ leaked: SECRET.inUnknownField })),
+        ).generateSummary(problemId),
+      ).rejects.toBeInstanceOf(InvalidRetrievalSummaryError);
+
+      expect(await artifactCount(actor.ownerId)).toBe(0);
     });
 
     it('leaves nothing of any refused draft in storage', async () => {
