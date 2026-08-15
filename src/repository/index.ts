@@ -72,12 +72,26 @@ export {
   createRetrievalSearchReader,
   type RetrievalSearchReader,
 } from './retrieval-search-reader.js';
+
+// Semantic candidate search. Handed a validated embedding by the service
+// above it — the embedding parameter is a storage-boundary input, not an
+// application surface; what an application caller can supply is text.
+export {
+  createRetrievalVectorSearchReader,
+  type RetrievalVectorSearchReader,
+} from './retrieval-vector-search-reader.js';
+export type { VectorSearchParameters } from '../db/retrieval-vector-search.js';
 export {
   DEFAULT_SEARCH_LIMIT,
   InvalidFullTextSearchError,
   MAX_SEARCH_LIMIT,
   MAX_SEARCH_TEXT_LENGTH,
+  MAX_VECTOR_SEARCH_TEXT_LENGTH,
   RETRIEVAL_TEXT_SEARCH_CONFIG,
+  resolveVectorSearchQuery,
   type FullTextCandidate,
   type FullTextSearchQuery,
+  type ResolvedVectorSearchQuery,
+  type VectorCandidate,
+  type VectorSearchQuery,
 } from '../domain/retrieval-search.js';

@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-04)
+Updated: 2026-08-16 (P4-05)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-04 done; P4-05 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-05 done; P4-06 next)
 
 ## Source of truth
 
@@ -739,6 +739,22 @@ The composition point three tasks were building towards: a Problem in, a stored,
 
 **Sixteen discrimination mutations, each killed by a named test**: the dimension check dropped, both zero-vector rejections dropped in turn, the provider error passed through, the fingerprint comparison dropped, the read-control recheck dropped, the lock dropped, the repository used raw, the model identity unstored, the generator provenance unstored, the clock read early, a failure deleting the existing artifact, a placeholder-vector fallback, a vendor SDK import, a UsageLog write, and a distance operator in the generation path.
 
+## What exists now — Vector search (P4-05)
+
+Semantic candidate retrieval: text in, nearest memories out. A service that embeds the query, a reader over one statement, no migration, no new dependency, no route.
+
+**The query is text, embedded by the service itself** (D-250). The same provider instance the artifacts used produces the query vector, and its declared model/version/dimensions are the compatibility filter — so a query cannot be from the wrong space *structurally*. No raw-vector application API exists, and a guard keeps the service and request interfaces vector-free. P4-04's port, output validation and failure error are reused; `EmbeddingGenerationFailedError` moved to the embedding domain now that it has two callers.
+
+**A confirmed credential in the query is never transmitted** (D-251). The lexical search lets such queries through because they live and die inside the database (D-238); a semantic query goes to a provider — somebody else's computer — so the same certainty line produces the opposite rule. Inspection happens before the embed call, yields typed `SENSITIVE_QUERY_NOT_EMBEDDED` carrying nothing but its kind, provider called zero times, no search run. Suspected and status prose still pass. The gate is a sanitization *policy* (`createSemanticQueryInspectionPolicy`) rather than detector use in the service — the guard keeping credential knowledge inside `sanitization/` caught the first draft, and was right.
+
+**Cosine, fixed; compatibility is three tests** (D-252). `<=>` as a system decision, pinned by the magnitude fixture (same direction at 100× ties at 0.0; L2 would say 99 — operator swap fails the test). Rows compare only when model AND version AND `vector_dims` all match; a same-model six-dimensional row neither errors nor eats the limit. Old-embedding-model artifacts are invisible here and findable lexically — the hybrid's halves failing differently, on purpose. No regeneration at query time.
+
+**Raw `cosineDistance`, no threshold, shared filters** (D-253). Lower-is-better with the metric in the name, so summing it with `lexicalScore` is visibly wrong. Opposite vectors return when nothing closer exists — usefulness is the merge/rerank/evaluation stages' question. One resolver shares project/self/limit validation with the lexical search; the semantic text bound is 4000 (a whole normalized summary is the canonical query), the lexical 1000 unmoved. Owner and read control hard in SQL; suppression/freshness/confidence/staleness returned, not filtered.
+
+**Exact scan, ANN deferred on measured grounds** (D-254). The spec asks for retrieval, not an index; an ANN index cannot exist on an untyped column and no model is chosen to type it; 10k×64d answered in ~7 ms in the probe. Migrations stay 16 and vector indexes 0, asserted as boundary tests a hardening task will deliberately update; the partial cast-index path is measured and open. A search writes nothing — proven byte-for-byte across all nine tables.
+
+**Eighteen discrimination mutations, each killed by a named test or guard**: the owner predicate, the read control, each of the three compatibility predicates in turn, the project filter, the self-exclusion, the metric swapped to L2, the tie-break, the limit bound, unchecked provider output, the provider error passed through, the sensitive-query gate, a regeneration on miss, a usage-log write, old-model rows included, an ANN migration arriving, and a raw-vector public API.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -748,7 +764,8 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI
 - No concrete summary generator and no concrete embedding provider. Both are ports (D-223, D-241); no vendor SDK or HTTP client is a dependency, and no provider credential exists anywhere. A deployed server therefore still cannot generate artifacts by itself — the orchestration path exists and is proven with scripted ports (D-249)
 - No caller of the generation pipeline. Nothing invokes `generateArtifact` in production: no route, no scheduler, no backfill worker, no adapter. Who calls it, and when, is a later wiring decision (D-249)
-- No vector search, no distance query, no hybrid merge, no reranking, no ranking policy, no search cache — and still no vector index, since an untyped `vector` cannot carry one and no model is chosen (D-211, D-240, D-249)
+- No hybrid merge, no score fusion, no reranking, no ranking policy and no search cache. `lexicalScore` and `cosineDistance` are deliberately incomparable — different scales, opposite directions — and combining them is P4-06's one-time decision (D-253)
+- No vector index, still: an untyped `vector` cannot carry one and no model is chosen to type a cast index. Exact scan is the implementation, measured feasible at MVP scale; migrations 16 and vector indexes 0 are boundary assertions a hardening task will deliberately update (D-254)
 - No model router. One injected provider per deployment is the standing assumption; fallback, selection, cost routing and A/B are all absent, and concurrent-rollout overwrites are an accepted, recorded limitation (D-247)
 - No retries around the embedding provider, and no reuse of the Phase 3 retry queue for it. A provider failure is a safe error, and trying again is the caller's decision (D-248)
 - No search that writes. No UsageLog, no ChangeLog, no Relation, and nothing generated on demand to satisfy a query (D-230, D-240)
@@ -786,16 +803,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-05 — Vector search.
+P4-06 — Hybrid candidate retrieval.
 
-**NOT STARTED.** P4-01 through P4-04 are done; nothing of P4-05 has been implemented.
+**NOT STARTED.** P4-01 through P4-05 are done; nothing of P4-06 has been implemented.
 
-Notes for whoever picks this up, all of them measured facts:
-- The store holds vectors of any dimension side by side, and a distance across different dimensions is an *error*, not a low score. A vector query must filter to compatible rows first — `embedding_model`, `embedding_model_version` and `vector_dims(embedding)` are all available per row (D-241, D-249)
-- An ANN index (HNSW/IVFFlat) cannot be built on the untyped `vector` column — "column does not have dimensions" — and works on a typed one. Whether to cast-index to the configured model's dimension is P4-05's decision, made when a model is configured (D-211)
-- An all-zero vector cannot reach storage from any path (D-242), so cosine distance NULLs from zero vectors are structurally impossible — but distance *metric* choice is still open, and `<=>` returns NULL against a zero query vector; validate the query side too
-- Owner scope in the SQL, as everywhere: the lexical search statement is the template (D-237), and `memory_read_enabled` filters in the same statement
-- The lexical candidate shape (`problemId`, `projectId`, `lexicalScore`) was kept deliberately minimal so the hybrid merge can define its own; a vector candidate probably mirrors it, and `lexicalScore` vs whatever the vector score is named must not be presented as comparable before P4-06 decides how they combine (D-233)
+Notes for whoever picks this up:
+- The two candidate sources are deliberately mirror-shaped (`problemId`, `projectId`, score) and deliberately incomparable: `lexicalScore` is higher-better on ts_rank_cd's scale, `cosineDistance` is lower-better on [0,2]. How they combine — RRF, normalisation, whatever — is this task's one-time decision, made once and recorded (D-233, D-253)
+- The sensitive-query asymmetry is designed for this task: a confirmed-credential query yields `SENSITIVE_QUERY_NOT_EMBEDDED` from the semantic half while the lexical half still runs, so "degrade to lexical-only" is an ordinary branch, not error handling (D-251)
+- An old-embedding-model artifact exists lexical-only. The hybrid must not treat "absent from the vector half" as a signal about the Memory — it may be a signal about the model rollout (D-252)
+- Both searches share filter semantics and validation through one resolver; the merge can assume identical project/self/limit meanings on both sides (D-253)
+- The spec's two-stage shape: stage 1 narrows to 10–20 in the DB (both sources exist for this), stage 2 is reranking toward 1–5, which is P4-07's — the merge should not start judging structure
 
 ## Core MVP milestone
 

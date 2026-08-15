@@ -567,9 +567,21 @@ Sixteen discrimination mutations each killed by a named test.
 
 2872 tests across 95 files. Migrations 15 → **16**, `retrieval_artifacts` 11 → **13** columns. Unchanged: tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, extensions 7, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-05 Vector search
+### P4-05 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. Semantic candidate retrieval with owner scope mandatory. The measured groundwork: cross-dimension distance errors rather than scoring low, so compatible-model filtering comes first; ANN indexes need a typed column, so the cast-index decision arrives with the configured model; zero vectors cannot reach storage, but the query side needs its own validation (D-241, D-242, D-249).
+Vector search: semantic candidate retrieval, text in, nearest memories out.
+
+The service embeds the query itself through P4-04's provider port — no raw-vector application API exists, so query-space compatibility is structural (D-250). A confirmed credential in the query is never transmitted: inspected before the embed call via a sanitization policy, answered with typed `SENSITIVE_QUERY_NOT_EMBEDDED` carrying nothing but its kind, provider and search both at zero calls. The lexical search's opposite rule (D-238) stands — the destination changed, not the principle (D-251).
+
+Cosine (`<=>`) fixed as a system decision, pinned by the magnitude fixture; compatibility is model AND version AND `vector_dims`, all three, with incompatible rows excluded where they can neither error nor occupy the limit. Old-embedding-model artifacts are lexical-only, deliberately (D-252). Raw `cosineDistance`, lower-better, no threshold; one shared resolver with the lexical filters, semantic text bound 4000, lexical 1000 unmoved (D-253). Exact scan, no ANN index and no migration, on measured grounds — the untyped column cannot carry one and no model exists to type it; boundary tests hold migrations at 16 and vector indexes at 0 (D-254). A search writes nothing, proven across all nine tables.
+
+Eighteen discrimination mutations each killed by a named test or guard.
+
+2907 tests across 97 files. All counts unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-06 Hybrid candidate retrieval
+
+**NOT STARTED.** See the private Phase 4 breakdown. Full-text and vector results merged toward 10–20 candidates. The groundwork is laid deliberately: mirror-shaped candidates with incomparable scores whose combination is P4-06's one-time decision; the sensitive-query outcome typed so lexical-only degradation is an ordinary branch; identical filter semantics on both sides through one resolver (D-251, D-253).
 
 ## BLOCKED
 

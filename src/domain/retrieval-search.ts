@@ -174,13 +174,28 @@ function requireInteger(value: number, field: string, minimum: number, maximum: 
 export function resolveFullTextSearchQuery(
   query: FullTextSearchQuery,
 ): ResolvedFullTextSearchQuery {
+  return resolveSearchQuery(query, MAX_SEARCH_TEXT_LENGTH);
+}
+
+/**
+ * The shared resolution both kinds of search use.
+ *
+ * One implementation because the filters mean the same thing in both: the
+ * hybrid stage will run the two searches side by side over one intent, and two
+ * validators for one meaning is how the meanings drift. Only the text bound
+ * differs, so it is the one parameter.
+ */
+function resolveSearchQuery(
+  query: FullTextSearchQuery | VectorSearchQuery,
+  maximumTextLength: number,
+): ResolvedFullTextSearchQuery {
   if (typeof query.text !== 'string' || isBlankText(query.text)) {
     throw new InvalidFullTextSearchError('text', 'it is blank');
   }
-  if (query.text.length > MAX_SEARCH_TEXT_LENGTH) {
+  if (query.text.length > maximumTextLength) {
     throw new InvalidFullTextSearchError(
       'text',
-      `it is longer than ${String(MAX_SEARCH_TEXT_LENGTH)} characters`,
+      `it is longer than ${String(maximumTextLength)} characters`,
     );
   }
 
@@ -193,4 +208,63 @@ export function resolveFullTextSearchQuery(
         ? DEFAULT_SEARCH_LIMIT
         : requireInteger(query.limit, 'limit', 1, MAX_SEARCH_LIMIT),
   };
+}
+
+/**
+ * The longest semantic query this accepts.
+ *
+ * Larger than the lexical bound, and the difference is principled rather than
+ * arbitrary. A lexical query is a handful of terms joined with AND, and a long
+ * one finds nothing. A semantic query's canonical case is the opposite: a
+ * whole normalized summary — "find memories like this Problem" — and a
+ * summary may legitimately be up to its own bound of 4000. The lexical limit
+ * stays where it is; neither bound leaks into the other's search.
+ */
+export const MAX_VECTOR_SEARCH_TEXT_LENGTH = 4000;
+
+/**
+ * What a caller asks a semantic search for.
+ *
+ * Text, never a vector. The embedding is produced inside the service by the
+ * same provider the artifacts were embedded with, which is what keeps the
+ * query and the stored vectors in one space — a caller-supplied vector could
+ * be from any model at any dimension, and accepting one would turn the
+ * compatibility contract into a convention.
+ *
+ * The filters mean exactly what they mean for the lexical search.
+ */
+export interface VectorSearchQuery {
+  readonly text: string;
+  readonly projectId?: ProjectId;
+  readonly excludeProblemId?: ProblemId;
+  readonly limit?: number;
+}
+
+/** A validated semantic query. The same resolved shape as the lexical one. */
+export type ResolvedVectorSearchQuery = ResolvedFullTextSearchQuery;
+
+export function resolveVectorSearchQuery(query: VectorSearchQuery): ResolvedVectorSearchQuery {
+  return resolveSearchQuery(query, MAX_VECTOR_SEARCH_TEXT_LENGTH);
+}
+
+/**
+ * One semantic candidate.
+ *
+ * The mirror of `FullTextCandidate`, so the hybrid stage can union the two
+ * without reshaping either. No owner id, no artifact text, and no model
+ * metadata — every candidate already passed the exact model, version and
+ * dimension filter, so per-candidate model fields would repeat one fact the
+ * whole result shares.
+ */
+export interface VectorCandidate {
+  readonly problemId: ProblemId;
+  readonly projectId: ProjectId;
+  /**
+   * Raw cosine distance: 0 is identical direction, 1 orthogonal, 2 opposite.
+   * LOWER is better, which is the opposite direction from `lexicalScore`, and
+   * the name says the metric so it cannot read as a general goodness number.
+   * Not comparable with, and never to be summed with, a lexical score —
+   * combining the two signals is the hybrid stage's decision.
+   */
+  readonly cosineDistance: number;
 }

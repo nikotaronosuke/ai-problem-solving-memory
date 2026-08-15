@@ -2366,3 +2366,45 @@ Not built, deliberately: vector search, distance operators, HNSW/IVFFlat, hybrid
 Sixteen discrimination mutations, each killed by a named test.
 
 P4-04 is done. P4-05 Vector search is NOT STARTED.
+
+## D-250 — A semantic query is text, embedded by the service itself (P4-05)
+
+The vector search service accepts words and the shared filters — project, self-exclusion, limit — and never a vector. The embedding is produced inside the service by the same `EmbeddingProvider` the artifacts were embedded with, and that provider's declared model, version and dimensions are what the search filters compatibility on. The guarantee is structural: a query vector cannot be from the wrong space, because the only place one can come from is the space being searched. A public method accepting a raw vector would demote that to a convention, and an architecture guard holds the service and request interfaces vector-free.
+
+The reader below the service does take a validated embedding — it is a storage boundary handed its inputs by the service, not an application surface. No new provider abstraction was invented; P4-04's port, output validation (`toProviderEmbedding`: exact dimensions, finite, not all zero) and failure error are reused as they stand. `EmbeddingGenerationFailedError` moved from the generation service module into the embedding domain, since it now has two callers; its semantics — fixed sentence, no cause, no query text — are unchanged, and the old import path still works.
+
+## D-251 — A query holding a confirmed credential is never sent to the provider (P4-05)
+
+The lexical search deliberately lets credential-shaped queries through (D-238): a lexical query is a bound parameter that lives and dies inside the database this system already trusts with the Memory itself. A semantic query is different in exactly one way that matters — it is *transmitted to an embedding provider*, which under any concrete deployment means somebody else's computer. D-238's own structure ("what it permits, it also obliges") produces the opposite conclusion when the destination changes.
+
+So the query is inspected before the provider is called — after would be declining to use an answer the credential already paid for — and a confirmed secret yields a typed outcome, `SENSITIVE_QUERY_NOT_EMBEDDED`, with the provider called zero times and no search run. The outcome carries nothing but its kind: not the query, not a category, not a reason — anything repeated there would be a credential-bearing string travelling onward. It is an outcome rather than an exception because the caller that matters next is the hybrid stage, and "run the lexical half only" is ordinary degradation, not error handling. Redact-and-embed was rejected: a redacted query is a different question.
+
+The certainty line is unchanged: suspected values and status prose pass, so "the token expired during deployment" is still semantically searchable. And the gate arrived as a *policy* — `createSemanticQueryInspectionPolicy`, beside the artifact and export policies — rather than the service consuming the detector directly, because what a credential looks like stays inside the sanitization boundary; the existing architecture guard enforcing that caught the first draft of this service and was right.
+
+## D-252 — Cosine, fixed, and compatibility is three tests (P4-05)
+
+The metric is `<=>`, cosine distance, as a system decision. Measured on fixtures: cosine is the one metric of the three that separates direction from magnitude — the same direction at 100× the length is distance 0.0, where L2 says 99 and inner product rewards sheer size — and for "do these texts mean the same thing", direction is the signal. It is not a provider property, not a column and not configuration: the same rows must answer the same query the same way on every deployment (the question D-232 already settled for text search configuration). A future model that genuinely wants another metric is a deliberate revisit. A test pins the choice: two same-direction vectors of wildly different magnitude tie at distance zero, and swapping the operator for L2 fails it.
+
+A row is compared only when `embedding_model`, `embedding_model_version` and `vector_dims(embedding)` all equal the provider's declaration. All three, because each alone fails differently: across models a distance signifies nothing, across versions likewise, and across dimensions it is an error rather than a low score (measured, 22000). Incompatible rows are excluded by the filter, where they can neither break the query nor occupy the limit — a test seeds all three kinds of incompatible row, including a six-dimensional vector under the *same* model and version, and proves both properties. The summary generator's identity is deliberately not a compatibility test: the space belongs to the embedding model, and an old-summary artifact has a mathematically valid distance.
+
+The accepted asymmetry, on purpose: an old-embedding-model artifact is invisible to vector search and still findable lexically. The lexical channel does not use the vector space, so it has no reason to exclude such a row — and that is the hybrid working as designed, its halves failing differently. Nothing regenerates a mismatched artifact at query time; a search is a read.
+
+## D-253 — Raw cosine distance, no threshold, and the shared query shape (P4-05)
+
+The candidate is the lexical candidate's mirror — `problemId`, `projectId`, and a score field — and the score field is named `cosineDistance`: raw, lower-is-better, the metric in the name. Not `relevance`, not `score`, not 1−distance. The name is the guard against the mistake that matters: `lexicalScore` and `cosineDistance` disagree in scale *and direction*, so summing them is visibly wrong rather than plausibly right. How the two signals combine is the hybrid stage's decision, made once, deliberately.
+
+No distance threshold, no minimum similarity: the N nearest come back however far they are, opposite vectors included when nothing closer exists. A candidate primitive that dropped "too far" rows would be deciding usefulness — the merge, rerank and evaluation stages' question — and a useless candidate list should look like one, not like an empty one.
+
+The query shares the lexical search's filters and bounds through one resolver, so the two cannot drift; only the text bound differs. The semantic maximum is 4000 — the normalized summary's own bound — because the canonical semantic query is a whole summary ("find memories like this Problem"), and the lexical 1000 would refuse it. The lexical bound did not move. Filters behave identically: owner and `memory_read_enabled` hard in SQL; project and self-exclusion optional with the same semantics; suppression, freshness, confidence, importance and stale fingerprints deliberately not filters (D-237's line, applied verbatim). Ordering is total — distance, then problem id — and the finite-ness of every returned distance is checked at row mapping, with nothing of the row quoted on failure.
+
+## D-254 — Exact scan, no ANN index, and what P4-05 did not build (P4-05)
+
+Vector search is an exact sequential scan. No HNSW, no IVFFlat, no migration — migrations stay at 16 and the vector index count stays at zero, both asserted by a boundary test that a later hardening task will deliberately update.
+
+The reasoning is a chain of measured facts rather than a preference. The specification asks for semantic candidate retrieval and owner scope, not an index. An ANN index cannot be built on the untyped column at all ("column does not have dimensions", measured), and no concrete model is chosen, so there is no dimension to write into a typed cast index — a static migration literally cannot be written yet. And exact scan is functionally sufficient at MVP scale: 10,000 rows × 64 dimensions answered in ~7 ms in the probe, which is feasibility evidence, not a performance SLA. The future path is measured and stays open: a partial expression HNSW over `(embedding::vector(N))` with the model/version/dims predicate works, and belongs to whichever task configures a concrete provider. Runtime DDL was rejected outright — index creation at service start would put schema mutation outside the migration ledger.
+
+Everything else deliberately absent: no hybrid merge, no score fusion, no reranking, no ranking, no cache, no UsageLog (a search writes nothing — proven byte-for-byte across all nine tables), no revalidation, no HTTP route (API stays 0.4.0 / 27), no concrete vendor, no credential, no model router, no preflight existence check before the provider call, and no regeneration on a miss. Runtime dependencies stay at three. D-202 does not fire.
+
+Eighteen discrimination mutations, each killed by a named test or guard.
+
+P4-05 is done. P4-06 Hybrid candidate retrieval is NOT STARTED.

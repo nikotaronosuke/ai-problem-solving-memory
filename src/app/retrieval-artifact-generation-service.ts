@@ -43,6 +43,7 @@ import type { OwnerContext } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 import type { RetrievalArtifactRecord } from '../domain/retrieval-artifact.js';
 import {
+  EmbeddingGenerationFailedError,
   requireEmbeddingProviderIdentity,
   toProviderEmbedding,
   type EmbeddingProvider,
@@ -71,21 +72,10 @@ export type GenerateRetrievalArtifactOutcome =
   | { readonly kind: 'SOURCE_CHANGED' }
   | { readonly kind: 'MEMORY_READ_DISABLED' };
 
-/**
- * Raised when the provider itself failed.
- *
- * A fixed sentence with nothing attached, for the same reason the summary
- * generator's failure carries nothing: a provider error is the likeliest place
- * for the text that was sent, a request body or the provider's own credential
- * to be quoted back, and `cause` is followed by error formatters straight into
- * the operational log. Whatever the provider threw stops at this line.
- */
-export class EmbeddingGenerationFailedError extends Error {
-  constructor() {
-    super('The embedding provider failed.');
-    this.name = 'EmbeddingGenerationFailedError';
-  }
-}
+// Re-exported from the embedding domain, where it moved when vector search
+// became the second caller of a provider. Existing importers keep working;
+// the error itself is one situation with one name, wherever it is raised.
+export { EmbeddingGenerationFailedError } from '../domain/retrieval-embedding.js';
 
 export interface RetrievalArtifactGenerationService {
   /**
