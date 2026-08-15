@@ -847,6 +847,8 @@ describe.skipIf(databaseUrl === undefined)('Closing a problem', () => {
     ): AuthenticatedRequestContext {
       return {
         clientId: authenticated.clientId,
+        retrievalArtifacts:
+          undefined as unknown as AuthenticatedRequestContext['retrievalArtifacts'],
         repository: authenticated.repository,
         runInTransaction: (work) =>
           authenticated.runInTransaction((repository) =>

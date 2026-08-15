@@ -505,6 +505,8 @@ describe.skipIf(databaseUrl === undefined)('Problem change logging', () => {
 
       const failing: AuthenticatedRequestContext = {
         clientId: authenticated.clientId,
+        retrievalArtifacts:
+          undefined as unknown as AuthenticatedRequestContext['retrievalArtifacts'],
         repository: authenticated.repository,
         runInTransaction: (work) =>
           authenticated.runInTransaction((repository) =>
@@ -542,6 +544,8 @@ describe.skipIf(databaseUrl === undefined)('Problem change logging', () => {
 
       const failing: AuthenticatedRequestContext = {
         clientId: authenticated.clientId,
+        retrievalArtifacts:
+          undefined as unknown as AuthenticatedRequestContext['retrievalArtifacts'],
         repository: authenticated.repository,
         runInTransaction: (work) =>
           authenticated.runInTransaction((repository) =>

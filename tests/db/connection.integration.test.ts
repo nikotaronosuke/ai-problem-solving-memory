@@ -68,6 +68,7 @@ describe.skipIf(databaseUrl === undefined)('database connection', () => {
       'problems',
       'projects',
       'relations',
+      'retrieval_artifacts',
       'usage_logs',
       'verifications',
     ]);

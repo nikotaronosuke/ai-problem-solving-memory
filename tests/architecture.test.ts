@@ -519,7 +519,14 @@ describe('credential boundary', () => {
     // down. Pointing it at the credential store would have it inspecting a
     // digest for signs of a credential, and a policy could decide to redact
     // the one column that has to survive verbatim.
-    expect(wrapped).toEqual(['app/request-context.ts', 'sanitization/sanitizing-repository.ts']);
+    //
+    // One module calls it, and it wraps two repositories there: the Memory
+    // repository under the write policy, and the retrieval artifacts under the
+    // artifact policy. The credential store is wrapped by neither. (The
+    // definition itself no longer matches this pattern — the function became
+    // generic when a second kind of repository needed it — which leaves the
+    // list saying exactly what it means: the call sites.)
+    expect(wrapped).toEqual(['app/request-context.ts']);
   });
 
   it('reads the Authorization header in exactly one place', async () => {
@@ -606,7 +613,9 @@ describe('the delete path', () => {
     const source = await readFile(join(SRC, 'db', 'problem-deletion.ts'), 'utf8');
 
     const statements = source.match(/delete\s+from\s+public\.[\s\S]*?`/gi) ?? [];
-    expect(statements.length).toBe(6);
+    // Seven since P4-01: the retrieval artifact goes with everything else the
+    // Problem owned, and being derived is not a reason to leave it behind.
+    expect(statements.length).toBe(7);
 
     // The foreign keys into `problems` are composite, so another owner's row
     // cannot reference this one and matching on the id alone would happen to
@@ -661,6 +670,7 @@ describe('the delete path', () => {
       'events',
       'problems',
       'relations',
+      'retrieval_artifacts',
       'usage_logs',
       'verifications',
     ]);
@@ -1383,6 +1393,71 @@ describe('the operational log', () => {
     for (const module of memoryLogModules) {
       expect(module.source).not.toMatch(/\.log\.\w+\(|\bconsole\.\w+\(/);
     }
+  });
+});
+
+describe('the retrieval artifact', () => {
+  it('is handed out from one place, under its own policy', async () => {
+    const modules = await readModules(SRC);
+
+    // Call sites, not the definition. Named by path rather than excluded by a
+    // pattern: "everywhere except where it is declared" is a fact about one
+    // file, and reads better as one.
+    const definition = 'repository/retrieval-artifact-repository.ts';
+    const builders = modules
+      .filter((module) => module.path !== definition)
+      .filter((module) => module.source.includes('createRetrievalArtifactRepository('))
+      .map((module) => module.path)
+      .sort();
+
+    // The same rule the Memory repository lives under, for the same reason:
+    // one place where the boundary could be forgotten. A second construction
+    // site is how a repository ends up handed out unwrapped.
+    expect(builders).toEqual(['app/request-context.ts']);
+
+    const context = modules.find((module) => module.path === 'app/request-context.ts');
+    const source = context?.source ?? '';
+    const constructions = source.split('createRetrievalArtifactRepository(').length - 1;
+    // Every construction is wrapped. Counted by looking at what precedes each
+    // one rather than by matching across the line break between them.
+    const unwrapped = source
+      .split('createRetrievalArtifactRepository(')
+      .slice(0, -1)
+      .filter((before) => !/withSanitization\(\s*$/.test(before)).length;
+
+    expect(constructions).toBeGreaterThan(0);
+    expect(unwrapped).toBe(0);
+    // Its own policy, not the write boundary's. An artifact is refused whole
+    // rather than redacted, because its embedding was built from the text
+    // before a redaction could apply.
+    expect(context?.source).toContain('createArtifactInspectionPolicy');
+  });
+
+  it('is removed by the delete path', async () => {
+    const source = await readFile(join(SRC, 'db', 'problem-deletion.ts'), 'utf8');
+
+    // The standing rule a derived store arrives under: it is deleted in the
+    // same change that introduces it, in the open, beside everything else the
+    // Problem owned.
+    expect(source).toContain('delete from public.retrieval_artifacts');
+  });
+
+  it('has no generator, no provider and no search', async () => {
+    const modules = await readModules(SRC);
+
+    const offenders: string[] = [];
+    for (const module of modules) {
+      for (const specifier of importsOf(module.source)) {
+        // P4-01 is storage. Summaries, embeddings, ranking and searching
+        // belong to the tasks that own them, and a client library arriving
+        // early is how a storage task becomes a model decision.
+        if (/^(openai|@anthropic|@google|cohere|@huggingface|langchain|pgvector)/.test(specifier)) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 });
 

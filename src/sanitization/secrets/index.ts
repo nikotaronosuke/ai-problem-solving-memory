@@ -16,4 +16,8 @@ export {
 export { createSecretDetector, type SecretDetector } from './detector.js';
 export { createSecretRedactor, type SecretRedactor } from './redactor.js';
 export { REDACTION_MARKER } from './patterns.js';
-export { createExportInspectionPolicy, createSecretDetectionPolicy } from './policy.js';
+export {
+  createArtifactInspectionPolicy,
+  createExportInspectionPolicy,
+  createSecretDetectionPolicy,
+} from './policy.js';

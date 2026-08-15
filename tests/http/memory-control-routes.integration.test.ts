@@ -811,6 +811,8 @@ describe.skipIf(databaseUrl === undefined)('Memory controls', () => {
 
       const failing: AuthenticatedRequestContext = {
         clientId: authenticated.clientId,
+        retrievalArtifacts:
+          undefined as unknown as AuthenticatedRequestContext['retrievalArtifacts'],
         repository: authenticated.repository,
         runInTransaction: (work) =>
           authenticated.runInTransaction((repository) =>

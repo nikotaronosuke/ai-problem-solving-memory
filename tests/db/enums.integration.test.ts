@@ -87,6 +87,7 @@ describe.skipIf(databaseUrl === undefined)('domain enums in the database', () =>
       'problems',
       'projects',
       'relations',
+      'retrieval_artifacts',
       'usage_logs',
       'verifications',
     ]);
