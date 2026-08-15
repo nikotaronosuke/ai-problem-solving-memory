@@ -82,6 +82,21 @@ export {
   type AppendVerificationCommand,
   type VerificationService,
 } from './verification-service.js';
+// Semantic candidate search: text in, nearest memories out. A confirmed
+// credential in the query is answered with a typed outcome rather than sent
+// to the provider.
+export {
+  createRetrievalVectorSearchService,
+  type RetrievalVectorSearchService,
+  type VectorSearchOutcome,
+  type VectorSearchRequest,
+} from './retrieval-vector-search-service.js';
+export {
+  MAX_VECTOR_SEARCH_TEXT_LENGTH,
+  type VectorCandidate,
+  type VectorSearchQuery,
+} from '../domain/retrieval-search.js';
+
 // The full pipeline: summary, embedding, atomic persistence. Still no route —
 // what invokes generation in production is an adapter decision that has not
 // been made.

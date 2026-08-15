@@ -22,6 +22,7 @@ export {
 export {
   createArtifactInspectionPolicy,
   createExportInspectionPolicy,
+  createSemanticQueryInspectionPolicy,
   createSecretDetectionPolicy,
   createSecretDetector,
   createSecretRedactor,

@@ -138,6 +138,29 @@ export function createArtifactInspectionPolicy(
   };
 }
 
+/**
+ * The gate a semantic search query passes before leaving the process.
+ *
+ * The same line the artifact and export policies draw — a confirmed credential
+ * refuses, everything else passes — applied one step earlier in a query's
+ * life: this text is about to be transmitted to an embedding provider, and a
+ * refusal after the call would be declining to use an answer the credential
+ * already paid for. Suspected values and status prose pass, so "the token
+ * expired" stays searchable; the certainty judgement itself stays in this
+ * directory, where what a credential looks like is decided.
+ */
+export function createSemanticQueryInspectionPolicy(
+  detector: SecretDetector = createSecretDetector(),
+): SanitizationPolicy {
+  return {
+    inspect(text, at) {
+      return detector.detect(text, at)?.certainty === 'confirmed'
+        ? { kind: 'reject' }
+        : { kind: 'keep' };
+    },
+  };
+}
+
 export function createExportInspectionPolicy(
   detector: SecretDetector = createSecretDetector(),
 ): SanitizationPolicy {
