@@ -82,6 +82,31 @@ export {
   type AppendVerificationCommand,
   type VerificationService,
 } from './verification-service.js';
+// Generation only: it produces a draft and stores nothing. There is no route
+// to it, deliberately — what a client may ask of a search belongs to the task
+// that has a search to expose.
+export {
+  createRetrievalSummaryService,
+  RetrievalSummaryGenerationFailedError,
+  type GenerateRetrievalSummaryOutcome,
+  type RetrievalSummaryGenerator,
+  type RetrievalSummaryGeneratorInput,
+  type RetrievalSummaryService,
+} from './retrieval-summary-service.js';
+export {
+  InvalidRetrievalSummaryError,
+  MAX_KEYWORDS,
+  MAX_KEYWORD_LENGTH,
+  MAX_NORMALIZED_SUMMARY_LENGTH,
+  MAX_STRUCTURAL_FEATURE_ITEMS,
+  MAX_STRUCTURAL_FEATURE_LENGTH,
+  RETRIEVAL_SOURCE_FINGERPRINT_PREFIX,
+  RETRIEVAL_SOURCE_SCHEMA_VERSION,
+  STRUCTURAL_FEATURE_LISTS,
+  STRUCTURAL_FEATURE_SCHEMA_VERSION,
+  type RetrievalSummaryDraft,
+  type StructuralFeatures,
+} from '../domain/retrieval-summary.js';
 export {
   createRequestContextService,
   REQUEST_CONTEXT_FAILURES,

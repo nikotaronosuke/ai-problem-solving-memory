@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-01)
+Updated: 2026-08-16 (P4-02)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 done; P4-02 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01, P4-02 done; P4-03 next)
 
 ## Source of truth
 
@@ -661,6 +661,32 @@ The first derived persistent store: `public.retrieval_artifacts`, a rendering of
 
 **Ten discrimination mutations, each killed by a named test**: the read's owner predicate removed, the foreign key reduced to `problem_id` (schema-level, with a full `db:reset` around it), the repository handed out unwrapped, reject softened to redact, the artifact dropped from the delete path, `on conflict do nothing`, the upsert also touching the Problem, artifacts joined into the export statement, the fingerprint not stored, and the table dropped from the catalog inventories.
 
+## What exists now — Retrieval summary generation (P4-02)
+
+Turning one Problem into something a search can compare. A `RetrievalSummaryDraft` — normalized summary, keywords, structural features, source fingerprint — produced in memory and **returned, never stored** (D-217). No migration, no route, no vendor: the schema, the API contract and the three runtime dependencies are all exactly as P4-01 left them.
+
+**Nothing is written down, because an artifact is complete or absent.** The embedding belongs to P4-04, and all four ways to store something now were refused: a zero or fake vector, a placeholder model, a migration making `embedding` nullable, or pulling the provider forward. The draft carries no `generated_at` either — an artifact's is the moment its *complete* content existed, and that moment has not arrived.
+
+**One statement, one snapshot, assembled in SQL** (D-218). Four reads would take four snapshots and could fingerprint a state that never existed. Holding a transaction across the generation was refused too — that keeps a connection checked out for the duration of somebody else's inference — so the read is short and consistency across the call is re-established by reading again. Built in SQL rather than in JavaScript because it was measured: `jsonb` numbers come back through the driver as doubles, so `12345678901234567890` becomes `...567000`, and a build identifier can genuinely be that. The same choice makes Environment key order canonical for free.
+
+**What is in the document decides what regenerates a summary** (D-219). Title, symptoms, domain, boundary, status, fix kind; the Environment snapshot; **all six Event types** with no filter; every Verification including failed ones. Out: confidence, freshness, importance, suppression, both controls, versions, timestamps, identifiers, authorship, evidence refs, and Project, Relations, UsageLogs and ChangeLogs entirely. `DISCOVERY` matters more than it looks — concluding a Problem records the final cause *as* a `DISCOVERY` — and `USER_CORRECTION` is what stops a superseded misunderstanding being summarised as current. Proven by two Problems with the same content and everything else different producing byte-identical documents.
+
+**The fingerprint is the exact bytes the generator saw** (D-220): `retrieval-source-v1:<sha256>` over the document itself, not over a field list. Two questions, one answer. A Memory edited and put back produces the same digest, and that is correct — the digest is over meaning, not history.
+
+**A recorded fix is not a verified one** (D-221). Nothing links a `FIX` Event to a Verification, so `successful_directions` may be non-empty only when the status requires a successful Verification and one exists. Mechanical, in code, and it refuses rather than quietly emptying the list. Neither shortcut was taken: last-`FIX`-wins invents causality from chronology, and all-`FIX`-succeeded is worse. Related limitation recorded: a close-review Event is indistinguishable from an ordinary one, and nothing here guesses.
+
+**`structural_features` v1** (D-222): eight exact keys, unknown refused, missing refused, null-for-a-list refused. Free-form labels rather than a closed taxonomy, because the acceptance condition is cross-technology matching and an enum missing the label a problem needs buries it permanently. Bounds refuse rather than trim. Keyword case is preserved — the full-text search normalises it downstream.
+
+**The generator is a port with no vendor** (D-223). Everything P4-02 owns is provable against a scripted generator, and choosing a model here would also start collecting external provider credentials, which the OS boundary is careful about. The port is handed a string and can be given nothing else — no repository, no executor, no context — so "the Memory text told the generator to modify the Memory" describes something the interface cannot do.
+
+**`memory_read_enabled` blocks generation** (D-224), checked before the generator is called, with zero invocations. Once a real provider exists, calling the generator is when the text leaves the process. Not extended to `memory_write_enabled`, which governs a different act; suppressed and invalid Memories still generate.
+
+**The race is closed by reading again, on three questions** (D-225): still there, still readable, still the same digest — in that order. The fingerprint alone is not enough, because a control toggled mid-generation leaves the document unchanged. A deleted Problem is caught by reading rather than by a foreign key, since nothing here writes.
+
+**Generated output is inspected before it can reach an embedding provider** (D-226). P4-01's boundary is too late by one step: the text goes to a provider before the write. Refused whole, same detector, same false-positive line, nested `x=NAME=value` included — and P4-01's check still stands behind it.
+
+**Fourteen discrimination mutations, each killed by a named test**: the owner predicate dropped, the Environment removed, `DISCOVERY` filtered out, `USER_CORRECTION` filtered out, the document rebuilt through JavaScript, the second read removed, the recheck comparing the new source with itself, the privacy inspection removed, the read touching the Problem, a placeholder embedding on the draft, confidence joining the document, and each of the three gates — initial read control, final read control, successful-direction evidence — disabled in turn.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -668,9 +694,14 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
 - No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI. Since P4-01 there is somewhere to *put* an embedding, and still nothing that produces or reads one
-- No artifact generator. Nothing computes a summary, keywords, structural features, a fingerprint or an embedding; no model is named or called. P4-01 is storage and its rules (D-216)
-- No search, no distance query, no ranking, and no vector index — an untyped `vector` cannot carry one, deliberately (D-211)
-- No HTTP surface for artifacts. No route, no OpenAPI operation; the contract stays at 0.4.0 with 27 operations. An artifact is written by a background generation, and what a client may ask for belongs to the task that has a search to expose (D-216)
+- No embedding, no embedding provider and no model. P4-02 generates the text half of an artifact and stops; nothing computes a vector, and no vendor SDK or HTTP client is a dependency (D-217, D-223)
+- No artifact is ever written by the generation path. A draft lives in memory and is returned; there is no fake vector, no placeholder model and no nullable-embedding migration (D-217)
+- No search, no full-text query, no distance query, no ranking, and no vector index — an untyped `vector` cannot carry one, deliberately (D-211, D-228)
+- No HTTP surface for artifacts or for generation. No route, no OpenAPI operation, no debug endpoint; the contract stays at 0.4.0 with 27 operations. Generation is background work, and what a client may ask of a search belongs to the task that has one to expose (D-216, D-228)
+- No claim that a summary is true. Structure, bounds, the success-claim evidence gate, privacy and source consistency are checked; a well-formed summary of a version nobody mentioned passes all of them. Semantic quality is P4-14's, measured against fixtures (D-228)
+- No stored record of which generator produced a summary. The identity is carried on the result and no column was added; where it should live is a storage decision for the task that first writes an artifact down (D-227)
+- No link from a `FIX` Event to a Verification, and nothing that invents one (D-221)
+- No way to tell a close-review Event from an ordinary one. No marker exists, and nothing guesses from authorship or timing (D-221)
 - No artifact list, query or delete. The repository is exactly `upsertArtifact` and `getArtifact`; the only removal is the Problem's own delete path (D-216)
 - No fixed shape for `structural_features` beyond being a JSON object, and no artifact freshness gate — the fingerprint is stored and compared here, computed by P4-02 (D-212, D-216)
 - No PII detector, no raw-conversation or raw-log classifier, no large-code threshold. P3-02 and P3-03 are about secrets only; an email address is kept, and that is a statement about secrets rather than a ruling on PII
@@ -699,16 +730,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-02 — Retrieval summary generation.
+P4-03 — Full-text search.
 
-**NOT STARTED.** P4-01 is done; nothing of P4-02 has been implemented.
+**NOT STARTED.** P4-01 and P4-02 are done; nothing of P4-03 has been implemented.
 
 Notes for whoever picks this up:
-- The storage exists and refuses nothing it should accept. What is missing is everything that *produces* an artifact: the summary, the keywords, the structural features, the fingerprint and the embedding
-- `source_fingerprint` is P4-02's to define. Storage stores it and compares it for equality and has no opinion about its input; what it must be computed from is the Problem, its Events and its Verifications, because that is what "the state this was built from" has to cover
-- The current-state gate is P4-02's too. Storage accepts an *earlier* `generated_at` on purpose (D-212) — a timestamp cannot tell a stale generation from a slow one. The check that refuses a regeneration built from a source that has since moved needs the fingerprint, so it belongs where the fingerprint is computed
-- The model is still unchosen, and choosing it is what makes a fixed `vector(n)` and an ANN index possible (D-211). Neither is needed before a search exists; both are cheap while the data is small
-- The artifact write rejects rather than redacts (D-213), so a generator must be able to handle a refusal — it is not a failure of the generation, it is a Memory holding a credential
+- There is text to search now, and nowhere it is stored. P4-02 produces `normalized_summary` and `keywords` as a draft; they reach `retrieval_artifacts` only once P4-04 supplies an embedding, since an artifact is complete or absent (D-209, D-217). Whether full-text search can be built before that, or has to wait for a row to exist, is the first thing to settle
+- Keyword case is preserved on purpose (D-222), because PostgreSQL's own text search normalises it. A `tsvector` built here should not be given pre-folded input as though it needed it
+- `memory_read_enabled=false` already blocks generation (D-224). A search must filter on it too — the control means no automatic search or reference, and blocking one half is not honouring it
+- Ranking is P4-08's. `confidence`, `freshness`, `suppressed` and `importance` are deliberately outside the artifact and outside the fingerprint (D-219), so a search reads them live from the Problem
+- The owner boundary is the one thing every read here has in common: the source query names the owner in every subquery even though the composite foreign keys already make a cross-owner row unstorable
 
 ## Core MVP milestone
 

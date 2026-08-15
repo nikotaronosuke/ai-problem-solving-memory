@@ -22,6 +22,7 @@
 
 import type { OwnerId } from './owner.js';
 import type { ProblemId } from './problem.js';
+import { isBlankText } from './text.js';
 
 /** Raised when an artifact could not be accepted as written. */
 export class InvalidRetrievalArtifactError extends Error {
@@ -81,26 +82,8 @@ export interface UpsertRetrievalArtifactInput extends RetrievalArtifactContent {
   readonly problemId: ProblemId;
 }
 
-/**
- * The characters the database's own blank checks treat as nothing.
- *
- * Spelled out rather than left to `\s`, which also matches a non-breaking
- * space: a value this refused but the column accepted would be a disagreement
- * about what blank means, and the column is the one that decides.
- */
-const BLANK_CHARACTERS: ReadonlySet<string> = new Set([' ', '\t', '\r', '\n', '\f', '\v']);
-
-function isBlank(value: string): boolean {
-  for (const character of value) {
-    if (!BLANK_CHARACTERS.has(character)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function requireText(value: string, field: string): string {
-  if (isBlank(value)) {
+  if (isBlankText(value)) {
     throw new InvalidRetrievalArtifactError(field, 'it is blank');
   }
   return value;
