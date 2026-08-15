@@ -1885,3 +1885,39 @@ Schema validation runs before authentication, so a malformed body is refused wit
 A test asserting that a file exists and appears in a mapping proves nothing about the system; it proves something about the repository's filing. The temptation is real because it makes coverage feel checkable.
 
 What is checked instead is behaviour, in two places where a list can go stale silently: the owner-scoped operation inventory, taken from the running contract, and the malformed class list, compared against the attacks that claim to cover it. Both fail when reality moves. The five-category map lives in `.ai/CURRENT.md` as prose naming real suites, because that is documentation and does not need a test framework to pretend otherwise.
+
+## D-199 — P3-12 proves continuity, and adds nothing to prove it with (P3-12)
+
+Nothing in `src/` changed. The Phase 3 E2E carries one secret-bearing investigation through everything the phase built, on one owner, one credential, one Problem, one queue directory and one server lifecycle: a raw secret arrives over a real socket and is stored redacted; the server goes away and the caller's work continues; a second secret-bearing write waits on disk, redacted; the server returns and the write lands exactly once under the key assigned before the outage; the Problem is then deleted; and the export that follows holds the survivor and nothing of the target.
+
+What the file asserts is the continuity no per-boundary suite can: the id one step returns is the id the next uses, the version the importance PATCH answers is the version the DELETE presents — read back and confirmed unchanged first, because appends do not advance it — and the key found in the queue file during the outage is the key counted in the database after recovery. Depth stays where it lives: each step's own suite is the named evidence behind it, cited rather than repeated.
+
+## D-200 — Two secret Events, because the queue redacts before the server can (P3-12)
+
+The retry queue inspects a payload before writing it to disk, which means before any delivery attempt. A write that travels through the queue therefore never presents a raw secret to the server — the redaction already happened on the client side. An outage scenario alone would exercise the queue's boundary and quietly skip the server's, while appearing to cover "secret含有Event投入→平文保存されない".
+
+So the E2E carries two. Event A goes straight at the running server over a real socket with the secret raw, and is the *server-side sanitization* proof the DoD names as mandatory: 201, the stored row and the response both carry `AWS_SECRET_ACCESS_KEY=[REDACTED]` with the sentence around it intact, and the raw value appears nowhere the owner has. Event B carries a different secret through the outage, and proves the *queue-side* boundary on the way: the file on disk holds the redacted sentence, the schema version, the importance and the key — and no credential. Dropping either Event would silently drop a claim.
+
+## D-201 — What "deleted including search derivatives" means before search exists (P3-12)
+
+Phase 3 builds no search, and P3-12 builds no fake one to delete from. The claim is made in the only form that is true today: the persisted Memory aggregate is physically gone, and there is no derived storage in which a residue could exist.
+
+The second half is now stated precisely, correcting the explanation P3-11's report leaned on. A foreign-key inventory proves that everything *referencing* problems is known — it cannot prove that no derived store exists, because a derived store need not carry a foreign key, and neither the FK inventory nor the regular-table inventory would notice a materialized view. The E2E therefore asks the catalog directly: zero relations of kind view, materialized view, foreign table or partitioned table in the public schema, alongside the exact eleven regular tables.
+
+This is a Phase 3 boundary guard, not an architecture rule. Nothing says the public schema may never hold a view; it says Phase 3 ends without one, so the deletion claim is honest for the phase that makes it.
+
+The guard's reach is also stated honestly: it proves the PostgreSQL public schema. The absence of an external vector store or a process-local cache rests on different facts — three runtime dependencies, no search module in `src/`, no RetrievalArtifact implementation, and no server-side filesystem writer outside the client-side retry queue — and is not claimed as a catalog proof.
+
+## D-202 — Phase 4's first derived store must arrive with its deletion (P3-12, standing rule)
+
+The private Phase 4 breakdown already names P4-01 (RetrievalArtifact) and P4-09 (search cache). Both are derived persistent stores, and both are expected to fail the catalog guard above — that is the guard working, not breaking.
+
+The standing rule, extending D-141: the change that introduces a derived persistent store must, in the same change set, extend the physical delete path to cover it, extend the delete tests to prove it, and update the Phase 3 boundary guard to name it. A derived store that arrives without its deletion is the residue the spec's step 4 exists to forbid, discovered later by whoever asks for a delete and does not get one.
+
+## D-203 — Phase 3 is complete (P3-12)
+
+The five mandatory steps run continuously in `tests/e2e/phase3.e2e.test.ts`, and every Definition of Done item maps to it plus named depth suites: server-side sanitization (Event A; `secret-boundary.integration`), credential separation (one credential across the whole flow, absent from queue, database and export as booleans; `authentication.integration`), retry and idempotency (real outage, recovery, key-specific count of one; `idempotent-replay.integration`), failure fallback (PENDING, continue, silence for an important Problem; `fallback.test`), physical delete (the same target, with survivor and control marker; `physical-delete.integration`), export (post-delete, survivor present, target absent; `memory-export` and `clean-restore`), and the security E2E (the continuous flow itself; P3-11's five-category evidence).
+
+Ten source-level discrimination mutations each kill a named step — sanitizer kept a secret, queue wrote raw, server never stopped, queued reported unsaved, key regenerated on read, dedup removed, delivered item left in queue, events left behind, problem row left behind, export emptied — and an eleventh planted a real view in the schema and was caught by the catalog guard by name.
+
+What Phase 3 leaves deliberately absent is unchanged from D-192's inventory, and the numbers current code verifies: 27 operations at API 0.4.0, export schema "1", queue schema "2", 13 migrations, 11 tables, 8 domains, 12 RESTRICT foreign keys, 25 repository operations, 3 runtime dependencies. Next is P4-01, not started.

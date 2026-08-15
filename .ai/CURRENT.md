@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16
+Updated: 2026-08-16 (P3-12)
 
 ## Current phase
 
@@ -8,7 +8,7 @@ Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 
 Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
-Implementation Phase 3 — Privacy / Security / Reliability: **IN PROGRESS** (P3-01 … P3-11 done; P3-12 next)
+Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
 ## Source of truth
 
@@ -611,6 +611,18 @@ Schema validation runs before authentication. Measured, not assumed, and not pro
 
 **No manifest test** (D-198). What is checked is behaviour, in the two places a list can go stale silently — the runtime operation inventory and the malformed class table. A test asserting that a file exists proves something about filing, not about the system.
 
+## What exists now — Phase 3 end to end (P3-12)
+
+**Nothing in `src/` changed** (D-199). `tests/e2e/phase3.e2e.test.ts` carries one secret-bearing investigation through everything Phase 3 built, on one owner, one credential, one Problem, one queue directory and one server lifecycle — fifteen numbered steps, explicitly sequential, all real: PostgreSQL, an issued credential, the production composition, the production logger configuration with only its stream replaced, an ephemeral-port socket, an actual connection failure, a filesystem queue in a temp directory, and a retry that runs at the moment the persisted schedule names rather than after a sleep.
+
+**Two secret Events, deliberately** (D-200). The queue redacts before anything reaches its disk — and therefore before any delivery — so an outage write can never present a raw secret to the server. Event A goes straight at the running server with the secret raw and is the server-side sanitization proof: stored and answered as `AWS_SECRET_ACCESS_KEY=[REDACTED]` with its sentence intact, the raw value nowhere. Event B carries a different secret through a real outage and proves the queue's own boundary on the way through: schema `"2"`, `problem_important: true`, the coordinator's key, the redacted sentence, and no credential in the file — checked as a boolean so a failure prints `true`, never the token.
+
+**The continuity is the claim.** The version the importance PATCH answers is the version the DELETE presents, read back and confirmed unchanged first. The key found in the queue file during the outage is the key counted in the database after recovery: exactly one row for it, exactly one for Event A's, never a bare total. The fallback answers `PENDING` / `continueMainWork` / no notice for a Problem that really is important, with the caller's sentinel outside the library. The delete removes the aggregate and both redacted sentences while the survivor — same project, same environment, its own control marker — stays. The export that follows holds the survivor and none of the target: not its id, its markers, its Events' keys, or either secret. The whole stream of the production logger, across both server instances, holds neither secret, neither Memory marker, and not the credential; so does every response body any step read.
+
+**"Deleted including search derivatives" is claimed honestly** (D-201). Phase 3 builds no search and P3-12 builds no fake one. The claim's true form today: the persisted aggregate is physically gone, and the catalog holds no relation a derivative could live in — zero views, materialized views, foreign tables or partitioned tables in the public schema, beside the exact eleven regular tables. This corrects the FK-inventory explanation from P3-11's report: a foreign-key inventory proves that everything *referencing* problems is known, not that no derived store exists. The guard is a Phase 3 boundary, not an architecture rule — P4-01 and P4-09 are expected to fail it, and the change that does must extend the delete path, the delete tests and the guard in the same change set (D-202). Its reach is PostgreSQL: the absence of external or in-process derived stores rests on the dependency count and the absence of any search module, and is not claimed as a catalog proof.
+
+**Eleven discrimination mutations, each killed by a named step** (D-203): the sanitizer keeping a confirmed secret (step 4), the queue writing raw (step 7), the server never stopping (step 5), a queued write reported unsaved (step 6), a key regenerated on read (step 10), server dedup removed (`idempotent-replay`), a delivered item left in the queue (step 10), events surviving the delete (step 11), the problem row surviving (step 11), the export emptied (step 13), and a real view planted in the schema (step 12, named in the failure).
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -644,15 +656,14 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P3-12 — Phase 3 E2E / Definition of Done.
+P4-01 — RetrievalArtifact.
 
-Not started. See the private Phase 3 breakdown for the five required steps.
+**NOT STARTED.** The private Phase 4 breakdown exists and is marked ready; nothing of it has been implemented.
 
 Notes for whoever picks this up:
-- P3-11 deliberately did **not** build the five-step flow. Its assertions are parts a flow can be assembled from; the continuity between them is what P3-12 owes
-- The apparatus is there to reuse: `tests/security/` holds an owner attack table driven by the runtime operation inventory and a malformed class matrix, both with database fingerprinting
-- The clean-marker delete proof (D-196) is the pattern for step 4 — plant, delete, sweep, and keep a control marker so an over-broad delete cannot pass
-- No production source changed in P3-11, and none is expected to change in P3-12 either unless a defect appears
+- P4-01 introduces the first derived persistent store. The standing rule (D-202, extending D-141): the same change set must extend the physical delete path, the delete tests, and the Phase 3 boundary guard in `tests/e2e/phase3.e2e.test.ts` step 12 — which will fail the moment the store exists, deliberately
+- The exact 11-table inventories in `tests/db/connection.integration.test.ts` and `tests/db/integrity.integration.test.ts` will need the same decision at the same moment
+- Anything the export should carry for a derived store is a decision, not a default: a store rebuildable from the eight Memory tables needs no place in the artifact (D-141)
 
 ## Core MVP milestone
 
