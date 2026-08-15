@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P3-12, F1 hardening)
+Updated: 2026-08-16 (P4-01)
 
 ## Current phase
 
@@ -9,6 +9,8 @@ Implementation Phase 1 — Foundation / Repository / Database: **COMPLETE**
 Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
+
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 done; P4-02 next)
 
 ## Source of truth
 
@@ -639,13 +641,38 @@ Six mutations each killed by a named test: the walk removed, the two-character n
 
 Phase 3 remains **COMPLETE** and P4-01 remains **NOT STARTED** (D-208).
 
+## What exists now — RetrievalArtifact (P4-01)
+
+The first derived persistent store: `public.retrieval_artifacts`, a rendering of a Problem built so a search can find it. Storage and its rules only — nothing generates one, nothing reads one over HTTP, and nothing searches. The twelfth table, and the first extension this schema requires.
+
+**One current artifact per Problem, or none** (D-209). No artifact id, no history, no version. A regeneration replaces; it does not add. Absent is an ordinary state that every Problem starts in, and the whole store is rebuildable from the Memory — losing all of it costs the time to regenerate and nothing else.
+
+**Identified by owner and Problem together** (D-210). Primary key `(owner_id, problem_id)`, foreign key naming both columns against `problems (owner_id, problem_id)` with `on delete restrict`. `problem_id` alone would have been unique; the composite is used so the *database* refuses an artifact whose owner and Problem disagree, rather than trusting the code that scopes the read.
+
+**pgvector, with no declared dimension** (D-211). The column is `vector`, not `real[]`: an array of floats has no distance operator and no path to one without rewriting the column and every row. No dimension is declared, verified before the migration was written — 3- and 5-dimension rows coexisted in a probe that was rolled back — because the model is not chosen yet and `vector(1536)` would make the first model's dimension a schema fact. The cost is stated: an untyped `vector` cannot carry an ANN index. There is no index and no search that needs one; the task that picks the model can fix the dimension then.
+
+**`source_fingerprint` is opaque, `generated_at` is not evidence** (D-212). The artifact records the source state it was built from; this module stores that string and compares it for equality, and computes nothing — reading the Problem, its Events and its Verifications is the generator's work. `generated_at` is deliberately not a freshness test: a generation that read the source, then took a second while an Event was appended, timestamps an earlier state later. So the upsert is unconditional and a test asserts an *earlier* `generated_at` is accepted. The gate that refuses a stale regeneration belongs to P4-02, which can compute the current fingerprint.
+
+**A credential in an artifact is refused whole** (D-213). Every other write redacts; this one rejects, and no row is written. Being derived is not an exemption — the text is new, so a clean source does not make a clean artifact — but redaction would leave the wrong thing behind: an artifact is several renderings of one source and one is an embedding computed from the text *before* any redaction applies, so a redacted row reads `[REDACTED]` and still encodes what was removed in the half nobody can read. Same detector, same false-positive line: a summary saying a token expired is stored.
+
+**Excluded from the export** (D-214). Still exactly eight collections, guarded. The store is rebuildable, so carrying it would inflate every backup with regenerable data, and an export is a file that travels. Not restored either, because it is not exported.
+
+**D-202 is fulfilled in this change set** (D-215). The delete path removes the artifact before `change_logs`; the physical-delete test asserts nothing of the Problem survives in any Memory table; phase 3 E2E step 11 creates an artifact and asserts zero rows after the delete, and step 12 is reworded from "no derived store exists" to the forward-looking boundary it now has to be. The exact inventories moved 11 → 12 tables and 12 → 13 foreign keys in the same change. Phase 3 stays **COMPLETE**: no Phase 3 behaviour moved, its exact guards were updated because the schema legitimately grew.
+
+**Ten discrimination mutations, each killed by a named test**: the read's owner predicate removed, the foreign key reduced to `problem_id` (schema-level, with a full `db:reset` around it), the repository handed out unwrapped, reject softened to redact, the artifact dropped from the delete path, `on conflict do nothing`, the upsert also touching the Problem, artifacts joined into the export statement, the fingerprint not stored, and the table dropped from the catalog inventories.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
 
 - Nothing prevents `VERIFIED` at the database level. The rule is enforced by the transition service, which is the only path that writes status
 - No way to reopen a `VERIFIED` or `CLOSED_UNRESOLVED` Problem, and no way to revise a conclusion or a `fix_kind` once one is recorded
-- No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no search, embedding or retrieval, no AI adapter, no UI
+- No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI. Since P4-01 there is somewhere to *put* an embedding, and still nothing that produces or reads one
+- No artifact generator. Nothing computes a summary, keywords, structural features, a fingerprint or an embedding; no model is named or called. P4-01 is storage and its rules (D-216)
+- No search, no distance query, no ranking, and no vector index — an untyped `vector` cannot carry one, deliberately (D-211)
+- No HTTP surface for artifacts. No route, no OpenAPI operation; the contract stays at 0.4.0 with 27 operations. An artifact is written by a background generation, and what a client may ask for belongs to the task that has a search to expose (D-216)
+- No artifact list, query or delete. The repository is exactly `upsertArtifact` and `getArtifact`; the only removal is the Problem's own delete path (D-216)
+- No fixed shape for `structural_features` beyond being a JSON object, and no artifact freshness gate — the fingerprint is stored and compared here, computed by P4-02 (D-212, D-216)
 - No PII detector, no raw-conversation or raw-log classifier, no large-code threshold. P3-02 and P3-03 are about secrets only; an email address is kept, and that is a statement about secrets rather than a ruling on PII
 - No bare-secret detection. A credential with no context at all — pasted alone into a summary, nothing naming it — is not found, because the only way to find it would be to guess from shape (D-122)
 - No key redaction. A credential written into an object *key* is refused, not rewritten (D-126)
@@ -654,7 +681,7 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No orphan cleanup. A Project or Environment left with no Problems stays; that is the rule, not a gap (D-136)
 - No record that a deletion happened. No tombstone, no delete audit table, and no `changed_by` on the request (D-137)
 - No server-side confirmation of user intent. A flag any client can send proves nothing; the responsibility sits with the adapter or UI (D-140)
-- No retrieval artifact, search index or derived cache — so nothing derived to delete, and nothing derived to export. A phase that adds one must extend the delete path in the same change (D-141)
+- No search index or derived cache beyond the retrieval artifact itself. The artifact is the one derived store, it joins the delete path, and it is deliberately not exported (D-141, D-214, D-215). Any *further* derived store arrives under the same rule
 - No import. Export proves its format is restorable; reading an artifact back is outside the Core MVP by the specification's own line (D-142)
 - No per-project or per-problem export, no streaming, no archive, no export job, no pagination
 - No HTTP client, no scheduler and no queue directory default. The retry queue ships an interface, a `drain` the caller drives, and a required path (D-151, D-155, D-158)
@@ -672,14 +699,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-01 — RetrievalArtifact.
+P4-02 — Retrieval summary generation.
 
-**NOT STARTED.** The private Phase 4 breakdown exists and is marked ready; nothing of it has been implemented.
+**NOT STARTED.** P4-01 is done; nothing of P4-02 has been implemented.
 
 Notes for whoever picks this up:
-- P4-01 introduces the first derived persistent store. The standing rule (D-202, extending D-141): the same change set must extend the physical delete path, the delete tests, and the Phase 3 boundary guard in `tests/e2e/phase3.e2e.test.ts` step 12 — which will fail the moment the store exists, deliberately
-- The exact 11-table inventories in `tests/db/connection.integration.test.ts` and `tests/db/integrity.integration.test.ts` will need the same decision at the same moment
-- Anything the export should carry for a derived store is a decision, not a default: a store rebuildable from the eight Memory tables needs no place in the artifact (D-141)
+- The storage exists and refuses nothing it should accept. What is missing is everything that *produces* an artifact: the summary, the keywords, the structural features, the fingerprint and the embedding
+- `source_fingerprint` is P4-02's to define. Storage stores it and compares it for equality and has no opinion about its input; what it must be computed from is the Problem, its Events and its Verifications, because that is what "the state this was built from" has to cover
+- The current-state gate is P4-02's too. Storage accepts an *earlier* `generated_at` on purpose (D-212) — a timestamp cannot tell a stale generation from a slow one. The check that refuses a regeneration built from a source that has since moved needs the fingerprint, so it belongs where the fingerprint is computed
+- The model is still unchosen, and choosing it is what makes a fixed `vector(n)` and an ANN index possible (D-211). Neither is needed before a search exists; both are cheap while the data is small
+- The artifact write rejects rather than redacts (D-213), so a generator must be able to handle a refusal — it is not a failure of the generation, it is a Memory holding a credential
 
 ## Core MVP milestone
 

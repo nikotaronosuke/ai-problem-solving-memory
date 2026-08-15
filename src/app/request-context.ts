@@ -40,8 +40,14 @@ import type { DatabaseExecutor } from '../db/executor.js';
 import type { DatabaseTransactionRunner } from '../db/transaction.js';
 import type { ClientId } from '../domain/client.js';
 import { resolveOwnerContextFor } from '../owner/context.js';
-import { createMemoryRepository, type MemoryRepository } from '../repository/index.js';
 import {
+  createMemoryRepository,
+  createRetrievalArtifactRepository,
+  type MemoryRepository,
+  type RetrievalArtifactRepository,
+} from '../repository/index.js';
+import {
+  createArtifactInspectionPolicy,
   createSecretDetectionPolicy,
   withSanitization,
   type SanitizationPolicy,
@@ -64,6 +70,17 @@ export interface AuthenticatedRequestContext {
   readonly clientId: ClientId;
 
   readonly repository: MemoryRepository;
+
+  /**
+   * The same owner's retrieval artifacts, which are derived data.
+   *
+   * Handed out beside the Memory repository rather than through it, because a
+   * regenerable rendering and the record it was made from should not be
+   * reachable through the same object. Wrapped in its own boundary: a summary
+   * a generator writes is new text, and new text is inspected before it is
+   * stored whatever it was derived from.
+   */
+  readonly retrievalArtifacts: RetrievalArtifactRepository;
 
   /**
    * Runs work as one transaction, against a repository bound to the same
@@ -162,6 +179,7 @@ export function createRequestContextService(
   transactionRunner: DatabaseTransactionRunner,
   authenticator: CredentialAuthenticator,
   policy: SanitizationPolicy = createSecretDetectionPolicy(),
+  artifactPolicy: SanitizationPolicy = createArtifactInspectionPolicy(),
 ): RequestContextService {
   return {
     async authenticate(authorizationHeader): Promise<AuthenticatedRequestContext> {
@@ -198,6 +216,15 @@ export function createRequestContextService(
       return {
         clientId: principal.clientId,
         repository: withSanitization(createMemoryRepository(executor, ownerContext), policy),
+        // Same wrapper, different policy. A derived artifact carrying a
+        // confirmed credential is refused whole rather than redacted: its
+        // embedding was built from the text before any redaction could apply,
+        // so a redacted summary beside an unredacted vector would disagree
+        // with itself in the half nobody can read.
+        retrievalArtifacts: withSanitization(
+          createRetrievalArtifactRepository(executor, ownerContext),
+          artifactPolicy,
+        ),
         runInTransaction: (work) =>
           transactionRunner.run((transactional) =>
             work(withSanitization(createMemoryRepository(transactional, ownerContext), policy)),

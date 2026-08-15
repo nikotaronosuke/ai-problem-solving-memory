@@ -64,6 +64,10 @@ import {
   hashCredentialSecret,
 } from '../../src/domain/credential.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
+import type { ProblemId } from '../../src/domain/problem.js';
+import { resolveOwnerContextFor } from '../../src/owner/context.js';
+import { createRetrievalArtifactRepository } from '../../src/repository/index.js';
+import { createArtifactInspectionPolicy, withSanitization } from '../../src/sanitization/index.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 
 const databaseUrl = readDatabaseUrl();
@@ -78,6 +82,9 @@ const MEMORY_TABLES = [
   'relations',
   'usage_logs',
   'change_logs',
+  // Derived rather than recorded, and swept exactly like the rest. Being
+  // regenerable is a reason it is cheap to lose, not a reason to keep it.
+  'retrieval_artifacts',
 ] as const;
 
 interface Owner {
@@ -264,6 +271,9 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
       usageLogsReference: await one(
         `select count(*) n from public.usage_logs where owner_id = $1 and memory_id = $2`,
       ),
+      retrievalArtifacts: await one(
+        `select count(*) n from public.retrieval_artifacts where owner_id = $1 and problem_id = $2`,
+      ),
     };
   }
 
@@ -288,6 +298,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         [ownersCreated],
       );
       for (const table of [
+        'retrieval_artifacts',
         'change_logs',
         'usage_logs',
         'relations',
@@ -339,6 +350,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         // The target's own log names itself as the memory, and the
         // neighbour's names it too.
         usageLogsReference: 2,
+        retrievalArtifacts: 0,
       });
 
       expect((await deleteProblem(owner, seeded.targetId, seeded.targetVersion)).statusCode).toBe(
@@ -354,6 +366,8 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         relationsTo: 0,
         usageLogsOwn: 0,
         usageLogsReference: 0,
+        // The derived store goes with everything else the Problem owned.
+        retrievalArtifacts: 0,
       });
     });
 
@@ -565,6 +579,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         relationsTo: 1,
         usageLogsOwn: 1,
         usageLogsReference: 2,
+        retrievalArtifacts: 0,
       });
     });
 
@@ -625,6 +640,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         relationsTo: 1,
         usageLogsOwn: 1,
         usageLogsReference: 2,
+        retrievalArtifacts: 0,
       });
     });
 
@@ -983,6 +999,28 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
       });
       expect(patched.statusCode).toBe(200);
 
+      // The derived store, written through the same boundary production uses.
+      // The target's artifact carries the doomed marker and the survivor's the
+      // control one, so the sweep below can tell a delete from a wipe here too.
+      const context = await resolveOwnerContextFor(pool, owner.ownerId);
+      const artifacts = withSanitization(
+        createRetrievalArtifactRepository(pool, context),
+        createArtifactInspectionPolicy(),
+      );
+      const artifact = (problemId: string, marker: string) => ({
+        problemId: problemId as ProblemId,
+        normalizedSummary: `a searchable rendering holding ${marker}`,
+        keywords: [marker, 'deployment'],
+        structuralFeatures: { boundary: 'configuration', note: marker },
+        embedding: [0.5, 0.25, 0.125],
+        embeddingModel: 'fixture-model',
+        embeddingModelVersion: '1',
+        sourceFingerprint: `fingerprint-${marker}`,
+        generatedAt: new Date('2026-08-15T10:00:00.000Z'),
+      });
+      await artifacts.upsertArtifact(artifact(targetId, doomed));
+      await artifacts.upsertArtifact(artifact(neighbourId, kept));
+
       return {
         projectId,
         environmentId,
@@ -1015,6 +1053,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         relationsTo: 1,
         usageLogsOwn: 1,
         usageLogsReference: 2,
+        retrievalArtifacts: 1,
       });
 
       expect((await deleteProblem(owner, seeded.targetId, seeded.targetVersion)).statusCode).toBe(
@@ -1044,6 +1083,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
         relationsTo: 0,
         usageLogsOwn: 0,
         usageLogsReference: 0,
+        retrievalArtifacts: 0,
       });
     });
 

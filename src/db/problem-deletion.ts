@@ -125,6 +125,15 @@ export async function deleteProblemAggregate(
 
   // Children first, then the rows pointing in from elsewhere, then the
   // Problem. Each statement names the owner as well as the Problem.
+  // The derived search data first. It is regenerable and never a source of
+  // truth, which makes it easy to forget — and forgetting it would leave a
+  // summary, a set of keywords and an embedding of a Problem somebody asked to
+  // have removed. An embedding is not readable, but it is derived from the text
+  // and answers questions about it, so "derived" is not a reason to keep it.
+  await executor.query(
+    `delete from public.retrieval_artifacts where owner_id = $1 and problem_id = $2`,
+    scope,
+  );
   await executor.query(
     `delete from public.change_logs where owner_id = $1 and problem_id = $2`,
     scope,

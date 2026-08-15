@@ -40,7 +40,6 @@
 
 import { sanitizeValue } from './sanitize.js';
 import type { SanitizationPolicy } from './policy.js';
-import type { MemoryRepository } from '../repository/index.js';
 
 /**
  * Operations that read and store nothing.
@@ -77,16 +76,18 @@ export function isSanitizedOperation(operation: string): boolean {
 /**
  * Wraps a repository so every write is inspected before it reaches storage.
  *
+ * Generic in the repository, because the boundary is about arguments rather
+ * than about which operations exist. The Memory repository and the retrieval
+ * artifact repository are both wrapped by this, under different policies —
+ * what a derived artifact may hold is not what a Memory may hold.
+ *
  * Every argument of a write is walked, identifiers included. Excluding them
  * would mean this layer deciding which fields matter, and which fields matter
  * is precisely what P3-02 owns — the path is passed to the policy so it can
  * tell an identifier from a summary, which is the right place for that
  * knowledge to live.
  */
-export function withSanitization(
-  repository: MemoryRepository,
-  policy: SanitizationPolicy,
-): MemoryRepository {
+export function withSanitization<T extends object>(repository: T, policy: SanitizationPolicy): T {
   return new Proxy(repository, {
     get(target, property, receiver): unknown {
       const member: unknown = Reflect.get(target, property, receiver);
