@@ -49,3 +49,12 @@ export type {
   RetrievalArtifactRecord,
   UpsertRetrievalArtifactInput,
 } from '../domain/retrieval-artifact.js';
+
+// A reader, not a repository: one operation, and it reads. What a summary is
+// generated from is a different question from what a Problem is, so it is
+// asked through its own boundary rather than added to the Memory repository.
+export {
+  createRetrievalSummarySourceReader,
+  type RetrievalSummarySourceReader,
+} from './retrieval-summary-source-reader.js';
+export type { RetrievalSummarySource } from '../db/retrieval-summary-source.js';

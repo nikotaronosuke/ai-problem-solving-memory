@@ -511,9 +511,29 @@ Ten discrimination mutations each killed by a named test, one of them schema-lev
 
 2643 tests across 88 files. Migrations 14, tables 12, DOMAINs 8, FKs 13 all RESTRICT, runtime dependencies 3. API 0.4.0 / 27 operations, export "1", queue "2" — all unchanged, because P4-01 adds no HTTP surface.
 
-### NEXT — P4-02 Retrieval summary generation
+### P4-02 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. It owns what P4-01 deliberately does not build: the summary, keywords, structural features, the fingerprint's definition, the embedding and the model — and the current-state gate, which needs the fingerprint and therefore cannot live in storage (D-212, D-216).
+Retrieval summary generation. One Problem in, one draft out, nothing stored.
+
+`RetrievalSummaryDraft` — normalized summary, keywords, structural features, source fingerprint — held in memory and returned (D-217). Nothing reaches `retrieval_artifacts`: an artifact is complete or absent, the embedding is P4-04's, and a zero vector, a placeholder model, a nullable-embedding migration and pulling the provider forward were all available and all refused. No `generated_at` either, since that names the moment complete content existed.
+
+The source is read by one statement returning the finished document as text (D-218). Four reads would take four snapshots and could fingerprint a state that never existed; holding a transaction across the generation would keep a connection checked out for somebody else's inference. Built in SQL because it was measured — `jsonb` numbers come back through the driver as doubles, and `12345678901234567890` is the kind of build identifier that becomes `...567000`.
+
+The document carries the Problem's semantic fields, the Environment snapshot, **all six Event types** and every Verification; it carries no identifier, timestamp, authorship, evidence reference or judgement field (D-219). `DISCOVERY` is load-bearing — concluding a Problem records the final cause as one — and `USER_CORRECTION` is what stops a superseded misunderstanding reading as current. Two Problems with the same content and everything else different produce byte-identical documents.
+
+The fingerprint is SHA-256 over those exact bytes, prefixed `retrieval-source-v1` (D-220), so "what was this built from?" and "what did the generator see?" cannot drift apart.
+
+`successful_directions` may be non-empty only for a Problem whose status requires a successful Verification and has one (D-221) — nothing links a `FIX` Event to a Verification, so the claim cannot be read out of storage, and the gate refuses rather than quietly emptying the list. `structural_features` v1 is eight exact keys with free-form labels and refusing bounds (D-222).
+
+The generator is a vendor-free port (D-223) that is handed a string and cannot be handed a repository. `memory_read_enabled=false` blocks generation before the generator is called (D-224). The race is closed by reading again on three questions — still there, still readable, still the same digest — because a control toggled mid-generation leaves the digest unchanged (D-225). Generated output is inspected under the artifact policy before it can reach an embedding provider, with P4-01's check still standing behind it (D-226).
+
+Fourteen discrimination mutations each killed by a named test.
+
+2759 tests across 91 files. Nothing about the schema, the contract or the dependencies moved: migrations 14, tables 12, DOMAINs 8, FKs 13 all RESTRICT, `vector` installed, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3, `MemoryRepository` 25 operations.
+
+### NEXT — P4-03 Full-text search
+
+**NOT STARTED.** See the private Phase 4 breakdown. PostgreSQL full-text search, owner scope, minimal Project filtering. Two things to settle first: there is text to search but nowhere it is stored yet (an artifact needs P4-04's embedding to exist at all), and a search has to honour `memory_read_enabled` the way generation already does (D-217, D-224).
 
 ## BLOCKED
 

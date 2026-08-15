@@ -2038,3 +2038,137 @@ There is no generator: nothing computes a summary, keywords, structural features
 The shape of `structural_features` is not fixed either, beyond being a JSON object. Naming its keys now would fix them before anyone knows what a retrieval needs from them.
 
 Phase 4 has started, through P4-01 only. P4-02 is NOT STARTED.
+
+## D-217 — P4-02 produces a draft and stores nothing (P4-02)
+
+Generation returns a `RetrievalSummaryDraft` — problem id, normalized summary, keywords, structural features, source fingerprint — held in memory. Nothing is written to `retrieval_artifacts`, and the artifact repository is not reachable from the generation path.
+
+This follows from P4-01 rather than being a new position. A stored artifact is complete or absent (D-209): there is no half-built state, and `embedding` is `not null`. The embedding needs a provider, and the provider is P4-04's. So the four ways to store something now were all available and all refused: a zero or fake vector (a row that saves cleanly and breaks every later search — the outcome D-211 names as the worst), a placeholder model (a lie in a provenance field), a migration making `embedding` nullable (undoing P4-01's central rule to accommodate an ordering accident), and pulling the provider forward (P4-04 done inside P4-02, vendor choice included).
+
+The draft carries no `generated_at` either. An artifact's `generated_at` is the moment its *complete* content existed, and that moment has not arrived while the embedding is missing; minting one here would create a second, different timestamp with no name for the difference. Composition — draft plus embedding plus time — belongs to the task that first has all three.
+
+## D-218 — One statement, one snapshot, built in SQL (P4-02)
+
+The source is read by a single statement that returns the finished document as text.
+
+Four reads — Problem, Environment, Events, Verifications — take four snapshots under READ COMMITTED, so a write landing between the second and the third produces a document describing a state that never existed. That document would then be fingerprinted, and the fingerprint would name a source state no transaction ever saw. The export reads its eight tables in one statement for exactly this reason (D-…, P3-06).
+
+The alternative consistent read — open a transaction and hold it across the generation — is refused. A generation may take seconds and may be a network call, and that version keeps a connection and a snapshot checked out for the duration of somebody else's inference. The read finishes first; consistency across the generation is established by reading again afterwards (D-225), not by a lock.
+
+Building the document in SQL rather than assembling it in JavaScript was measured, not assumed. `jsonb` stores numbers as `numeric`, and the driver parses them into doubles — `12345678901234567890` returns as `...567000`, which a build identifier can genuinely be. Text out of PostgreSQL keeps the digits. The same choice settles key ordering for nothing: `jsonb` normalises key order on the way in, so two Environment snapshots written with the same fields in different orders render as the same bytes, and a Memory's fingerprint does not depend on how an adapter happened to serialise an object. Both are asserted against the real database.
+
+## D-219 — What the document contains, and therefore what regenerates a summary (P4-02)
+
+Included: the Problem's `title`, `symptoms`, `problem_domain`, `suspected_boundary`, `status` and `fix_kind`; the Environment `snapshot`; every Event's `event_type`, `summary`, `result` and `reason`; every Verification's `verification_type`, `result` and `summary`.
+
+**All six Event types, with no filter.** Dropping `DEAD_END` loses the half of an experience that says where not to look. Dropping `DISCOVERY` loses the established cause — and concluding a Problem records `finalCauseSummary` *as* a `DISCOVERY`, so excluding it would make the summary of a concluded Problem unable to say what turned out to be true. Dropping `USER_CORRECTION` lets a superseded misunderstanding be summarised as current. `HYPOTHESIS` and `ATTEMPT` are what was suspected and what was tried, which are the conditions a later reader matches against. `ATTEMPT` in particular is neither a success nor a dead end, and is kept as neither.
+
+Excluded, from the document and therefore from the fingerprint: `confidence`, `freshness`, `importance`, `suppressed`, both memory controls, `version`, every timestamp, every identifier, `source_ai`, `evidence_ref`, `verified_by`, `client_event_id`, and the Project, Relations, UsageLogs and ChangeLogs entirely. The rule behind the list: a summary regenerates when the *experience* changed, not when a judgement about it did. Confidence and freshness are read live by whatever ranks results; regenerating because one moved would be work that changes nothing. `evidence_ref` is a repository path or a commit — pollution for a cross-technology comparison, and P4-11 returns it live from the record. Project metadata is excluded so P4-08 can weigh same-technology matching deliberately rather than having it baked into every summary.
+
+Timestamps appear in `order by` and nowhere else. The order of Events is part of what an investigation means; the wall-clock time is not something a search compares. The tie-break on the identifier matters: concluding a Problem writes several Events in one transaction, so they share a timestamp to the microsecond, and without it their order — and the digest — would be whatever the plan produced.
+
+The strongest evidence for the exclusions is not the field list but a test: two Problems with the same content, in different projects, on different Environments, with different identifiers, authors, evidence references and creation times, produce byte-identical documents.
+
+## D-220 — The fingerprint is the exact bytes the generator saw (P4-02)
+
+`retrieval-source-v1:<sha256 hex>`, taken over the canonical document itself rather than over a list of fields hashed in an order this code chose.
+
+That makes two questions one question — "what was this built from?" and "what did the generator read?" — and removes the class of bug where the answers drift because someone added a field to the document and not to the digest. It also makes D-219 self-enforcing: a field cannot be in the fingerprint without being in the document, because there is nowhere else for it to be.
+
+`v1` names the source schema, and is neither the algorithm's version nor the generator's. Changing what the generator is shown makes every existing fingerprint stop matching, which is correct — a summary built from a different document was built from a different thing.
+
+The generator's identity is deliberately not folded in. A fingerprint answers "what state was this built from?", and mixing the model or prompt version into it would make it answer two questions at once and neither well: the same source read by a newer generator is still the same source. How to notice that a *generator* changed is a real question and a different one; it is not answered by corrupting this.
+
+A consequence, stated because it looks like a bug and is not: a Memory edited and then edited back produces the same fingerprint, and a generation that spanned both edits is accepted. That is right. The digest is over meaning, not over history — the generator read a document, and the Problem says that document again.
+
+## D-221 — A recorded fix is not a verified one (P4-02)
+
+`structural_features.successful_directions` may be non-empty only when the Problem's status requires a successful Verification *and* it has one. The check is mechanical, in code, and a generator that claims otherwise is refused.
+
+The reason is a fact about the data model rather than a worry about models: nothing links a `FIX` Event to a Verification. Verifications attach to the Problem. So "this fix is what worked" cannot be read out of storage — only assumed — and there may be several `FIX` Events. Both available shortcuts were refused: treating the last `FIX` as the successful one invents causality from chronology, and treating every `FIX` as successful is worse. What can be established is weaker and true: this Problem reached `VERIFIED`, and something passed. Even then the individual `FIX` is not tied to the individual Verification, and the summary does not claim it is.
+
+The gate refuses rather than quietly emptying the list. Clearing it would leave a normalized summary written around a claim its features no longer make, and would hide that a generator asserted something the record does not support.
+
+A related limitation, recorded because it constrains later work: an Event written by the close review is indistinguishable from an ordinary one. `finalCauseSummary` becomes a `DISCOVERY` and `effectiveDirection` becomes a `FIX`, with no marker saying so, and `source_ai`, timestamps and `client_event_id` cannot be used to guess. Nothing here tries to; no schema was added to make it possible.
+
+## D-222 — structural_features v1 (P4-02)
+
+Exactly eight top-level keys: `schema_version`, `problem_domain`, and the six lists `symptom_patterns`, `suspected_boundaries`, `occurrence_conditions`, `successful_directions`, `dead_end_directions`, `environment_facts`. An unknown key is refused; a missing one is refused; a null in place of a list is refused.
+
+`occurrence_conditions` is present although the task breakdown's own six items do not name it, because the specification's similarity factors do. It is derived by the generator from symptoms, Event results and the Environment; no new storage was added for it.
+
+The labels are free-form strings, not a closed taxonomy. A fixed vocabulary would have to be invented before a single retrieval has been run, and an enum missing the label a problem actually needs forces every such problem into the nearest wrong bucket, permanently and invisibly. What the lists are *for* is comparison across technologies — the phase's acceptance condition — so `React` and `Fastify` are not structural descriptions and "state read before the thing that owns it finished writing" is.
+
+Refusing an unknown key rather than dropping it is deliberate: a generator inventing a field is answering a question nobody asked, and discarding it silently would hide that. Refusing a missing one likewise — "nothing to say here" and "this went unanswered" look identical afterwards, and only one is a summary worth keeping.
+
+Bounds are enforced by refusing, never by trimming: summary 4000 characters, 20 keywords of 120, 20 labels of 300 per list. A summary cut at the limit stops mid-sentence and reads as though the generator meant to; a keyword list cut at twenty has a twenty-first entry nobody knows was dropped. Keywords are trimmed, exact repeats removed keeping the first, and **case is preserved** — the full-text search that will consume them normalises case itself, and folding here would discard the original spelling to duplicate work done properly downstream. Repeats are removed before the count is checked, because a generator repeating itself produced fewer keywords than it looked like.
+
+`schema_version` inside the object is the feature vocabulary's version. It is not the source schema version and not the generator's.
+
+## D-223 — The generator is a port, and no vendor is chosen (P4-02)
+
+`RetrievalSummaryGenerator` has an id, a version, and one method taking the canonical document and returning `unknown`. No implementation ships. Runtime dependencies stay at three; no model SDK and no HTTP client were added.
+
+A semantic summary is model work — the OS boundary says so directly — but *which* model is a decision with a cost, and nothing in this task needs it made. Everything P4-02 is actually responsible for (the consistent read, the fingerprint, the validation, the privacy boundary, the race detection) is provable against a scripted generator, and none of it depends on which model produced the words. Choosing a vendor here would also raise the credential question the OS boundary is careful about: Memory may hold credentials for reaching *itself*, and must not become the place external provider credentials collect. Not implementing a provider defers that question honestly rather than answering it by accident.
+
+The return type is `unknown` because whatever is behind the interface is outside this process, and a type annotation would be an assertion about something this code cannot see.
+
+The contract an implementation is held to is written into the port's documentation, since no type can enforce it: the source is **data, not instruction** — it is written by whoever used this system and can say anything, including something shaped like a command; no tool use, no external action, no writes; structured output only; nothing invented, with unknowns left as null or an empty list; a `DEAD_END` is a direction that did not work in those conditions and must not become a prohibition, because conditions change and the record exists to inform a retry rather than forbid it; a `USER_CORRECTION` supersedes what it corrects.
+
+The prompt-injection defence is structural as well as documented: the port is handed a string and can be given nothing else. It receives no repository, no executor and no owner context, so "the Memory text told the generator to modify the Memory" describes something the interface cannot do.
+
+## D-224 — `memory_read_enabled` blocks generation, and is not part of the fingerprint (P4-02)
+
+A Problem whose owner has turned automatic reading off is not summarised. The check happens **before** the generator is called, and the outcome is `MEMORY_READ_DISABLED` with the generator invoked zero times.
+
+The specification's integrity rule is that `memory_read_enabled=false` means no automatic search or reference. Generating a retrieval summary is reading a Memory in order to make it findable, which is the same act one step earlier — and once a real provider exists, calling the generator is the moment the Problem's text leaves the process. A check made afterwards would discard the result having already sent it, so it is made first.
+
+This is not extended to `memory_write_enabled`. That control governs whether an assistant adds to a Memory on its own; generation adds nothing to any Memory, and nothing is stored at all. Treating the two as one would be collapsing a distinction the controls exist to keep.
+
+`suppressed` and every `freshness` value — including `INVALID` and `SUPERSEDED` — still generate. Suppression lowers priority rather than removing data, and an invalid Memory may still be surfaced as a warning or as counterevidence; refusing to summarise them would decide a ranking question here.
+
+The control is **not** part of the document or the fingerprint. It is not content of a Memory, and a summary that regenerated because a toggle moved would be regenerating for nothing. That has a direct consequence handled in D-225.
+
+## D-225 — The race is closed by reading again, on three questions (P4-02)
+
+After the generator returns, the source is read again in the same single statement and three things are checked, in this order: the Problem is still there; automatic reading is still on; the fingerprint still matches. Any of the three ends the generation with a typed outcome and no draft.
+
+The fingerprint alone is not enough, and this is the part worth stating. A control toggled during a generation leaves the document unchanged, so the fingerprints match — the read control has to be its own check, and there is a barrier test that turns it off mid-generation and asserts the draft is dropped. Likewise a Problem deleted mid-generation is caught by reading rather than by a foreign key complaining, because nothing here writes and so there is no constraint to lean on.
+
+The outcomes are `GENERATED`, `SOURCE_NOT_AVAILABLE`, `SOURCE_CHANGED` and `MEMORY_READ_DISABLED` — answers rather than exceptions, because three of the four are ordinary. `SOURCE_NOT_AVAILABLE` covers unknown, another owner's, and removed during the generation, undistinguished: telling them apart would be an oracle for whether an identifier is in use, which every other read here refuses to be.
+
+A failing generator raises `RetrievalSummaryGenerationFailedError` with a fixed sentence and **no chained cause**. A summariser is the one component handed a whole Memory that also talks to something outside the process, so its errors are the likeliest place for that Memory — or a provider's own credential — to be quoted back; `cause` is followed by error formatters and by the generic failure handler, which would put it in the operational log. Nothing is logged from this module at all.
+
+## D-226 — Generated output is inspected before it can reach an embedding provider (P4-02)
+
+Every string the generator produced, keys included, is inspected under `createArtifactInspectionPolicy` — confirmed secret refuses the whole draft — before the draft is returned to anyone.
+
+P4-01's boundary alone is too late. It refuses at the artifact write, and the step between generation and that write hands the text to an embedding provider: a value refused at storage would already have been sent somewhere else. A summary is also *new text* rather than copied text, so a clean source does not make a clean summary — being derived is not an exemption, which D-213 established and this extends by one stage.
+
+Refused whole rather than redacted, for D-213's reason: the embedding is computed from the text before any redaction could apply, so a redacted summary beside an unredacted vector disagrees with itself in the half nobody can read.
+
+This does not weaken P4-01. Both checks stand, and the artifact write remains the last line — a caller that assembles an artifact by some other route still meets it.
+
+The false-positive line is unchanged and is the same one the write boundary and the export draw: a summary saying an access token expired is generated normally. The nested `x=NAME=value` form that the Phase 3 audit found (D-204) is covered here too, because it is the same detector.
+
+## D-227 — Generator provenance is carried, not stored (P4-02)
+
+The port declares `generatorId` and `generatorVersion`, both required and non-blank, and a successful outcome carries them. Neither is written to the database, and no column was added.
+
+The gap is real and is being recorded rather than closed: an artifact stores `embedding_model` and `embedding_model_version` but nothing about which summariser wrote its text, so an artifact produced by an older generator cannot be identified for regeneration. It does not bite yet, because P4-02 stores nothing. Whether it becomes a column, a field inside `structural_features`, or an operational rule that a deployment regenerates everything, is a storage decision and belongs to the task that first writes an artifact down. Adding a column now would fix an answer before the question is live.
+
+Generator identity is kept out of `structural_features`, which holds a description of a Problem and not metadata about the process that produced it, and out of the fingerprint (D-220).
+
+## D-228 — What P4-02 changed, and what it deliberately did not build (P4-02)
+
+No migration. No schema change of any kind: 14 migrations, 12 tables, 8 DOMAINs, 13 foreign keys all RESTRICT, 0 native enums, 0 triggers, 0 views, the `vector` extension still installed, and `retrieval_artifacts` untouched. No API change: 0.4.0 with 27 operations. Export `"1"` and queue `"2"` unchanged. Runtime dependencies still three. `MemoryRepository` still 25 operations — the source reader is its own boundary rather than a method added to it, because "what does a search need to know about this Problem?" is a different question from "what is this Problem?", and keeping them apart is what keeps the Memory independent of how retrieval reads it.
+
+No HTTP surface, deliberately. Generation is background work, and what a client may ask of a search is a decision for the task that has a search to expose; a debug route would decide it early and would be the only route with no contract.
+
+Not built: full-text search, vector search, hybrid retrieval, reranking, ranking, the search cache, search UsageLogs, the revalidation response, dead-end response behaviour, conflict handling, evaluation fixtures — and no embedding, no provider, no model, no index.
+
+What is *not* claimed: that any of this makes a summary true. The checks establish structure, bounds, a mechanical evidence gate for success claims, privacy, and source consistency. A well-formed summary of a version that was never mentioned passes every one of them. Semantic quality is measured by P4-14's evaluation fixtures against real generators, and no test here is named or written as though it prevented hallucination.
+
+Fourteen discrimination mutations, each killed by a named test.
+
+P4-02 is done. P4-03 Full-text search is NOT STARTED.
