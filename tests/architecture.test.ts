@@ -1687,7 +1687,12 @@ describe('lexical search', () => {
     const code = modules
       .filter(
         (module) =>
-          module.path.includes('retrieval-search') || module.path.includes('retrieval-full-text'),
+          // The lexical implementation only. `domain/retrieval-search.ts` is
+          // deliberately absent since P4-05: it hosts the query and candidate
+          // types BOTH searches share, vector candidate included, and a shared
+          // vocabulary is not the lexical path doing vector work.
+          module.path === 'db/retrieval-full-text-search.ts' ||
+          module.path === 'repository/retrieval-search-reader.ts',
       )
       .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
       .join('\n');
@@ -1760,5 +1765,100 @@ describe('the artifact generation pipeline', () => {
     for (const later of ['<=>', '<#>', '<->', 'cosine', 'hnsw', 'ivfflat', 'l2_distance']) {
       expect(code.includes(later), `the generation path already uses ${later}`).toBe(false);
     }
+  });
+});
+
+describe('vector search', () => {
+  it('names the owner, the read control and the whole vector space in the statement', async () => {
+    const { VECTOR_SEARCH_STATEMENT } = await import('../src/db/retrieval-vector-search.js');
+
+    // The two hard filters every search here carries, plus the three-part
+    // compatibility test. Model alone is not enough: a distance across
+    // versions signifies nothing, and a distance across dimensions is an
+    // error rather than a low score — an incompatible row must be excluded by
+    // the filter, where it can neither break the query nor occupy the limit.
+    expect(VECTOR_SEARCH_STATEMENT).toContain('ra.owner_id = $1');
+    expect(VECTOR_SEARCH_STATEMENT).toContain('pr.owner_id = ra.owner_id');
+    expect(VECTOR_SEARCH_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(VECTOR_SEARCH_STATEMENT).toContain('ra.embedding_model = $3');
+    expect(VECTOR_SEARCH_STATEMENT).toContain('ra.embedding_model_version = $4');
+    expect(VECTOR_SEARCH_STATEMENT).toContain('vector_dims(ra.embedding) = $5');
+  });
+
+  it('orders by cosine distance and breaks every tie', async () => {
+    const { VECTOR_SEARCH_STATEMENT } = await import('../src/db/retrieval-vector-search.js');
+
+    // `<=>` is cosine, a system decision: it is the metric that separates
+    // direction from magnitude. The order is total so equal distances return
+    // identically and a smaller limit is a prefix of a larger one's answer.
+    expect(VECTOR_SEARCH_STATEMENT).toContain('<=>');
+    expect(VECTOR_SEARCH_STATEMENT).toContain('order by cosine_distance asc, ra.problem_id asc');
+    expect(VECTOR_SEARCH_STATEMENT).toContain('limit $8');
+    expect(VECTOR_SEARCH_STATEMENT).not.toContain('generated_at');
+  });
+
+  it('searches without writing, locking or generating', async () => {
+    for (const path of [
+      join(SRC, 'db', 'retrieval-vector-search.ts'),
+      join(SRC, 'repository', 'retrieval-vector-search-reader.ts'),
+      join(SRC, 'app', 'retrieval-vector-search-service.ts'),
+    ]) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      // A search is a read. In particular it never regenerates an artifact it
+      // failed to find — a model-mismatch miss is answered by the lexical
+      // channel and by later orchestration, not by a write at query time.
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'createUsageLog',
+        'createChangeLog',
+        'upsertArtifact',
+        'generateArtifact',
+        'RetrievalArtifactGenerationService',
+        'DatabaseTransactionRunner',
+        'lockProblemForArtifactWrite',
+      ]) {
+        expect(
+          code.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} contains ${forbidden}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('exposes text to callers, and a vector only to the storage boundary', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-vector-search-service.ts'), 'utf8');
+
+    // The application surface accepts words. The embedding is produced inside
+    // the service by the same provider the artifacts used, which is what makes
+    // query-space compatibility structural rather than conventional — a public
+    // method taking a raw vector would reopen it.
+    const request = source.slice(source.indexOf('export interface VectorSearchRequest {'));
+    const requestBody = request.slice(0, request.indexOf('\n}'));
+    expect(requestBody).toContain('text: string');
+    expect(requestBody.includes('mbedding'), 'the request can carry a vector').toBe(false);
+
+    const service = source.slice(source.indexOf('export interface RetrievalVectorSearchService {'));
+    const serviceBody = service.slice(0, service.indexOf('\n}'));
+    expect(serviceBody.includes('mbedding'), 'the service interface accepts a vector').toBe(false);
+  });
+
+  it('inspects the query before any provider could see it', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-vector-search-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The gate this search adds over the lexical one: the query is about to
+    // leave the process, so a confirmed credential turns into a typed outcome
+    // with the provider never called. The policy inspection must come before
+    // the embed call in the one method both live in.
+    const inspectAt = code.indexOf('queryPolicy.inspect');
+    const embedAt = code.indexOf('.embed(');
+    expect(inspectAt).toBeGreaterThan(-1);
+    expect(embedAt).toBeGreaterThan(-1);
+    expect(inspectAt).toBeLessThan(embedAt);
+    expect(code).toContain('SENSITIVE_QUERY_NOT_EMBEDDED');
   });
 });

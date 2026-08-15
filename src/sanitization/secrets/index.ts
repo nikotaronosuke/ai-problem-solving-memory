@@ -19,5 +19,6 @@ export { REDACTION_MARKER } from './patterns.js';
 export {
   createArtifactInspectionPolicy,
   createExportInspectionPolicy,
+  createSemanticQueryInspectionPolicy,
   createSecretDetectionPolicy,
 } from './policy.js';
