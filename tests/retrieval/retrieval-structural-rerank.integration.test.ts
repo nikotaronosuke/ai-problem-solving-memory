@@ -790,6 +790,69 @@ describe.skipIf(databaseUrl === undefined)('structural reranking', () => {
     });
   });
 
+  describe('where the first stage put each candidate', () => {
+    it('keeps the later ranks where they were when the middle one disappears', async () => {
+      const owner = await makeActor();
+      const first = await seed(owner);
+      const doomed = await seed(owner);
+      const third = await seed(owner);
+
+      const problem = await owner.memory.getProblem(doomed.problemId);
+      await owner.memory.deleteProblem(doomed.problemId, problem?.version ?? 0);
+
+      const result = await serviceFor(owner, scripted(inOrderGiven)).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(doomed, 1), asCandidate(third, 2)],
+      });
+
+      expect(result.status).toBe('USED');
+      // 1 and 3, with no 2. `hybridRank` says where the hybrid stage put a
+      // candidate; renumbering the survivors would rewrite that stage's answer
+      // and hide the gap, which is the one visible sign that something
+      // disappeared between the two.
+      expect(result.candidates.map((candidate) => candidate.problemId)).toEqual([
+        first.problemId,
+        third.problemId,
+      ]);
+      expect(result.candidates.map((candidate) => candidate.hybridRank)).toEqual([1, 3]);
+    });
+
+    it('keeps them on a degraded path too', async () => {
+      const owner = await makeActor();
+      const first = await seed(owner);
+      const bare = await seed(owner, { withArtifact: false });
+      const third = await seed(owner);
+
+      const result = await serviceFor(owner, {
+        rerank: () => Promise.reject(new Error('the reranker is unreachable')),
+      }).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(bare, 1), asCandidate(third, 2)],
+      });
+
+      expect(result.status).toBe('RERANKER_UNAVAILABLE');
+      expect(result.candidates.map((candidate) => candidate.hybridRank)).toEqual([1, 3]);
+      expect(result.candidates.every((candidate) => candidate.structuralScore === null)).toBe(true);
+    });
+
+    it('keeps them when only the last of three survives', async () => {
+      const owner = await makeActor();
+      const gone = await seed(owner, { withArtifact: false });
+      const alsoGone = await seed(owner, { withArtifact: false });
+      const survivor = await seed(owner);
+
+      const result = await serviceFor(owner, scripted(inOrderGiven)).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(gone, 0), asCandidate(alsoGone, 1), asCandidate(survivor, 2)],
+      });
+
+      // One candidate, so no model is asked — and the position it came in at
+      // is still 3, not 1.
+      expect(result.status).toBe('NOT_NEEDED');
+      expect(result.candidates.map((candidate) => candidate.hybridRank)).toEqual([3]);
+    });
+  });
+
   describe('what it stores', () => {
     it('writes nothing, on any path', async () => {
       const owner = await makeActor();
