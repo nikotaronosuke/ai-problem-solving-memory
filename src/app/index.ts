@@ -127,6 +127,7 @@ export {
 // and reported through the ordinary usage log path.
 export {
   composeSearchedReason,
+  ContradictorySearchObservationError,
   createRetrievalUsageLogWriter,
   NO_COMPARISON_DIMENSIONS,
   SEARCHED_REASON_PREFIX,
