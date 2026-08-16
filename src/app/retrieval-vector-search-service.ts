@@ -52,10 +52,7 @@ import {
 } from '../domain/retrieval-embedding.js';
 import { resolveVectorSearchQuery, type VectorCandidate } from '../domain/retrieval-search.js';
 import type { RetrievalVectorSearchReader } from '../repository/index.js';
-import {
-  createSemanticQueryInspectionPolicy,
-  type SanitizationPolicy,
-} from '../sanitization/index.js';
+import { createSemanticQueryInspectionPolicy } from '../sanitization/index.js';
 
 /** What a caller may ask: text and the shared filters. Never a vector. */
 export interface VectorSearchRequest {
@@ -105,19 +102,29 @@ const QUERY_INSPECTION_SITE = {
 /**
  * Builds the service.
  *
- * The provider must be the same one artifacts are generated with — same
- * instance, same configuration — which composition owns; this service simply
- * uses whatever space the provider it was handed declares. The query policy
- * defaults to the real one — confirmed refuses, everything else passes — and
- * arrives as a policy rather than a detector, so what a credential looks like
- * stays inside the sanitization boundary.
+ * Two dependencies, and the absence of a third is the point. The provider must
+ * be the same one artifacts are generated with — same instance, same
+ * configuration — which composition owns; this service simply uses whatever
+ * space the provider it was handed declares.
+ *
+ * The query policy is **not** a parameter. It was one, defaulted to the safe
+ * policy, and that was wrong: a default only decides what happens when nobody
+ * chooses, and a caller passing a policy that keeps everything would have
+ * turned the rule that a credential is never transmitted into a suggestion.
+ * "Safe unless overridden" is not a security boundary — the boundary is that
+ * there is nothing to override. So the policy is constructed here, where no
+ * caller can reach it.
+ *
+ * It is still built by the sanitization module rather than assembled from a
+ * detector, so what a credential looks like stays inside that boundary; what
+ * changed is only who may choose the policy, which is nobody.
  */
 export function createRetrievalVectorSearchService(
   embeddingProvider: EmbeddingProvider,
   reader: RetrievalVectorSearchReader,
-  queryPolicy: SanitizationPolicy = createSemanticQueryInspectionPolicy(),
 ): RetrievalVectorSearchService {
   requireEmbeddingProviderIdentity(embeddingProvider);
+  const queryPolicy = createSemanticQueryInspectionPolicy();
 
   return {
     async search(request): Promise<VectorSearchOutcome> {

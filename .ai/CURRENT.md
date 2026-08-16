@@ -753,6 +753,8 @@ Semantic candidate retrieval: text in, nearest memories out. A service that embe
 
 **Exact scan, ANN deferred on measured grounds** (D-254). The spec asks for retrieval, not an index; an ANN index cannot exist on an untyped column and no model is chosen to type it; 10k×64d answered in ~7 ms in the probe. Migrations stay 16 and vector indexes 0, asserted as boundary tests a hardening task will deliberately update; the partial cast-index path is measured and open. A search writes nothing — proven byte-for-byte across all nine tables.
 
+**The privacy policy is not injectable** (D-255, found by review after the first commit). The factory shipped with a `queryPolicy` parameter defaulting to the safe policy; a caller could have passed one that keeps everything and dissolved the rule at that call site. A safe default is not a boundary — the boundary is having nothing to override — so the parameter is gone and the policy is built inside the factory. A named guard asserts the *absence* of the seam: restoring the parameter, even safely defaulted, fails it.
+
 **Eighteen discrimination mutations, each killed by a named test or guard**: the owner predicate, the read control, each of the three compatibility predicates in turn, the project filter, the self-exclusion, the metric swapped to L2, the tie-break, the limit bound, unchecked provider output, the provider error passed through, the sensitive-query gate, a regeneration on miss, a usage-log write, old-model rows included, an ANN migration arriving, and a raw-vector public API.
 
 ## What is deliberately absent

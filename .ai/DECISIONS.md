@@ -2408,3 +2408,15 @@ Everything else deliberately absent: no hybrid merge, no score fusion, no rerank
 Eighteen discrimination mutations, each killed by a named test or guard.
 
 P4-05 is done. P4-06 Hybrid candidate retrieval is NOT STARTED.
+
+## D-255 — The query privacy policy is not injectable (P4-05 review correction)
+
+The vector search factory shipped as `(provider, reader, queryPolicy = createSemanticQueryInspectionPolicy())`. A review found the obvious consequence: a caller could pass a policy that keeps everything, and D-251's rule — a confirmed credential is never transmitted to an embedding provider — would evaporate at that call site. The default was safe; the *seam* was not.
+
+That distinction is the whole correction. A default decides what happens when nobody chooses; it says nothing about what happens when somebody does. For a security invariant the boundary has to be that there is nothing to choose. So the parameter is gone, the factory takes two dependencies, and the policy is constructed inside where no caller can reach it.
+
+The policy is still built by `createSemanticQueryInspectionPolicy` rather than assembled from a detector, so what a credential looks like stays inside `sanitization/` (the guard that established this caught the service's first draft and was right). What changed is only who may choose the policy, which is now nobody.
+
+A named architecture guard fixes it: the factory's parameter list may contain nothing that could be a policy or a detector, the construction must happen inside, and the service must not reach for the detector directly. Restoring the parameter — even defaulted to the safe policy — fails that guard, which is the point: the test asserts the absence of the seam rather than the safety of the default.
+
+Nothing else moved. Every P4-05 invariant is unchanged and every existing test still passes: confirmed secret still yields `SENSITIVE_QUERY_NOT_EMBEDDED` with provider and reader at zero calls, suspected and status prose still reach the provider, the outcome still carries nothing but its kind, the lexical search still accepts credential-shaped queries, and the metric, compatibility filters, exact scan, migration count, write-freedom and absent HTTP surface are all as they were.
