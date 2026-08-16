@@ -82,6 +82,27 @@ export {
   type AppendVerificationCommand,
   type VerificationService,
 } from './verification-service.js';
+// Hybrid candidate retrieval: both channels as one intent, fused by rank.
+// The first of the two retrieval stages; a reranker narrows what it returns.
+export {
+  createRetrievalHybridSearchService,
+  type HybridSearchRequest,
+  type HybridSearchResult,
+  type RetrievalHybridSearchService,
+  type SemanticChannelStatus,
+} from './retrieval-hybrid-search-service.js';
+export {
+  DEFAULT_HYBRID_LIMIT,
+  fuseHybridCandidates,
+  HYBRID_RRF_K,
+  HYBRID_SOURCE_LIMIT,
+  HybridCandidateInvariantError,
+  InvalidHybridSearchError,
+  MAX_HYBRID_LIMIT,
+  MIN_HYBRID_LIMIT,
+  type HybridCandidate,
+} from '../domain/retrieval-hybrid-search.js';
+
 // Semantic candidate search: text in, nearest memories out. A confirmed
 // credential in the query is answered with a typed outcome rather than sent
 // to the provider.

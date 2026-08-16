@@ -1895,3 +1895,153 @@ describe('vector search', () => {
     ).toBe(false);
   });
 });
+
+describe('hybrid candidate retrieval', () => {
+  it('derives the vector service owner from its reader rather than a parameter', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-vector-search-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The owner exists on the service so a hybrid composition can compare the
+    // two channels. It must report the scope that actually applies, not one a
+    // caller asserted — so it comes from the reader and the factory has no
+    // owner parameter to disagree with it.
+    expect(code).toContain('ownerId: reader.ownerId');
+    const factory = code.slice(code.indexOf('export function createRetrievalVectorSearchService('));
+    const parameters = factory.slice(factory.indexOf('('), factory.indexOf('): RetrievalVector'));
+    expect(parameters.includes('ownerId'), 'the factory accepts an owner id').toBe(false);
+  });
+
+  it('refuses to build channels that belong to different owners', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-hybrid-search-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Each channel is owner-safe alone and neither can check the other, so
+    // only the pairing can be wrong. Checked once at construction: a
+    // wrongly-built service should not exist rather than fail later on
+    // somebody's query.
+    expect(code).toContain('lexicalReader.ownerId !== vectorService.ownerId');
+    const factory = code.slice(code.indexOf('export function createRetrievalHybridSearchService('));
+    expect(factory.slice(0, factory.indexOf('return {'))).toContain('throw new Error');
+  });
+
+  it('fuses on ranks alone, never on either channel raw score', async () => {
+    const source = await readFile(join(SRC, 'domain', 'retrieval-hybrid-search.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The two scores disagree in scale and in direction, so arithmetic on them
+    // is meaningless however careful it looks. Fusion reads position only.
+    expect(code.includes('lexicalScore'), 'the fusion reads the lexical score').toBe(false);
+    expect(code.includes('cosineDistance'), 'the fusion reads the cosine distance').toBe(false);
+    expect(code).toContain('HYBRID_RRF_K');
+  });
+
+  it('keeps the fusion constants out of every caller reach', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-hybrid-search.ts'), 'utf8');
+    const service = await readFile(join(SRC, 'app', 'retrieval-hybrid-search-service.ts'), 'utf8');
+
+    // A caller able to set k or the window could change what "most relevant"
+    // means per call, which would make two searches of one Memory
+    // incomparable and any later evaluation of the ranking meaningless.
+    expect(domain).toContain('export const HYBRID_RRF_K = 10');
+    expect(domain).toContain('export const HYBRID_SOURCE_LIMIT = 20');
+
+    const request = service.slice(service.indexOf('export interface HybridSearchRequest {'));
+    const requestBody = request.slice(0, request.indexOf('\n}'));
+    for (const tunable of ['k', 'sourceLimit', 'depth', 'weight']) {
+      expect(
+        new RegExp(`\\b${tunable}\\b\\s*[?:]`).test(requestBody),
+        `the request exposes ${tunable}`,
+      ).toBe(false);
+    }
+  });
+
+  it('leaves ranking and structural comparison to the stages that own them', async () => {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter((module) => module.path.includes('retrieval-hybrid-search'))
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+
+    expect(code.length).toBeGreaterThan(0);
+    // This stage narrows to a bounded candidate set. Weighing a Memory by how
+    // trustworthy or how current it is, or comparing what the problems were
+    // actually about, are separate later stages — and doing any of it here
+    // would settle their questions with none of their information.
+    for (const later of [
+      'structuralFeatures',
+      'confidence',
+      'freshness',
+      'suppressed',
+      'importance',
+      'symptoms',
+      'suspectedBoundary',
+      'problemDomain',
+    ]) {
+      expect(code.includes(later), `the hybrid stage already reads ${later}`).toBe(false);
+    }
+  });
+
+  it('searches without writing or generating anything', async () => {
+    for (const path of [
+      join(SRC, 'domain', 'retrieval-hybrid-search.ts'),
+      join(SRC, 'app', 'retrieval-hybrid-search-service.ts'),
+    ]) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'createUsageLog',
+        'createChangeLog',
+        'upsertArtifact',
+        'generateArtifact',
+        'DatabaseTransactionRunner',
+      ]) {
+        expect(
+          code.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} contains ${forbidden}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('degrades on an unreachable provider and on nothing else', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-hybrid-search-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Exactly one class is caught. Widening this to every semantic failure
+    // would hide a provider returning nonsense, or a database error, behind a
+    // result that looks like a complete search.
+    expect(code).toContain('instanceof EmbeddingGenerationFailedError');
+    expect(
+      code.includes('InvalidEmbeddingProviderOutputError'),
+      'the hybrid stage catches malformed provider output',
+    ).toBe(false);
+    // And the lexical channel has no degraded form at all.
+    expect(code).toContain("lexicalSettled.status === 'rejected'");
+  });
+
+  it('validates everything before either channel starts', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-hybrid-search-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // A malformed request must reach neither the database nor an embedding
+    // provider — the latter being, under a real deployment, a network call
+    // made on behalf of a request that was never going to succeed.
+    const lexicalCheck = code.indexOf('resolveFullTextSearchQuery(');
+    const semanticCheck = code.indexOf('resolveVectorSearchQuery(');
+    const limitCheck = code.indexOf('requireHybridLimit(');
+    const execution = code.indexOf('Promise.allSettled');
+
+    for (const [label, at] of [
+      ['the lexical text', lexicalCheck],
+      ['the semantic text', semanticCheck],
+      ['the limit', limitCheck],
+    ] as const) {
+      expect(at, `${label} is not checked`).toBeGreaterThan(-1);
+      expect(at, `${label} is checked after the channels start`).toBeLessThan(execution);
+    }
+  });
+});

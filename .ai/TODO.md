@@ -579,9 +579,25 @@ Eighteen discrimination mutations each killed by a named test or guard.
 
 2907 tests across 97 files. All counts unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-06 Hybrid candidate retrieval
+### P4-06 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. Full-text and vector results merged toward 10–20 candidates. The groundwork is laid deliberately: mirror-shaped candidates with incomparable scores whose combination is P4-06's one-time decision; the sensitive-query outcome typed so lexical-only degradation is an ordinary branch; identical filter semantics on both sides through one resolver (D-251, D-253).
+Hybrid candidate retrieval: both channels as one intent, fused by rank into a bounded list.
+
+The request carries `lexicalText` and `semanticText` separately — different bounds, different questions — and this stage generates neither from the other, because deciding what a search is really asking is a policy that would sit here untested (D-256). Everything is validated before either channel runs, so a doomed request never reaches a provider (D-257).
+
+The two channels must share an owner, compared once at construction: each is owner-safe alone and neither can see the other, so only the pairing can be wrong. The vector service gained one `readonly ownerId` derived from its reader (D-258).
+
+Fusion is reciprocal rank fusion on ranks alone — the scores have opposite directions and incomparable scales, and normalising was measured to collapse. **k=10, not 60**: the published constant was calibrated for thousand-deep lists, and against a twenty-deep window it flattens rank 1 against rank 20 to 1.31 and lets a candidate placed last by both channels outrank one placed first by a channel. k=10 gives 2.73 and agreement wins to about rank 11 (D-259). Source depth is fixed at 20 whatever the caller's limit, which keeps a limit of 10 a true prefix of 20; the final limit is 10–20 because this is the stage a reranker narrows (D-260).
+
+A null rank is not evidence against a Memory — it can be a superseded model or a window edge — so absence never penalises, and lexical-only candidates are first-class. Raw scores are dropped after ranking (D-261). Exactly one failure degrades: an unreachable provider. Malformed provider output, database errors and broken invariants are all raised rather than hidden behind a plausible result (D-262).
+
+Twenty discrimination mutations each killed by a named test or guard.
+
+2963 tests across 99 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-07 Structural reranking
+
+**NOT STARTED.** See the private Phase 4 breakdown. Symptoms, boundary, conditions, directions and environment difference, used to narrow ten-to-twenty candidates to one-to-five. `structural_features` has been reserved for this task since it was defined and no search has read it; the candidate list arrives as identity and rank only, so fetching what it needs to compare is this task's own work (D-222, D-231, D-261, D-263).
 
 ## BLOCKED
 
