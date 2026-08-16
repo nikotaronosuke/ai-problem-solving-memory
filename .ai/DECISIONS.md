@@ -2420,3 +2420,79 @@ The policy is still built by `createSemanticQueryInspectionPolicy` rather than a
 A named architecture guard fixes it: the factory's parameter list may contain nothing that could be a policy or a detector, the construction must happen inside, and the service must not reach for the detector directly. Restoring the parameter — even defaulted to the safe policy — fails that guard, which is the point: the test asserts the absence of the seam rather than the safety of the default.
 
 Nothing else moved. Every P4-05 invariant is unchanged and every existing test still passes: confirmed secret still yields `SENSITIVE_QUERY_NOT_EMBEDDED` with provider and reader at zero calls, suspected and status prose still reach the provider, the outcome still carries nothing but its kind, the lexical search still accepts credential-shaped queries, and the metric, compatibility filters, exact scan, migration count, write-freedom and absent HTTP surface are all as they were.
+
+## D-256 — A hybrid request carries two texts, and this stage writes neither (P4-06)
+
+`lexicalText` and `semanticText`, separately, with one shared set of filters.
+
+A single text cannot serve both: the lexical bound is 1000 and the semantic bound is 4000 (D-253), so any query between them would be refused outright by half the search. The two are also different questions — a handful of terms joined with AND versus a description, canonically a whole normalized summary.
+
+Deriving one from the other was refused. Extracting keywords from a summary, or summarising terms into a description, is a query-generation policy: it decides what the search is actually asking, and it would sit here unexamined and untestable against any notion of a good query. P4-03 already recorded that composing queries belongs to the caller; this is that boundary being honoured rather than quietly crossed. So no extraction, no summarising, no stop words, no truncation, no rewriting of any kind.
+
+Per-channel filters are deliberately impossible. One `projectId` and one `excludeProblemId` apply to both, because a list fused from two differently-scoped questions is not an answer to either.
+
+## D-257 — Everything is validated before either channel starts (P4-06)
+
+Both texts, both filters and the limit are checked before the parallel execution begins — through each channel's own resolver, so the bounds are exactly the ones that apply when each search runs alone.
+
+The reason is the semantic channel's destination. Under a concrete deployment, running it means a network call to an embedding provider; doing that on behalf of a request that was never going to validate is work done, and text sent, for nothing. The tests count it: an invalid lexical text leaves the provider at zero calls, an invalid semantic text leaves the database at zero, and an out-of-range limit leaves both at zero.
+
+## D-258 — The two channels must belong to the same owner, checked at construction (P4-06)
+
+`RetrievalVectorSearchService` gained one field: `readonly ownerId`, taken from its reader rather than accepted as an argument. The hybrid factory compares it against the lexical reader's and refuses to build when they differ.
+
+This closes a gap that neither channel could close alone. Each is owner-safe by construction, and neither can see the other — so a composition pairing one owner's lexical reader with another owner's vector service would return a result mixing two people's Memory, with both halves behaving perfectly correctly. Nothing in either channel would notice. Only the pairing can be wrong, so only the pairing can be checked, and it is checked once when the object is built: a wrongly-built service should not exist rather than fail later on somebody's query.
+
+The refusal names no identifier. Printing the two owner ids would put them wherever the error goes.
+
+Nothing else about P4-05 changed, and the field is derived rather than passed for the reason D-255 established: a caller able to assert the owner could assert the wrong one.
+
+## D-259 — Reciprocal rank fusion, and why k is 10 rather than 60 (P4-06)
+
+The channels are fused on **rank alone**. Their scores cannot be combined: `lexicalScore` is higher-better on a scale that moves with the query, `cosineDistance` is lower-better on [0,2]. Normalising was measured and rejected — min-max collapses to a constant when a channel returns one candidate or a run of equal scores, and a single outlier flattens everything beneath it. So each channel contributes `1 / (k + rank)` for what it ranked, and the contributions add. A candidate both channels surfaced gets two, which is the entire reason to run two searches whose failure modes differ.
+
+`k` decides how much agreement is worth against one channel's confidence, and the published value of 60 is **wrong for this system**. It was calibrated for result lists about a thousand deep. Measured against a twenty-deep window: k=60 makes the contribution of rank 1 and rank 20 differ by a factor of 1.31 — it very nearly erases the ordering each channel worked to produce — where the same k over a thousand-deep run gives 17.38. k=20 gives 1.90, k=10 gives 2.73, k=0 gives 20.
+
+The consequence is concrete and is what settled it. At k=20 and k=60 a candidate placed **last by both channels outranks one placed first by a channel**: agreement becomes decisive no matter how weak. At k=10 agreement wins down to about rank 11 — half the window — so two channels agreeing on a mid-ranked candidate beats one channel's best, while two channels agreeing on their worst does not. Both halves of that trade are pinned by tests, so changing `k` is a decision rather than an edit.
+
+`k` and the source depth are constants reachable from no request, configuration or provider. A caller able to set either could change what "most relevant" means per call, which would make two searches of one Memory incomparable and any later evaluation of the ranking meaningless.
+
+## D-260 — A fixed source window, and a stage-shaped final limit (P4-06)
+
+Each channel is read to exactly 20, whatever the caller asked for. Measured: deriving the source depth from the caller's limit changes the top ten — the same Memory, the same query, a different answer because somebody wanted fewer results. With the depth fixed, a limit of ten is exactly the first ten of what a limit of twenty returns, and a test asserts that prefix property.
+
+The final limit is 10 to 20, defaulting to 20. The floor is the point rather than a safety margin: this is the specification's first stage, which narrows to ten or twenty for a reranking stage to narrow to a handful. A caller asking this stage for one result would be taking the reranker's decision with none of the reranker's information — no structural comparison, no ranking policy — so the contract does not offer it. Fewer than ten candidates existing is a different thing entirely and is returned as-is; nothing is padded.
+
+## D-261 — What a candidate carries, and what a missing rank means (P4-06)
+
+`{ problemId, projectId, fusionScore, lexicalRank, vectorRank }`, deduplicated on `problemId`.
+
+The raw scores are dropped after ranking. Carrying a `lexicalScore` and a `cosineDistance` onward would leave two incomparable numbers side by side in every later stage — an invitation to combine them a second time, differently. `matchedBy` is not a field either: lexical-only, vector-only and both are all readable from which ranks are null.
+
+**A null rank is not negative evidence**, and this is the rule most easily got wrong. It can mean the channel did not match, or that the candidate fell outside that channel's twenty, or that the artifact was embedded by a superseded model and so is invisible to vector search entirely (D-252), or that the semantic channel did not run at all. None of those are facts about the Memory. So a missing rank contributes nothing and subtracts nothing, and a lexical-only candidate is a first-class result.
+
+Ordering is `fusionScore` descending then `problemId`. No "found by both first" tie-break: the formula already gives such a candidate two contributions, and adding a rule would count the same evidence twice.
+
+Two things that cannot happen against a real database are refused rather than reconciled: one Problem returned twice by a channel, and one Problem reported under two Projects. Both channels join `problems` on the same key, so either means the input is not what it claims — and quietly picking a winner would let the fusion produce a confident answer built on a contradiction. The error names no identifier.
+
+## D-262 — Exactly one failure degrades (P4-06)
+
+An embedding provider that cannot be reached — `EmbeddingGenerationFailedError`, and nothing else — turns the semantic half off: the lexical half answers and the result says `PROVIDER_UNAVAILABLE`. That is the specification's rule that a Memory failure must not stop ordinary work, and it is the reason P4-05 raises rather than swallowing (D-251): the decision about how to degrade belongs to the caller, and this task is that caller.
+
+Everything else is raised. A provider returning something malformed is a **contract violation**, not an outage, and hiding it behind a lexical-only result would let a broken provider run indefinitely — especially tempting because the lexical half succeeding makes the result look complete. A database error in either channel is a fact about the system, and dressing one up as a successful search is a lie about the state of the world. The lexical channel has no degraded form at all: it succeeds or the search fails.
+
+A confirmed credential in the semantic text yields `SKIPPED_SENSITIVE_QUERY` with the provider at zero calls, and the lexical half runs normally — the ordinary path this asymmetry was designed for. The status carries nothing else: no query, no category, no reason, no provider message. `USED` with an empty list means both channels ran and nothing matched, which is a real answer and a different one from a channel being unavailable.
+
+Execution is `Promise.allSettled` in parallel, so a failure in one channel never destroys the other's result before it can be classified.
+
+## D-263 — What P4-06 changed, and what it did not build (P4-06)
+
+No migration, no table, no index, no function, no dependency, no route. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies — every one measured and unchanged. The only production change outside the two new modules is one `readonly ownerId` on the vector service.
+
+A hybrid search writes nothing: no Memory, no artifact, no regeneration, no UsageLog, no ChangeLog, no Relation, no cache. Proven byte-for-byte across all nine tables.
+
+Not built: structural reranking, any reading of structural features, symptoms, boundary or environment; any weighting by confidence, freshness, suppression, importance, current project or shared technology; dead-end presentation, conflict handling, revalidation, caching, usage logging, an HTTP surface, an adapter, a concrete provider. `projectId` is a filter and a piece of provenance, and nothing else.
+
+Twenty discrimination mutations, each killed by a named test or guard.
+
+P4-06 is done. P4-07 Structural reranking is NOT STARTED.

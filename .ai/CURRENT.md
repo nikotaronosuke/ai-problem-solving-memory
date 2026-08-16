@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-05)
+Updated: 2026-08-16 (P4-06)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-05 done; P4-06 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-06 done; P4-07 next)
 
 ## Source of truth
 
@@ -757,6 +757,26 @@ Semantic candidate retrieval: text in, nearest memories out. A service that embe
 
 **Eighteen discrimination mutations, each killed by a named test or guard**: the owner predicate, the read control, each of the three compatibility predicates in turn, the project filter, the self-exclusion, the metric swapped to L2, the tie-break, the limit bound, unchecked provider output, the provider error passed through, the sensitive-query gate, a regeneration on miss, a usage-log write, old-model rows included, an ANN migration arriving, and a raw-vector public API.
 
+## What exists now — Hybrid candidate retrieval (P4-06)
+
+Both searches as one intent, fused by rank into a bounded candidate list — the first of the specification's two retrieval stages. A pure fusion function and an orchestration service. No migration, no dependency, no route; the only other production change is one `readonly ownerId` on the vector service.
+
+**Two texts, and no query generation** (D-256). `lexicalText` (≤1000) and `semanticText` (≤4000) are different questions with different bounds, so one string cannot serve both. Deriving one from the other would mean deciding what the search is really asking — a policy that would sit here untested — so there is no extraction, summarising, stop-word removal or truncation. Filters appear once and apply to both: a list fused from two differently-scoped questions answers neither.
+
+**Everything is validated before either channel starts** (D-257), because running the semantic half means a network call to a provider, and doing that for a request that was never going to validate sends text for nothing. Counted in tests: an invalid lexical text leaves the provider at zero calls, an invalid semantic text leaves the database at zero.
+
+**The channels must share an owner, checked at construction** (D-258). Each is owner-safe alone and neither can see the other, so a pairing across owners would return two people's Memory with both halves behaving correctly. The vector service now reports its reader's `ownerId`, the factory compares, and a mismatch refuses to build — naming no identifier.
+
+**Rank fusion, k=10** (D-259). The scores cannot be combined — opposite directions, incomparable scales, and min-max was measured to collapse on small or equal-scored channels — so only the ordering is read. On `k`: the published 60 was calibrated for thousand-deep lists and against a twenty-deep window flattens rank 1 against rank 20 to a ratio of **1.31**, letting a candidate placed *last* by both channels outrank one placed *first* by a channel. k=10 gives 2.73, and agreement wins down to about rank 11 — half the window. Both halves of that trade are pinned by tests.
+
+**A fixed source window, a stage-shaped limit** (D-260). Each channel is read to 20 regardless of the caller's limit — deriving depth from the limit was measured to change the top ten — so a limit of 10 is exactly the prefix of a limit of 20. The final limit is 10–20: the floor exists because asking this stage for one result takes the reranker's decision with none of its information. Short lists are returned short, never padded.
+
+**A null rank is not evidence against a Memory** (D-261). It can mean no match, or outside the window, or a superseded embedding model, or the semantic channel not running — so absence contributes nothing and subtracts nothing, and lexical-only candidates are first-class. Raw scores are dropped after ranking so two incomparable numbers do not travel onward inviting a second, different combination. One Problem twice, or under two Projects, is refused rather than reconciled.
+
+**Exactly one failure degrades** (D-262). An unreachable provider turns the semantic half off and says `PROVIDER_UNAVAILABLE`; a malformed provider response, a database error and a broken invariant are all raised, because a broken component behind a plausible result is the failure that takes longest to notice. A credential in the semantic text yields `SKIPPED_SENSITIVE_QUERY` with the lexical half running normally — the ordinary path that asymmetry was designed for.
+
+**Twenty discrimination mutations, each killed by a named test or guard**: duplicates double-counted, each channel's order reversed, a channel's contribution dropped, the tie-break removed, the limit ignored, a sensitive query emptying the search, outage tolerance removed, raw scores added, confidence weighting, structural fetching, a usage-log write, the owner check removed, single-channel candidates dropped, absence penalised, a caller-settable k, source depth following the caller's limit, validation moved after execution, a caller-supplied owner, and malformed output hidden as an outage.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -766,7 +786,8 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI
 - No concrete summary generator and no concrete embedding provider. Both are ports (D-223, D-241); no vendor SDK or HTTP client is a dependency, and no provider credential exists anywhere. A deployed server therefore still cannot generate artifacts by itself — the orchestration path exists and is proven with scripted ports (D-249)
 - No caller of the generation pipeline. Nothing invokes `generateArtifact` in production: no route, no scheduler, no backfill worker, no adapter. Who calls it, and when, is a later wiring decision (D-249)
-- No hybrid merge, no score fusion, no reranking, no ranking policy and no search cache. `lexicalScore` and `cosineDistance` are deliberately incomparable — different scales, opposite directions — and combining them is P4-06's one-time decision (D-253)
+- No structural reranking, no ranking policy and no search cache. Hybrid fusion exists and deliberately stops at rank merging: it reads no structural feature, no confidence, no freshness, no suppression, no importance and no project preference (D-263)
+- No query generation anywhere. A caller supplies the lexical terms and the semantic description separately; nothing extracts, summarises, truncates or rewrites either (D-256)
 - No vector index, still: an untyped `vector` cannot carry one and no model is chosen to type a cast index. Exact scan is the implementation, measured feasible at MVP scale; migrations 16 and vector indexes 0 are boundary assertions a hardening task will deliberately update (D-254)
 - No model router. One injected provider per deployment is the standing assumption; fallback, selection, cost routing and A/B are all absent, and concurrent-rollout overwrites are an accepted, recorded limitation (D-247)
 - No retries around the embedding provider, and no reuse of the Phase 3 retry queue for it. A provider failure is a safe error, and trying again is the caller's decision (D-248)
@@ -805,16 +826,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-06 — Hybrid candidate retrieval.
+P4-07 — Structural reranking.
 
-**NOT STARTED.** P4-01 through P4-05 are done; nothing of P4-06 has been implemented.
+**NOT STARTED.** P4-01 through P4-06 are done; nothing of P4-07 has been implemented.
 
 Notes for whoever picks this up:
-- The two candidate sources are deliberately mirror-shaped (`problemId`, `projectId`, score) and deliberately incomparable: `lexicalScore` is higher-better on ts_rank_cd's scale, `cosineDistance` is lower-better on [0,2]. How they combine — RRF, normalisation, whatever — is this task's one-time decision, made once and recorded (D-233, D-253)
-- The sensitive-query asymmetry is designed for this task: a confirmed-credential query yields `SENSITIVE_QUERY_NOT_EMBEDDED` from the semantic half while the lexical half still runs, so "degrade to lexical-only" is an ordinary branch, not error handling (D-251)
-- An old-embedding-model artifact exists lexical-only. The hybrid must not treat "absent from the vector half" as a signal about the Memory — it may be a signal about the model rollout (D-252)
-- Both searches share filter semantics and validation through one resolver; the merge can assume identical project/self/limit meanings on both sides (D-253)
-- The spec's two-stage shape: stage 1 narrows to 10–20 in the DB (both sources exist for this), stage 2 is reranking toward 1–5, which is P4-07's — the merge should not start judging structure
+- The candidate list arriving here is ten to twenty Problems with `problemId`, `projectId`, a `fusionScore` and the two source ranks — and no artifact content at all. Fetching what it needs to compare is this task's job; the earlier stages deliberately carried nothing but identity and position (D-261)
+- `structural_features` has been reserved for this task since it was defined and is untouched by every search so far: the lexical document excludes it (D-231) and the hybrid stage is guarded against reading it (D-263). Its v1 vocabulary is eight free-form label lists (D-222)
+- A null `lexicalRank` or `vectorRank` says nothing about the Memory — it can mean a superseded embedding model or a window edge — so it must not become an input to a structural judgement (D-261)
+- `successful_directions` is only ever non-empty on a Problem carried to VERIFIED by a passing Verification (D-221). Treating a Problem without them as "the fix did not work" would misread a gate as evidence
+- The specification's second stage narrows to one to five, with about three usually shown. Confidence, freshness, suppression and project proximity remain P4-08's, not this task's
 
 ## Core MVP milestone
 
