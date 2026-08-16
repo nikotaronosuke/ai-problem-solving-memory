@@ -2875,6 +2875,100 @@ Twenty-three discrimination mutations, each killed by a named test or guard. Eig
 
 P4-10 is done. P4-11 is NOT STARTED.
 
+## D-310 — The server says what a Memory was true of, not whether it still is (P4-11)
+
+The specification is blunt: a search result is a candidate rather than an answer, and before acting on one an assistant re-checks the current code, the current environment, the relevant versions and the current official specification. P4-11 is how the server says that, and the boundary is the whole design.
+
+**The server cannot answer the question and does not try.** It has no working tree, no package manifest, no running process and no way to read a vendor's documentation. Everything that would settle "is this still true?" lives where the work is happening. So nothing here compares anything to now: what comes back is the conditions the Memory was recorded under, the checks performed at the time, and a fixed list of what to re-establish.
+
+Three things follow, and each was refused explicitly. **No current-state input**: the request takes no `currentEnvironment`, `currentCode`, `currentVersion` or `currentSpec` — accepting one would put the comparison here, where the answer cannot be verified. **The current Problem's own snapshot is not "now" either**; it is another point in the past, so it is not used as one side of a comparison. **No model and no network**: no provider, no reranker, no fetch. This is stored data assembled deterministically, which is where the OS boundary puts routine work.
+
+## D-311 — The checklist is the specification's four, and it never shrinks (P4-11)
+
+`CURRENT_CODE`, `CURRENT_ENVIRONMENT`, `RELEVANT_VERSION`, `OFFICIAL_SPEC` — the specification's own words, not a taxonomy invented here and not a superset. Extra checks would be this system inventing obligations for an assistant it knows nothing about.
+
+Every candidate gets all four, always. Not reduced for a `CURRENT` freshness, not for `HIGH` confidence, not for a Memory from the Project being worked in. **`CURRENT` is a statement about the record, not about the world** — it means nobody has marked the Memory superseded, which is not the same as somebody having checked — and the specification says separately that the confirmation is not skipped for a trusted Memory or an important one. A conditional list would turn "always re-check" into "re-check when the server is unsure", which is a different and much weaker promise. Two mutations exist for exactly this: excusing a current Memory, and excusing a trusted one.
+
+**The array is frozen, not merely `readonly`.** One array is shared by every candidate of every search in the process; `readonly` is gone once this compiles, and a caller that emptied it would quietly change what every later search asks for. `Object.isFrozen` is asserted, and push, splice and index assignment are all shown to throw.
+
+## D-312 — The Environment comes back exactly as it was stored (P4-11)
+
+`snapshot` verbatim, uninterpreted. Which keys a snapshot carries is not fixed — it holds whatever was relevant to that Problem — so extracting an OS, a runtime or a version list would mean guessing at a schema that does not exist. That is the same reasoning that kept technology detection out of ranking (D-279), applied to a field with even fewer guarantees.
+
+An empty object is an ordinary snapshot. It means the conditions were not recorded, not that there were none, and certainly not a reason to withhold the Memory.
+
+`environmentId`, the Environment's own timestamp, and the Project's repository, platform and name are all left out. The contract is what has to be re-checked; identity and provenance beyond the Problem are a different question nobody has asked.
+
+## D-313 — Evidence is Verification, and a failed check is evidence too (P4-11)
+
+The specification defines a Verification as the record of "it was confirmed fixed", separate from the fix itself. That is what a later reader needs in order to re-establish anything, so evidence is Verifications and nothing else: no Events, no Relations, no artifact provenance, no usage log. Keeping Events out also keeps dead-end handling where it belongs, which is a later task.
+
+**Both outcomes are kept.** A check that failed says what was tried and did not settle the matter — which is exactly what stops it being repeated — and keeping only the successes would make every Memory read as though everything attempted had worked. The specification's own phrasing asks for "which direction worked and which did not last time".
+
+The payload is `verificationType`, `result`, `summary`, `evidenceRef`, `createdAt`. Left out: the verification's own id, its owner, its Problem — already named by the candidate — the idempotency key it arrived under, and `verifiedBy`. Who confirmed something is not what has to be re-established.
+
+**No cap.** The specification names no number, and cutting historical evidence at an arbitrary N would silently drop the part somebody needed. If real volumes turn out to matter, that is a measurement for the evaluation task rather than a guess now.
+
+Order is `created_at` then `verification_id`, matching the existing list path. The tie-break is not decoration: Verifications written in one transaction share a timestamp to the microsecond.
+
+**`evidenceRef` is a reference and stays one.** Nothing fetches it, resolves it or checks that it still exists. Whether the thing it points at is still there, and still says what it said, is a question about now — the caller's to answer, and the reason this contract exists at all.
+
+## D-314 — One statement, and three cases that must stay distinguishable (P4-11)
+
+The requested identifiers become rows through `unnest(...) with ordinality`, and everything else is left-joined outwards from them. That shape is chosen for one reason: it keeps three outcomes apart.
+
+- **The Problem is gone** — deleted, another owner's, or with automatic reading switched off. No Problem row, and the candidate is dropped. All four reasons are one indistinguishable answer, so a search cannot be used to learn that somebody else's Problem exists.
+- **The Problem is there and its Environment is not.** Impossible: `environment_id` is not null and is a composite foreign key, and a test confirms the database refuses to create the state. So it is a fact about the database rather than about the search, and it is **raised**. Short results are ordinary here, which is exactly why this one must not join them — a broken database hiding inside a normal-looking short answer would never be noticed.
+- **The Problem is there and has no Verifications.** Completely ordinary, and returned as an empty list.
+
+An inner join would collapse the first two, reporting a broken database as a Memory that had vanished. The owner predicate therefore sits in the join rather than in a `where`, because a `where` on a left-joined table turns it back into an inner join and takes the distinction with it.
+
+Verifications are joined rather than aggregated into JSON: a handful of rows at this size, and every value stays a real column with a real type instead of text that has to be parsed back. Owner and `memory_read_enabled` are re-applied — what was true when ranking ran is not a filter now.
+
+## D-315 — Two positions, and only one of them renumbers (P4-11)
+
+When a candidate drops out between ranking and enrichment, `rankingRank` closes up: it is where a candidate sits in the list actually offered, so 1, 2, 3 with the second gone becomes 1, 2. `hybridRank` does not move — it records where the first retrieval stage put the candidate and keeps its gaps (D-277), and the two being different facts is why both exist.
+
+The candidates are rebuilt rather than edited, so the array the caller passed is untouched, and `matchedDimensions` is copied because `readonly` is gone at run time and two callers holding one array is one caller away from a surprise.
+
+Nothing is re-run. A dropped candidate does not trigger another hybrid search or another rerank; what is left is offered, and a retry loop would keep going for as long as Memories keep changing.
+
+## D-316 — The envelope wraps the ranking view rather than widening it (P4-11)
+
+`RetrievalMemoryCandidate { ranking, revalidation }`. The ranking type is unchanged and stays the ranking stage's own — `RankedMemoryCandidate` gained nothing, and the ranking modules are guarded against ever mentioning an Environment or a Verification.
+
+Nesting keeps the two halves legible: why a Memory is here and in this position, and what must happen before it is believed. It also leaves room. Dead-end handling and conflict comparison are later tasks, and both now have somewhere to attach that does not involve a stage's type growing every time.
+
+`freshness` lives in exactly one place — the ranking view — and is deliberately not copied into the revalidation context. One fact with two homes is one fact that will eventually disagree with itself. There is no `isStale`, `needsUpdate` or `isSafe` either: every one of those would be the server answering the question it has just said it cannot answer.
+
+## D-317 — Enrichment is fresh on every search, and stored nowhere (P4-11)
+
+Both the cached and the recomputed paths go through one function, so a reused search gets historical context exactly as fresh as a new one. Nothing about it enters the cache, which still holds the rerank result and nothing else (D-290).
+
+That is not tidiness. **A Verification appended to a *candidate* does not move the current Problem's fingerprint**, so a cached enrichment would go stale with nothing to notice — the cache key is built from the Problem being worked on, and the evidence belongs to other Problems entirely. A test appends a Verification to a candidate between two searches and requires the second, cache-hit search to show it.
+
+On a miss the cache is filled only after enrichment succeeds. A failure here means the search did not complete, and a result stored before it did would be a partial answer with a five-minute life.
+
+## D-318 — A failure to read required context is not disguised as a search (P4-11)
+
+A database failure raises. So does a readable Problem with no Environment. Neither is turned into an empty snapshot and an empty evidence list, because a candidate returned that way would be a complete-looking answer that quietly omits the part the caller was told to act on.
+
+This is deliberately not the usage log's rule. That write is a side observation and is best effort (D-306); this is product data that the contract requires. The standing principle that a Memory failure must not stop ordinary work is satisfied by the search failing honestly and the caller falling back to ordinary investigation — not by the server assembling a plausible response it cannot support.
+
+The usage log still records only what was actually offered, which now means after enrichment: a candidate dropped here is not logged, and the position recorded is the one it was renumbered to.
+
+## D-319 — What P4-11 changed, and what it did not build (P4-11)
+
+No migration, no table, no column, no index, no domain, no dependency, no route. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies — every one measured and unchanged. Four new modules, one changed field on the search outcome.
+
+Writes: none. No Problem update, no Environment, no Verification, no Relation, no ChangeLog, no freshness or confidence or status mutation. Reading what a Memory was recorded under does not change the Memory, and finding it thin does not add to it.
+
+Not built: dead-end handling — no `DEAD_END` Event is read and none of its vocabulary appears (P4-12). No conflict comparison — no Relation is read, and `CONFLICTED` travels as the ranking value it already was (P4-13). No evaluation fixtures (P4-14). No HTTP route, so the API is unchanged and the public README is untouched; the whole retrieval surface should be published once, when it means what it will keep meaning, and a documentation sync belongs at the end of the phase rather than after each task.
+
+Twenty-eight discrimination mutations, each killed by a named test or guard. Four survived a first run — two stale anchors, one fixture that reused a single identifier six times so the duplicate rule fired before the bound could, and one owner check covered by the others — and in each case the test or the anchor was fixed rather than the result accepted.
+
+P4-11 is done. P4-12 is NOT STARTED.
+
 ## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
 
 D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced

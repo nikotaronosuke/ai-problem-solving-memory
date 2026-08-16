@@ -671,9 +671,25 @@ Twenty-nine discrimination mutations each killed by a named test or guard. Eight
 
 3338 tests across 106 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-11 Current-environment revalidation contract
+### P4-11 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. Search results carry identifiers and provenance and no Memory content; `freshness` is ranked on and reported but says nothing about what to re-check (D-284, D-308).
+Current-environment revalidation contract: every Memory a search offers now carries what it was recorded under and what has to be re-established before acting on it.
+
+**The server says what a Memory was true of, not whether it still is** (D-310). It has no working tree, no manifest, no running process and no way to read a vendor's documentation, so the request accepts no current environment, code, version or specification, the current Problem's own snapshot is not treated as "now", and there is no model and no network on this path.
+
+The checklist is the specification's own four and **never shrinks** — not for a `CURRENT` freshness, `HIGH` confidence or a Memory from the current Project, because `CURRENT` is a statement about the record rather than the world and the specification says the confirmation is not skipped for a trusted or important Memory. The array is frozen at run time, since one array is shared by every candidate in the process (D-311).
+
+The Environment is returned verbatim; extracting a runtime or a version list would mean guessing at a schema arbitrary JSON does not have, and an empty snapshot is ordinary (D-312). Evidence is Verifications including the ones that failed — a check that did not settle the matter is what stops it being repeated — with no cap, deterministic order, and `evidenceRef` returned as a reference that is never fetched (D-313).
+
+One statement keeps three cases apart: a Memory that has gone is dropped indistinguishably, a readable Problem with no Environment is **raised** (the database refuses to create that state, and short results are ordinary enough to hide it), and a Problem with no Verifications returns an empty list (D-314). `rankingRank` renumbers to the position actually offered while `hybridRank` keeps its gaps (D-315). The envelope wraps the ranking view rather than widening it, leaving room for the two later tasks (D-316). Enrichment is fresh on every search and cached nowhere, because a Verification on a candidate moves nothing the cache key watches (D-317). A failed read raises rather than returning an empty context (D-318).
+
+Twenty-eight discrimination mutations each killed by a named test or guard. Four survived a first run — two stale anchors, one fixture reusing a single identifier so the duplicate rule fired before the bound could, and one owner check covered by the others — and each was fixed rather than accepted.
+
+3393 tests across 108 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-12 Dead-end handling
+
+**NOT STARTED.** See the private Phase 4 breakdown. No Event has ever been read by the retrieval path — evidence deliberately stopped at Verifications so dead ends stayed here (D-313) — and a dead end is a warning rather than a prohibition, with an environment difference a legitimate reason to retry.
 
 ## BLOCKED
 
