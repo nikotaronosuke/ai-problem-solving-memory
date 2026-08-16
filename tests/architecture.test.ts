@@ -3436,6 +3436,28 @@ describe('search caching', () => {
     expect(missing).toBeGreaterThan(gone);
   });
 
+  it('requires the positions it is given to be the order it is given', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-revalidation-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Renumbering below reads a candidate's place in the array, which is only
+    // correct if the array *was* the order. Reordered or gapped input would be
+    // silently renumbered into something that agreed with neither — and this
+    // service is exported, so the ranking stage producing 1, 2, 3 is a fact
+    // about today's wiring rather than about the function.
+    // One comparison carries it. The right-hand side is an integer, so a
+    // fractional, infinite or `NaN` position fails this equality on its own —
+    // a separate integer test could never be the reason a value was rejected.
+    expect(code).toContain('candidate.rankingRank !== index + 1');
+    expect(code).toContain("'their ranking positions are inconsistent'");
+
+    // Before the database, so an unusable list costs nothing.
+    const checked = code.indexOf('candidate.rankingRank !== index + 1');
+    const read = code.indexOf('reader.readForCandidates(');
+    expect(checked).toBeGreaterThan(-1);
+    expect(checked).toBeLessThan(read);
+  });
+
   it('renumbers the offered positions and leaves the provenance alone', async () => {
     const service = await readFile(join(SRC, 'app', 'retrieval-revalidation-service.ts'), 'utf8');
     const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');

@@ -664,6 +664,119 @@ describe.skipIf(databaseUrl === undefined)('retrieval revalidation', () => {
       ).rejects.toBeInstanceOf(InvalidRevalidationRequestError);
     });
 
+    describe('positions that disagree with the order', () => {
+      /** Every rejection here must cost nothing — no query, no round trip. */
+      async function refuses(
+        owner: Actor,
+        candidates: readonly RankedMemoryCandidate[],
+      ): Promise<void> {
+        const executor = counting();
+        await expect(serviceFor(owner, executor).enrich(candidates)).rejects.toBeInstanceOf(
+          InvalidRevalidationRequestError,
+        );
+        expect(executor.statements).toHaveLength(0);
+      }
+
+      it('accepts a list that is already 1, 2, 3', async () => {
+        const owner = await makeActor();
+        const first = await seed(owner);
+        const second = await seed(owner, { projectId: first.projectId });
+
+        const enriched = await serviceFor(owner).enrich([
+          ranked(first.problemId, first.projectId, 1),
+          ranked(second.problemId, first.projectId, 2),
+        ]);
+        expect(enriched).toHaveLength(2);
+      });
+
+      it('refuses a gap in the positions', async () => {
+        // Renumbering below reads a candidate's place in the array, which is
+        // only correct if the array *was* the order. A gapped list would be
+        // silently renumbered into something that agreed with neither, and
+        // the result would look perfectly ordinary.
+        const owner = await makeActor();
+        const first = await seed(owner);
+        const second = await seed(owner, { projectId: first.projectId });
+
+        await refuses(owner, [
+          ranked(first.problemId, first.projectId, 1),
+          ranked(second.problemId, first.projectId, 3),
+        ]);
+      });
+
+      it('refuses positions that disagree with the order they arrived in', async () => {
+        const owner = await makeActor();
+        const first = await seed(owner);
+        const second = await seed(owner, { projectId: first.projectId });
+
+        await refuses(owner, [
+          ranked(first.problemId, first.projectId, 2),
+          ranked(second.problemId, first.projectId, 1),
+        ]);
+      });
+
+      it('refuses a list that does not start at one', async () => {
+        const owner = await makeActor();
+        const seeded = await seed(owner);
+
+        await refuses(owner, [ranked(seeded.problemId, seeded.projectId, 0)]);
+        await refuses(owner, [ranked(seeded.problemId, seeded.projectId, 2)]);
+      });
+
+      it.each([
+        // 1.4 rather than only 1.5, so "exactly one" is distinguishable from
+        // "near enough to round to one". A position is an index into a list;
+        // there is no such thing as approximately the second item.
+        ['fractional', 1.4],
+        ['fractional the other way', 1.5],
+        ['not a number', Number.NaN],
+        ['not finite', Number.POSITIVE_INFINITY],
+      ])('refuses a position that is %s', async (_label, rankingRank) => {
+        // The type says these are numbers from the ranking stage; this
+        // function is exported, so that is a claim rather than a fact. The
+        // comparison against an integer index rejects all of them on its own.
+        const owner = await makeActor();
+        const seeded = await seed(owner);
+
+        await refuses(owner, [ranked(seeded.problemId, seeded.projectId, rankingRank)]);
+      });
+
+      it('still renumbers when a candidate drops out', async () => {
+        // The rule is about the input, not the output. A well-formed 1, 2, 3
+        // whose second Memory has since gone still comes back as 1, 2.
+        const owner = await makeActor();
+        const first = await seed(owner);
+        const doomed = await seed(owner, { projectId: first.projectId });
+        const third = await seed(owner, { projectId: first.projectId });
+        const problem = await owner.memory.getProblem(doomed.problemId);
+        await owner.memory.deleteProblem(doomed.problemId, problem?.version ?? 0);
+
+        const enriched = await serviceFor(owner).enrich([
+          { ...ranked(first.problemId, first.projectId, 1), hybridRank: 2 },
+          { ...ranked(doomed.problemId, first.projectId, 2), hybridRank: 5 },
+          { ...ranked(third.problemId, first.projectId, 3), hybridRank: 9 },
+        ]);
+
+        expect(enriched.map((entry) => entry.ranking.rankingRank)).toEqual([1, 2]);
+        expect(enriched.map((entry) => entry.ranking.hybridRank)).toEqual([2, 9]);
+      });
+
+      it('names no position when it refuses', async () => {
+        const owner = await makeActor();
+        const seeded = await seed(owner);
+
+        let raised: unknown;
+        try {
+          await serviceFor(owner).enrich([ranked(seeded.problemId, seeded.projectId, 7)]);
+        } catch (error) {
+          raised = error;
+        }
+        const message = (raised as Error).message;
+        expect(message.includes('7'), 'the refusal named a position').toBe(false);
+        expect(message.includes(seeded.problemId), 'the refusal named a Problem').toBe(false);
+      });
+    });
+
     it('names no identifier when it refuses', async () => {
       const owner = await makeActor();
       const seeded = await seed(owner);

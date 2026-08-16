@@ -683,9 +683,11 @@ The Environment is returned verbatim; extracting a runtime or a version list wou
 
 One statement keeps three cases apart: a Memory that has gone is dropped indistinguishably, a readable Problem with no Environment is **raised** (the database refuses to create that state, and short results are ordinary enough to hide it), and a Problem with no Verifications returns an empty list (D-314). `rankingRank` renumbers to the position actually offered while `hybridRank` keeps its gaps (D-315). The envelope wraps the ranking view rather than widening it, leaving room for the two later tasks (D-316). Enrichment is fresh on every search and cached nowhere, because a Verification on a candidate moves nothing the cache key watches (D-317). A failed read raises rather than returning an empty context (D-318).
 
-Twenty-eight discrimination mutations each killed by a named test or guard. Four survived a first run — two stale anchors, one fixture reusing a single identifier so the duplicate rule fired before the bound could, and one owner check covered by the others — and each was fixed rather than accepted.
+One rule was corrected by review after the first commit. nrich renumbered survivors from their place in the input array without checking that each candidate's stated position matched it — true only because the ranking stage emits 1, 2, 3, and the service is exported. Reordered or gapped input would have been silently renumbered into something agreeing with neither (D-320).
 
-3393 tests across 108 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+Thirty-three discrimination mutations each killed by a named test or guard. Four survived a first run — two stale anchors, one fixture reusing a single identifier so the duplicate rule fired before the bound could, and one owner check covered by the others — and each was fixed rather than accepted.
+
+3404 tests across 108 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
 ### NEXT — P4-12 Dead-end handling
 
