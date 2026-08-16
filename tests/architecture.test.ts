@@ -2545,16 +2545,29 @@ describe('retrieval ranking', () => {
     const domain = await readFile(join(SRC, 'domain', 'retrieval-ranking.ts'), 'utf8');
     const code = domain.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-    // The comparison step is skipped, not defaulted. A `?? 0` reachable when
-    // no rerank ran would make "nobody judged this" indistinguishable from
-    // "judged, and found nothing in common".
+    // Two directions, one rule. When no rerank ran the comparison step is
+    // skipped rather than defaulted; when one did, a missing score is refused
+    // rather than filled in. Either coercion would make "nobody judged this"
+    // indistinguishable from "judged, and found nothing in common".
     expect(code).toContain("const structureCounts = structuralStatus === 'USED'");
     expect(code).toContain('if (structureCounts) {');
+    expect(code).toContain('a.structuralScore === null || b.structuralScore === null');
+    expect(code).toContain('const structural = b.structuralScore - a.structuralScore;');
+
+    // The code itself, not the comment above it: a guard that only read the
+    // prose would have passed while the line below it coerced.
     const comparator = code.slice(code.indexOf('export function rankCandidates('));
-    expect(
-      comparator.includes('Number(') || comparator.includes('structuralScore || '),
-      'a missing score is coerced',
-    ).toBe(false);
+    for (const coercion of [
+      '?? 0',
+      '??0',
+      'Number(',
+      'structuralScore || ',
+      'structuralScore ?? ',
+    ]) {
+      expect(comparator.includes(coercion), `a missing score is coerced with ${coercion}`).toBe(
+        false,
+      );
+    }
   });
 
   it('keeps the two positions apart', async () => {
