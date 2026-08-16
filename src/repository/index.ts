@@ -113,6 +113,17 @@ export {
   type RetrievalDeadEndReader,
 } from './retrieval-dead-end-reader.js';
 
+// What another Memory says against this one, and enough of that Memory to
+// compare the two. Its own reader: only `CONTRADICTS` Relations, both ends
+// re-checked for owner and read control, and one statement — the material is
+// meant to be compared, and two halves read at two moments would let a reader
+// see a difference that never existed at any single instant.
+export {
+  createRetrievalConflictReader,
+  type RetrievalConflictReader,
+} from './retrieval-conflict-reader.js';
+export type { ConflictRow } from '../db/retrieval-conflict-read.js';
+
 // Semantic candidate search. Handed a validated embedding by the service
 // above it — the embedding parameter is a storage-boundary input, not an
 // application surface; what an application caller can supply is text.

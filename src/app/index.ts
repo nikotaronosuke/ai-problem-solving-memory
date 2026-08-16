@@ -147,8 +147,24 @@ export {
 } from './retrieval-dead-end-service.js';
 export type { DeadEndWarning } from '../domain/retrieval-dead-end.js';
 
-// The shape a search hands back, owned by neither of the stages that fill it.
+// Where another Memory disagrees, and the material for telling which applies
+// now. Comparison material only: no winner, no resolution, no reordering.
+export {
+  createRetrievalConflictService,
+  InvalidConflictRequestError,
+  type RetrievalConflictService,
+} from './retrieval-conflict-service.js';
+export {
+  MissingConflictEnvironmentError,
+  type ConflictContext,
+  type ConflictMemorySnapshot,
+  type ConflictSubject,
+  type Contradiction,
+} from '../domain/retrieval-conflict.js';
+
+// The shape a search hands back, owned by none of the stages that fill it.
 export type {
+  DeadEndAwareMemoryCandidate,
   RetrievalMemoryCandidate,
   RevalidatedMemoryCandidate,
 } from '../domain/retrieval-result.js';
