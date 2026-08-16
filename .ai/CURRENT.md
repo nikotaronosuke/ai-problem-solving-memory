@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-06)
+Updated: 2026-08-16 (P4-07)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-06 done; P4-07 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-07 done; P4-08 next)
 
 ## Source of truth
 
@@ -695,7 +695,7 @@ Lexical candidate retrieval over stored artifacts. A migration (14 → **15**), 
 
 **It searches what exists and creates nothing** (D-230). In production this returns nothing today: P4-02 stops at a draft and a draft cannot become a row without an embedding, which is P4-04's. That is sequencing, not a defect — and every way to make the demo prettier was refused, because a zero vector is the row D-211 called the worst outcome. The tests seed real artifacts through P4-01's own repository. A search that generated what it could not find would turn a read into a write while somebody waits.
 
-**The document is the artifact's summary and keywords, and nothing else** (D-231). Not the Problem's title, symptoms or domain — indexing the source beside the translation would give the system two definitions of "the searchable text" and let the second quietly bypass P4-02. Not `structural_features` either: comparing structure is P4-07's and it compares meaning, which a bag of words would do badly while looking done. Marker tests in the Problem's own text and in the features both must find nothing.
+**The document is the artifact's summary and keywords, and nothing else** (D-231). Not the Problem's title, symptoms or domain — indexing the source beside the translation would give the system two definitions of "the searchable text" and let the second quietly bypass P4-02. Not `structural_features` either: comparing structure is P4-07's and it compares meaning, which a bag of words was measured to do badly while looking done (D-265). Marker tests in the Problem's own text and in the features both must find nothing.
 
 **`pg_catalog.simple`, written out on both sides** (D-232). The server's default is `english`, which stems `Fastify` to `fastifi` and `memory_read_enabled` to `memori read enabl` — measured. `simple` keeps `postgresql`, `node.js`, `v5.1.2`, `@fastify/swagger`, `client_event_id` and `foo-bar` intact. The accepted cost, also measured: `deployment` no longer matches `deployed`. Recall across different words is the semantic half's job; the lexical half should be the exact one.
 
@@ -777,6 +777,36 @@ Both searches as one intent, fused by rank into a bounded candidate list — the
 
 **Twenty discrimination mutations, each killed by a named test or guard**: duplicates double-counted, each channel's order reversed, a channel's contribution dropped, the tie-break removed, the limit ignored, a sensitive query emptying the search, outage tolerance removed, raw scores added, confidence weighting, structural fetching, a usage-log write, the owner check removed, single-channel candidates dropped, absence penalised, a caller-settable k, source depth following the caller's limit, validation moved after execution, a caller-supplied owner, and malformed output hidden as an outage.
 
+## What exists now — Structural reranking (P4-07)
+
+The second of the specification's two retrieval stages: ten-to-twenty candidates narrowed to one-to-five by whether they are the *same kind of problem*. A pure domain module, a batch read, a reader, and an orchestration service. No migration, no column, no dependency, no route.
+
+**The schema is eight keys, six of them lists** (D-264) — `schema_version`, `problem_domain`, and the six label lists D-222 defined. This document previously said "eight free-form label lists", which counted the version and the domain as lists; the code has always been exact-key and is unchanged. P4-02's parser is now exported and reused for stored features, because two parsers for one schema would eventually disagree. The success-claim gate did **not** move: it depends on the Problem's status and Verifications, which a reader of stored artifacts cannot see, so shape validation is shared and the gate stays at generation time.
+
+**A model compares, and the measurement is why** (D-265). Exact label overlap, token Jaccard and character-bigram similarity were all built and measured first; all three ranked *same technology, different cause* above *different technology, same structure* — the inversion of this stage's purpose. Rewriting the same structure in different vocabulary scored the cross-technology candidate **0.000 / 0.159** against the surface-similar one's **0.048 / 0.208**. The acceptance condition is that a React ordering bug can surface a Fastify one, and word overlap cannot see that because the words are what differ.
+
+**Scripted rerankers prove the orchestration and nothing about model quality** (D-265). Semantic quality is P4-14's, measured against fixtures. No test here is written as though it had been settled.
+
+**Its own vendor-free port, not the embedding provider** (D-266). `StructuralReranker` takes a shape and returns `unknown`; no SDK, no HTTP client, no credential, and no `rerankerId` — nothing is persisted, so an identity would be a field with no reader.
+
+**The current profile is supplied by the caller and parsed** (D-267). The Problem being worked on is the one least likely to have an artifact and most likely to have a stale one, and a search must not write. An unparseable profile reaches neither the database nor a model.
+
+**Candidates are re-read in one statement** (D-268), owner and `memory_read_enabled` applied again, three columns only. Deleted, artifact-missing, read-disabled and another owner's are one indistinguishable answer — pinned by comparing a stranger's identifier against an invented one.
+
+**Unreadable stored structure stops the whole stage** (D-269), rather than dropping the candidate: removing it would be indistinguishable from judging it dissimilar, and there is nothing wrong with the Problem. Every candidate is returned in the first stage's order with null scores and `STRUCTURAL_DATA_UNAVAILABLE`.
+
+**The model sees two structural profiles and nothing else** (D-270). No project, no fusion score, no source ranks, no summary, no keywords, no limit — a model shown the first stage's ordering could reproduce it and call it a judgement.
+
+**The privacy check is re-run here and the policy is not injectable** (D-271). Both inputs have been through none of this system's write checks — one came from a caller, one came out of a database, which vouches for storage rather than content. A confirmed credential means the model is not called; the result says only `SKIPPED_SENSITIVE_INPUT`.
+
+**Exact coverage, 0–1 scores, named evidence** (D-272). Every candidate back exactly once — omissions would put a hidden threshold inside the model, and this stage has none on purpose. A score above zero must name at least one of the seven comparison dimensions, and a score of zero must name none.
+
+**Structure decides, hybrid rank breaks ties, the limit is 1–5 defaulting to 5** (D-273). The two scores are never added. The default is the ceiling because how many to show is a presentation decision and a ranking stage still sits between this and a reader.
+
+**An unreachable reranker degrades; a malformed answer raises** (D-274). Degraded scores are null, never zero. Zero or one candidate is `NOT_NEEDED` with the reranker uncalled.
+
+**Thirty-five discrimination mutations, each killed by a named test or guard**: the schema version as a dimension, the default cut, both bounds, an unparsed caller profile, a refusal quoting the profile, duplicate candidates, unchecked fusion scores and ranks, self-exclusion removed, extra keys at both levels, omitted / invented / repeated candidates, an out-of-range score, an unknown or repeated dimension, evidence-free scoring, the tie-break and the null-score ordering, a threshold introduced, the read control and the owner filter dropped, the summary pulled into the batch read, an injectable policy, inspection removed, a credential no longer stopping the call, a candidate quietly dropped, the cross-Project invariant, a one-candidate model call, and an invented degraded score. Two survived the first run — both bounds asserted against themselves rather than against their literal values — and the tests were fixed rather than the mutations dropped.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -786,7 +816,11 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI
 - No concrete summary generator and no concrete embedding provider. Both are ports (D-223, D-241); no vendor SDK or HTTP client is a dependency, and no provider credential exists anywhere. A deployed server therefore still cannot generate artifacts by itself — the orchestration path exists and is proven with scripted ports (D-249)
 - No caller of the generation pipeline. Nothing invokes `generateArtifact` in production: no route, no scheduler, no backfill worker, no adapter. Who calls it, and when, is a later wiring decision (D-249)
-- No structural reranking, no ranking policy and no search cache. Hybrid fusion exists and deliberately stops at rank merging: it reads no structural feature, no confidence, no freshness, no suppression, no importance and no project preference (D-263)
+- No ranking policy and no search cache. Structural reranking exists and deliberately stops at structural comparison: it reads and weighs no confidence, freshness, recency, suppression, importance or project proximity, and guesses at none of them (D-263, D-275)
+- No concrete reranker, and no reranker identity recorded. `StructuralReranker` is a port like the other two; nothing here is persisted, so a `rerankerId` would be a field with no reader (D-266)
+- No claim that structural comparison works well. Every test scripts the reranker and proves only the orchestration around it; semantic quality is P4-14's, measured against fixtures (D-265)
+- No similarity threshold in reranking. A zero score keeps a candidate at the bottom rather than removing it, because deciding a Memory is not worth offering needs P4-08's information (D-273)
+- No suggestion, proposed fix, applied fix or approval. Retrieval returns Memories; turning one into an action belongs to P4-11 and P4-12 (D-275)
 - No query generation anywhere. A caller supplies the lexical terms and the semantic description separately; nothing extracts, summarises, truncates or rewrites either (D-256)
 - No vector index, still: an untyped `vector` cannot carry one and no model is chosen to type a cast index. Exact scan is the implementation, measured feasible at MVP scale; migrations 16 and vector indexes 0 are boundary assertions a hardening task will deliberately update (D-254)
 - No model router. One injected provider per deployment is the standing assumption; fallback, selection, cost routing and A/B are all absent, and concurrent-rollout overwrites are an accepted, recorded limitation (D-247)
@@ -826,16 +860,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-07 — Structural reranking.
+P4-08.
 
-**NOT STARTED.** P4-01 through P4-06 are done; nothing of P4-07 has been implemented.
+**NOT STARTED.** P4-01 through P4-07 are done; nothing of P4-08 has been implemented. See the private Phase 4 breakdown for what it is.
 
 Notes for whoever picks this up:
-- The candidate list arriving here is ten to twenty Problems with `problemId`, `projectId`, a `fusionScore` and the two source ranks — and no artifact content at all. Fetching what it needs to compare is this task's job; the earlier stages deliberately carried nothing but identity and position (D-261)
-- `structural_features` has been reserved for this task since it was defined and is untouched by every search so far: the lexical document excludes it (D-231) and the hybrid stage is guarded against reading it (D-263). Its v1 vocabulary is eight free-form label lists (D-222)
-- A null `lexicalRank` or `vectorRank` says nothing about the Memory — it can mean a superseded embedding model or a window edge — so it must not become an input to a structural judgement (D-261)
+- What arrives from P4-07 is one to five candidates with `problemId`, `projectId`, a `structuralScore` (null on every degraded path), the hybrid position and the matched dimensions. A null score means no judgement was made — never that a judgement came out low (D-274)
+- Confidence, freshness, recency, suppression, importance and project proximity are all still absent, deliberately, and no earlier stage guesses at any of them (D-275). A ranking stage is the first place they may appear
+- The rerank status matters to ranking: `USED` means the scores are real, and the four degraded statuses mean the order is the hybrid stage's and the scores are null (D-269, D-274)
 - `successful_directions` is only ever non-empty on a Problem carried to VERIFIED by a passing Verification (D-221). Treating a Problem without them as "the fix did not work" would misread a gate as evidence
-- The specification's second stage narrows to one to five, with about three usually shown. Confidence, freshness, suppression and project proximity remain P4-08's, not this task's
+- The v1 structural vocabulary is eight top-level keys, six of them free-form label lists (D-222, D-264)
 
 ## Core MVP milestone
 

@@ -73,6 +73,15 @@ export {
   type RetrievalSearchReader,
 } from './retrieval-search-reader.js';
 
+// The structural side of candidate artifacts, for reranking. Reads three
+// columns of up to twenty artifacts in one statement: the summary, keywords
+// and embedding are not needed to compare structure.
+export {
+  createRetrievalStructuralReader,
+  type RetrievalStructuralReader,
+} from './retrieval-structural-reader.js';
+export type { StructuralArtifactRow } from '../db/retrieval-structural-read.js';
+
 // Semantic candidate search. Handed a validated embedding by the service
 // above it — the embedding parameter is a storage-boundary input, not an
 // application surface; what an application caller can supply is text.

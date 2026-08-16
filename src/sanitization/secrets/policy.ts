@@ -161,6 +161,33 @@ export function createSemanticQueryInspectionPolicy(
   };
 }
 
+/**
+ * The gate structural features pass before an external reranker sees them.
+ *
+ * The same certainty line every other policy draws, applied at a boundary that
+ * did not exist until now. Two of the three inputs here have not been through
+ * any of this system's write checks: the current profile is supplied by a
+ * caller, and the candidate features come back out of a database, which
+ * vouches for storage rather than for content. Relying on "the artifact
+ * boundary already checked it" would be trusting a fact about how today's
+ * callers happen to be wired, at the moment the text leaves the process.
+ *
+ * Refusal only. Redacting a structural label would hand a reranker a sentence
+ * with the middle removed and ask it to judge similarity from that, which is a
+ * worse answer than declining to ask.
+ */
+export function createStructuralRerankInspectionPolicy(
+  detector: SecretDetector = createSecretDetector(),
+): SanitizationPolicy {
+  return {
+    inspect(text, at) {
+      return detector.detect(text, at)?.certainty === 'confirmed'
+        ? { kind: 'reject' }
+        : { kind: 'keep' };
+    },
+  };
+}
+
 export function createExportInspectionPolicy(
   detector: SecretDetector = createSecretDetector(),
 ): SanitizationPolicy {

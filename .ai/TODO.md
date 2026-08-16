@@ -595,9 +595,25 @@ Twenty discrimination mutations each killed by a named test or guard.
 
 2963 tests across 99 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-07 Structural reranking
+### P4-07 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. Symptoms, boundary, conditions, directions and environment difference, used to narrow ten-to-twenty candidates to one-to-five. `structural_features` has been reserved for this task since it was defined and no search has read it; the candidate list arrives as identity and rank only, so fetching what it needs to compare is this task's own work (D-222, D-231, D-261, D-263).
+Structural reranking: ten-to-twenty candidates narrowed to one-to-five by whether they are the same kind of problem.
+
+The v1 schema is confirmed as eight top-level keys, six of them free-form label lists — this repository's own notes had said "eight lists", and the sentence is corrected rather than the code (D-264). P4-02's parser is exported and reused for stored features; the success-claim gate stays at generation time, because it depends on status and Verifications a reader cannot see.
+
+**Deterministic comparison was built and measured before it was rejected.** Exact label overlap, token Jaccard and character-bigram similarity all ranked *same technology, different cause* above *different technology, same structure*; with vocabulary varied, the cross-technology candidate scored 0.000/0.159 against the surface-similar one's 0.048/0.208. The acceptance condition is finding the same shape of problem in a different stack, and word overlap cannot see that (D-265). So this stage sits behind its own vendor-free port — not the embedding provider, and with no reranker identity, because nothing here is persisted (D-266).
+
+The current profile is supplied by the caller and parsed rather than trusted; this stage reads no artifact of its own and writes nothing (D-267). Candidates are re-read in one statement with the owner and read control applied again, and deleted / artifact-missing / read-disabled / another owner's are one indistinguishable answer (D-268). One unreadable stored profile stops the whole comparison rather than dropping that candidate, because dropping it would be indistinguishable from judging it dissimilar (D-269).
+
+The model sees two structural profiles and nothing else — no project, no fusion score, no ranks, no summary, no limit (D-270). Both inputs are re-inspected for credentials immediately before the call, and the policy is built inside the factory with no parameter to override it (D-271). The answer must cover every candidate exactly once, scored 0–1 with named evidence: allowing omissions would put a hidden threshold inside the model, and this stage has none on purpose (D-272). Structure decides, hybrid rank breaks ties, the limit is 1–5 defaulting to 5 (D-273). An unreachable reranker degrades with null scores; a malformed answer raises (D-274).
+
+Thirty-five discrimination mutations each killed by a named test or guard. Two survived the first run — both bounds asserted against themselves rather than their literal values — and the tests were fixed and re-run.
+
+3067 tests across 101 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-08
+
+**NOT STARTED.** See the private Phase 4 breakdown. What arrives from P4-07 is one to five candidates carrying a structural score that is null on every degraded path, the hybrid position and the matched dimensions; confidence, freshness, suppression, importance and project proximity are all still absent and no earlier stage guesses at any of them (D-273, D-275).
 
 ## BLOCKED
 

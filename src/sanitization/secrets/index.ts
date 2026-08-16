@@ -20,5 +20,6 @@ export {
   createArtifactInspectionPolicy,
   createExportInspectionPolicy,
   createSemanticQueryInspectionPolicy,
+  createStructuralRerankInspectionPolicy,
   createSecretDetectionPolicy,
 } from './policy.js';

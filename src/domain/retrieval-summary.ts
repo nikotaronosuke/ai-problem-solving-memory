@@ -310,16 +310,26 @@ function toKeywords(value: unknown): readonly string[] {
 /**
  * Reads a structural feature object, or refuses it.
  *
- * Exactly the known keys: an unknown one is refused rather than dropped,
- * because a generator inventing a field is a generator answering a question
- * nobody asked, and quietly discarding it would hide that. A missing one is
- * refused for the reason above — an unanswered question and an empty answer are
- * not the same.
+ * Shape, schema version, types and bounds — and deliberately nothing about
+ * whether the *claims* in it are supported. Exactly the known keys: an unknown
+ * one is refused rather than dropped, because a generator inventing a field is
+ * a generator answering a question nobody asked, and quietly discarding it
+ * would hide that. A missing one is refused for the reason above — an
+ * unanswered question and an empty answer are not the same.
+ *
+ * Exported because a second reader now exists. Structural reranking reads
+ * feature objects back out of storage and out of a caller's hands, and neither
+ * is a value TypeScript can vouch for: one crossed a database, the other a
+ * process boundary. Sharing this parser is what keeps "a valid v1 feature
+ * object" one definition rather than two that drift.
+ *
+ * What it deliberately does NOT do is the provenance gate. Whether a summary
+ * may claim a successful direction depends on the Problem's status and its
+ * Verifications — facts this function cannot see and a reader of stored
+ * artifacts has no business re-deciding. That check stays where the evidence
+ * is, applied on top of the parsed result.
  */
-function toStructuralFeatures(
-  value: unknown,
-  mayClaimSuccessfulDirection: boolean,
-): StructuralFeatures {
+export function parseStructuralFeatures(value: unknown): StructuralFeatures {
   if (!isPlainObject(value)) {
     throw new InvalidRetrievalSummaryError('structural features', 'it is not an object');
   }
@@ -351,7 +361,27 @@ function toStructuralFeatures(
     ]),
   ) as Record<StructuralFeatureList, readonly string[]>;
 
-  if (lists.successful_directions.length > 0 && !mayClaimSuccessfulDirection) {
+  return {
+    schema_version: STRUCTURAL_FEATURE_SCHEMA_VERSION,
+    problem_domain: problemDomain,
+    ...lists,
+  };
+}
+
+/**
+ * The parsed features, plus the one check only the generation path can make.
+ *
+ * Unchanged in behaviour: a generator claiming a successful direction for a
+ * Problem the record does not support is still refused outright rather than
+ * quietly emptied.
+ */
+function toStructuralFeatures(
+  value: unknown,
+  mayClaimSuccessfulDirection: boolean,
+): StructuralFeatures {
+  const features = parseStructuralFeatures(value);
+
+  if (features.successful_directions.length > 0 && !mayClaimSuccessfulDirection) {
     // The gate, and it refuses rather than emptying the list. Silently clearing
     // it would leave a summary that had been written around a claim it no
     // longer makes, and would hide that a generator asserted something the
@@ -362,11 +392,7 @@ function toStructuralFeatures(
     );
   }
 
-  return {
-    schema_version: STRUCTURAL_FEATURE_SCHEMA_VERSION,
-    problem_domain: problemDomain,
-    ...lists,
-  };
+  return features;
 }
 
 /** What a generator returned, before any of it has been believed. */
