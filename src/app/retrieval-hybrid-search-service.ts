@@ -116,7 +116,16 @@ export interface RetrievalHybridSearchService {
   search(request: HybridSearchRequest): Promise<HybridSearchResult>;
 }
 
-function requireHybridLimit(limit: number | undefined): number {
+/**
+ * The limit this stage will actually use.
+ *
+ * Exported because a caller composing the stages needs the *effective* value
+ * rather than the one that was typed: asking for twenty and not asking at all
+ * are the same search, and anything keyed on the request has to see them as
+ * the same search too. Pure, and unchanged in behaviour from when it was
+ * private to this file.
+ */
+export function resolveHybridSearchLimit(limit: number | undefined): number {
   if (limit === undefined) {
     return DEFAULT_HYBRID_LIMIT;
   }
@@ -183,7 +192,7 @@ export function createRetrievalHybridSearchService(
       // guarantee rather than a coincidence of who happens to run first.
       resolveFullTextSearchQuery(lexicalQuery);
       resolveVectorSearchQuery(semanticQuery);
-      const limit = requireHybridLimit(request.limit);
+      const limit = resolveHybridSearchLimit(request.limit);
 
       // Parallel, because the semantic channel is dominated by a provider
       // round trip and the lexical channel is a single statement. Neither

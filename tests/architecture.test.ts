@@ -2032,7 +2032,7 @@ describe('hybrid candidate retrieval', () => {
     // made on behalf of a request that was never going to succeed.
     const lexicalCheck = code.indexOf('resolveFullTextSearchQuery(');
     const semanticCheck = code.indexOf('resolveVectorSearchQuery(');
-    const limitCheck = code.indexOf('requireHybridLimit(');
+    const limitCheck = code.indexOf('resolveHybridSearchLimit(');
     const execution = code.indexOf('Promise.allSettled');
 
     for (const [label, at] of [
@@ -2697,6 +2697,352 @@ describe('retrieval ranking', () => {
     for (const file of files) {
       const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
       expect(sql.includes('ranking'), `${file} was written for ranking`).toBe(false);
+    }
+  });
+});
+
+describe('search caching', () => {
+  /** The three modules this stage is made of, comments stripped. */
+  async function cacheCode(): Promise<string> {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter((module) => module.path.includes('retrieval-search-cache'))
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+    expect(code.length).toBeGreaterThan(0);
+    return code;
+  }
+
+  it('stores searches in memory, with nothing to install and nothing to delete', async () => {
+    const modules = await readModules(SRC);
+    const stage = modules.filter(
+      (module) =>
+        module.path.includes('retrieval-search-cache') ||
+        module.path.includes('retrieval-search-service'),
+    );
+    expect(stage.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of stage) {
+      const code = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      // A five-minute optimisation stored in a table would have to arrive with
+      // a delete path, an export exclusion and a place in the deletion
+      // guarantees — all so something disposable could survive a restart it
+      // does not need to survive.
+      for (const persistence of ['insert into', 'update public.', 'delete from', 'create table']) {
+        if (code.toLowerCase().includes(persistence)) {
+          offenders.push(`${module.path} -> ${persistence}`);
+        }
+      }
+      for (const specifier of importsOf(module.source)) {
+        if (/^(redis|ioredis|memcached|lru-cache|node-cache|keyv|@upstash)/.test(specifier)) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('adds no migration and no dependency', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    for (const file of await readdir(migrations)) {
+      const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      expect(sql.includes('cache'), `${file} was written for caching`).toBe(false);
+    }
+
+    const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual([
+      '@fastify/swagger',
+      'fastify',
+      'pg',
+    ]);
+  });
+
+  it('keeps nothing of the search it was asked about', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    const entry = domain.slice(domain.indexOf('export interface RetrievalSearchCacheEntry {'));
+    const entryBody = entry.slice(0, entry.indexOf('\n}'));
+
+    // A query may contain credential-shaped text, and that is safe only
+    // because a query is used and discarded. An entry holds a result and an
+    // expiry, so it stays safe.
+    for (const raw of [
+      'lexicalText',
+      'semanticText',
+      'currentFeatures',
+      'canonicalSource',
+      'normalizedSummary',
+      'keywords',
+      'embedding',
+    ]) {
+      expect(entryBody.includes(raw), `a cache entry carries ${raw}`).toBe(false);
+    }
+    expect(entryBody).toContain('StructuralRerankResult');
+    expect(entryBody).toContain('expiresAt');
+  });
+
+  it('identifies a search by a digest that includes its owner', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    const code = domain.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const compute = code.slice(code.indexOf('export function computeRetrievalSearchCacheKey('));
+    const body = compute.slice(0, compute.indexOf('\n}'));
+
+    // One process holds one cache for every owner, so the owner is what keeps
+    // two people's searches apart.
+    expect(body).toContain('input.ownerId');
+    expect(body).toContain('input.currentProblemId');
+    expect(body).toContain('input.understandingFingerprint');
+    expect(body).toContain('input.lexicalText');
+    expect(body).toContain('input.semanticText');
+    expect(body).toContain('input.effectiveHybridLimit');
+    expect(body).toContain('input.effectiveRerankLimit');
+    expect(body).toContain("createHash('sha256')");
+
+    // The digest is what is kept; the values are not.
+    expect(body).toContain('JSON.stringify([');
+  });
+
+  it('normalises nothing about the search itself', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    const compute = domain.slice(domain.indexOf('export function computeRetrievalSearchCacheKey('));
+    const body = compute
+      .slice(0, compute.indexOf('\n}'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    // Two searches are the same only when they are the same. Folding case,
+    // trimming or sorting a list here would answer one question with another
+    // question's result.
+    for (const invented of ['toLowerCase', 'trim(', '.sort(', 'normalize(', 'new Set(']) {
+      expect(body.includes(invented), `the key invents an equivalence with ${invented}`).toBe(
+        false,
+      );
+    }
+  });
+
+  it('bounds what it holds and how long it holds it', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    expect(domain).toContain('export const RETRIEVAL_SEARCH_CACHE_TTL_MS = 300_000');
+    expect(domain).toContain('export const RETRIEVAL_SEARCH_CACHE_MAX_ENTRIES = 100');
+
+    const app = await readFile(join(SRC, 'app', 'retrieval-search-cache.ts'), 'utf8');
+    const code = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // An unbounded map in a long-running process is a leak with a five-minute
+    // fuse per entry and no ceiling at all.
+    expect(code).toContain('entries.size > RETRIEVAL_SEARCH_CACHE_MAX_ENTRIES');
+    // Reading refreshes recency and must not touch the expiry: a search
+    // repeated every four minutes would otherwise never be recomputed.
+    expect(code).toContain('entries.set(key, entry)');
+    expect(code.includes('expiresAt: clock() + RETRIEVAL_SEARCH_CACHE_TTL_MS')).toBe(true);
+    const get = code.slice(code.indexOf('get(key)'), code.indexOf('set(key, result)'));
+    expect(get.includes('expiresAt:'), 'reading rewrites the expiry').toBe(false);
+  });
+
+  it('takes its clock from outside', async () => {
+    const app = await readFile(join(SRC, 'app', 'retrieval-search-cache.ts'), 'utf8');
+    const code = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Expiry is what this thing is about, and a test that has to sleep to see
+    // it is slow and occasionally wrong. The default lives at the factory
+    // boundary; nothing below reads a clock of its own.
+    expect(code).toContain('clock: Clock = () => Date.now()');
+    const body = code.slice(code.indexOf('const entries = new Map'));
+    expect(body.includes('Date.now'), 'the cache reads a clock of its own').toBe(false);
+    expect(body.includes('new Date('), 'the cache reads a clock of its own').toBe(false);
+  });
+
+  it('hands out copies in both directions', async () => {
+    const app = await readFile(join(SRC, 'app', 'retrieval-search-cache.ts'), 'utf8');
+    const code = app.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // `readonly` is a compile-time courtesy that is gone at run time, so a
+    // caller sorting the array it was handed would reorder the next caller's.
+    expect((code.match(/copyStructuralRerankResult\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('receives its cache rather than building one per request', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Everything else here is rebuilt per request. A cache constructed inside
+    // would start empty every time — a working cache that never answers.
+    const factory = code.slice(code.indexOf('export function createRetrievalSearchService('));
+    const parameters = factory.slice(factory.indexOf('('), factory.indexOf('): RetrievalSearch'));
+    expect(parameters).toContain('cache: RetrievalSearchCache');
+    expect(code.includes('createRetrievalSearchCache('), 'the service builds its own cache').toBe(
+      false,
+    );
+  });
+
+  it('lets a caller name the Problem and nothing that could contradict it', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const request = service.slice(service.indexOf('export interface RetrievalSearchRequest {'));
+    const body = request.slice(0, request.indexOf('\n}'));
+
+    // The Project comes from the Problem's own row and the excluded Problem is
+    // the current one, so neither can disagree with what was asked about.
+    for (const supplied of [
+      'ownerId',
+      'currentProjectId',
+      'excludeProblemId',
+      'confidence',
+      'freshness',
+      'suppressed',
+      'platform',
+    ]) {
+      expect(new RegExp(`\\b${supplied}\\b`).test(body), `the request carries ${supplied}`).toBe(
+        false,
+      );
+    }
+    expect(body).toContain('currentProblemId');
+  });
+
+  it('excludes the Problem from both stages, not just the one that shows', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Both calls, and the count is the assertion. The rerank exclusion alone
+    // keeps the Problem out of the answer, so dropping the hybrid one is
+    // invisible in a result — while still letting the Problem occupy a slot in
+    // the candidate window and crowd out a real Memory.
+    expect((code.match(/excludeProblemId: request\.currentProblemId/g) ?? []).length).toBe(2);
+  });
+
+  it('refuses two reads of one Problem that disagree about its Project', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // A Problem cannot move between Projects, so this cannot happen — which is
+    // exactly why it is checked rather than reconciled. Ranking on either
+    // answer would rest on a contradiction, and the ranking uses the second
+    // read's value.
+    expect(code).toContain('after.projectId !== before.projectId');
+    expect(code).toContain('rankAndReport(after.projectId');
+  });
+
+  it('reads the Problem again before it keeps anything', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The two long calls leave a window an assistant appends Events into. An
+    // answer to a question that has moved is reported, not stored.
+    expect((code.match(/sourceReader\.readSource\(/g) ?? []).length).toBe(2);
+    const secondRead = code.lastIndexOf('sourceReader.readSource(');
+    expect(secondRead).toBeGreaterThan(code.indexOf('rerankService.rerank('));
+    expect(secondRead).toBeLessThan(code.indexOf('cache.set('));
+    expect(code).toContain("kind: 'CURRENT_SOURCE_CHANGED'");
+  });
+
+  it('keeps only a search that ran cleanly end to end', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // A provider outage or a skipped credential frozen for five minutes would
+    // outlast its own cause.
+    const eligible = code.slice(code.indexOf('function isCacheable('));
+    expect(eligible).toContain("semanticStatus === 'USED'");
+    expect(eligible).toContain("structuralStatus === 'USED'");
+    expect(eligible).toContain("structuralStatus === 'NOT_NEEDED'");
+    for (const degraded of [
+      'PROVIDER_UNAVAILABLE',
+      'SKIPPED_SENSITIVE_QUERY',
+      'RERANKER_UNAVAILABLE',
+      'STRUCTURAL_DATA_UNAVAILABLE',
+      'SKIPPED_SENSITIVE_INPUT',
+    ]) {
+      expect(eligible.includes(degraded), `a ${degraded} search is kept`).toBe(false);
+    }
+    expect(code).toContain('if (isCacheable(');
+
+    // And only after the last stage has succeeded. A result stored before
+    // ranking ran would be a partial answer with a five-minute life.
+    const ranked = code.indexOf('const outcome = await rankAndReport(');
+    const stored = code.indexOf('cache.set(');
+    expect(ranked, 'the search does not finish before it is stored').toBeGreaterThan(-1);
+    expect(ranked).toBeLessThan(stored);
+  });
+
+  it('ranks on every search, cached or not', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The one function both paths go through, which is what makes "a reused
+    // search still respects every control" true by construction rather than by
+    // two code paths agreeing with each other.
+    expect((code.match(/rankingService\.rank\(/g) ?? []).length).toBe(1);
+    expect((code.match(/rankAndReport\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('reports no cache status', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const outcome = service.slice(service.indexOf('export type RetrievalSearchOutcome ='));
+    const body = outcome.slice(0, outcome.indexOf('\n\nexport interface'));
+
+    // Whether an answer was recomputed is not something a caller acts on, and
+    // a field saying so would be a product promise made for tests.
+    for (const observability of ['cacheStatus', 'cacheAge', 'fromCache', "'HIT'", "'MISS'"]) {
+      expect(body.includes(observability), `the outcome reports ${observability}`).toBe(false);
+    }
+  });
+
+  it('keeps the Project out of the document a fingerprint is taken over', async () => {
+    const { RETRIEVAL_SUMMARY_SOURCE_STATEMENT } =
+      await import('../src/db/retrieval-summary-source.js');
+
+    // The Project is metadata for retrieval. Inside the canonical object it
+    // would move every fingerprint and regenerate every artifact for a fact no
+    // summary describes.
+    const document = RETRIEVAL_SUMMARY_SOURCE_STATEMENT.slice(
+      RETRIEVAL_SUMMARY_SOURCE_STATEMENT.indexOf('json_build_object'),
+      RETRIEVAL_SUMMARY_SOURCE_STATEMENT.indexOf('as canonical_source'),
+    );
+    expect(document.includes('project_id'), 'the canonical document names the Project').toBe(false);
+    expect(RETRIEVAL_SUMMARY_SOURCE_STATEMENT).toContain('pr.project_id as project_id');
+  });
+
+  it('adds no usage log, no HTTP surface and no later stage', async () => {
+    const code = await cacheCode();
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const both = `${code}\n${service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')}`;
+
+    for (const later of [
+      'createUsageLog',
+      'SEARCHED_LOG',
+      'REFERENCED',
+      'ADOPTED',
+      'EXCLUDED',
+      'mustRevalidate',
+      'historicalEnvironment',
+      'deadEnd',
+      'CONTRADICTS',
+      'fastify',
+    ]) {
+      expect(both.includes(later), `the search stage already does ${later}`).toBe(false);
+    }
+  });
+
+  it('puts no invalidation hook into the write paths', async () => {
+    const modules = await readModules(SRC);
+    const writers = modules.filter(
+      (module) =>
+        module.path.includes('event-service') ||
+        module.path.includes('verification-service') ||
+        module.path.includes('problem-service') ||
+        module.path.includes('project-environment-service'),
+    );
+    expect(writers.length).toBeGreaterThan(0);
+
+    // Appending an Event already misses, because the key is built over the
+    // Problem's canonical source. A hook would spread a cache dependency
+    // through every write path and be forgotten by the next one added.
+    for (const module of writers) {
+      expect(module.source.includes('Cache'), `${module.path} knows about the search cache`).toBe(
+        false,
+      );
     }
   });
 });

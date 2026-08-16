@@ -48,24 +48,34 @@
 import type { ProblemStatus } from '../domain/enums.js';
 import type { OwnerContext } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
+import type { ProjectId } from '../domain/project.js';
 import { RETRIEVAL_SOURCE_SCHEMA_VERSION } from '../domain/retrieval-summary.js';
 import type { DatabaseExecutor } from './executor.js';
 
 /**
  * One consistent read of a Problem, as a summary generator needs it.
  *
- * `canonicalSource` is the document itself. The other three are facts *about*
- * the Problem that the generator is not shown: whether its owner has turned
- * automatic reading off, and what may legitimately be claimed about a fix.
- * They travel beside the document rather than inside it because neither is
- * semantic content — including them would make a summary regenerate when a
- * control was toggled, and would let a generator read its own permission.
+ * `canonicalSource` is the document itself. The rest are facts *about* the
+ * Problem that the generator is not shown: whether its owner has turned
+ * automatic reading off, what may legitimately be claimed about a fix, and
+ * which Project the Problem is in. They travel beside the document rather than
+ * inside it because none is semantic content — including them would make a
+ * summary regenerate when a control was toggled, and would let a generator
+ * read its own permission.
+ *
+ * `projectId` was added for retrieval rather than for generation, and the
+ * distinction is the point: it is metadata, so it is **not** in the canonical
+ * document and cannot move the fingerprint. A search needs to know which
+ * Project the work is happening in, and asking the caller would let a caller
+ * name one Problem and a different Project's neighbourhood; reading it from
+ * the same row makes that contradiction unstateable.
  */
 export interface RetrievalSummarySource {
   readonly canonicalSource: string;
   readonly memoryReadEnabled: boolean;
   readonly status: ProblemStatus;
   readonly hasSuccessfulVerification: boolean;
+  readonly projectId: ProjectId;
 }
 
 interface SourceRow {
@@ -73,6 +83,7 @@ interface SourceRow {
   memory_read_enabled: boolean;
   status: ProblemStatus;
   has_successful_verification: boolean;
+  project_id: string;
 }
 
 /**
@@ -152,6 +163,11 @@ export const RETRIEVAL_SUMMARY_SOURCE_STATEMENT = `
          )::text as canonical_source,
          pr.memory_read_enabled as memory_read_enabled,
          pr.status as status,
+         -- Beside the document, never inside it. The object above is what the
+         -- fingerprint is taken over, and a Project identifier appearing there
+         -- would make every artifact regenerate for a fact no summary
+         -- describes.
+         pr.project_id as project_id,
          exists (
            select 1
              from public.verifications sv
@@ -199,5 +215,6 @@ export async function readRetrievalSummarySource(
     memoryReadEnabled: row.memory_read_enabled,
     status: row.status,
     hasSuccessfulVerification: row.has_successful_verification,
+    projectId: row.project_id as ProjectId,
   };
 }
