@@ -122,6 +122,23 @@ export {
   type RetrievalSearchService,
 } from './retrieval-search-service.js';
 
+// What a Memory was recorded under, and what has to be re-established before
+// acting on it. The server never decides whether a Memory is still true — it
+// says what it was true of, and what to check.
+export {
+  createRetrievalRevalidationService,
+  InvalidRevalidationRequestError,
+  MissingHistoricalEnvironmentError,
+  type RetrievalRevalidationService,
+} from './retrieval-revalidation-service.js';
+export {
+  REVALIDATION_CHECKS,
+  type RetrievalMemoryCandidate,
+  type RevalidationCheck,
+  type RevalidationContext,
+  type VerificationEvidence,
+} from '../domain/retrieval-revalidation.js';
+
 // The one thing a search records: that each Memory it surfaced was surfaced.
 // Whether anybody then read, took or set aside a Memory is observed elsewhere
 // and reported through the ordinary usage log path.

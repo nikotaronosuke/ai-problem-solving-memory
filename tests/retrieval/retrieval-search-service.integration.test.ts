@@ -33,6 +33,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createRetrievalHybridSearchService,
   createRetrievalRankingService,
+  createRetrievalRevalidationService,
   createRetrievalSearchCache,
   createRetrievalSearchService,
   createRetrievalStructuralRerankService,
@@ -40,6 +41,7 @@ import {
   createRetrievalVectorSearchService,
   ContradictorySearchObservationError,
   InvalidRetrievalSearchError,
+  REVALIDATION_CHECKS,
   type AuthenticatedRequestContext,
   type RetrievalSearchCache,
   type RetrievalSearchOutcome,
@@ -73,6 +75,7 @@ import {
   createMemoryRepository,
   createRetrievalArtifactRepository,
   createRetrievalRankingReader,
+  createRetrievalRevalidationReader,
   createRetrievalSearchReader,
   createRetrievalStructuralReader,
   createRetrievalSummarySourceReader,
@@ -231,6 +234,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
         rerankerPort,
       ),
       createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
+      createRetrievalRevalidationService(createRetrievalRevalidationReader(pool, owner.context)),
       cache,
       options.writer ?? createRetrievalUsageLogWriter(requestContextFor(owner)),
       options.reporter ?? recordingReporter(),
@@ -442,8 +446,44 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             reranker(),
           ),
           createRetrievalRankingService(createRetrievalRankingReader(pool, stranger.context)),
+          createRetrievalRevalidationService(
+            createRetrievalRevalidationReader(pool, stranger.context),
+          ),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
+          recordingReporter(),
+        ),
+      ).toThrow();
+    });
+
+    it('refuses a revalidation service belonging to a different owner', async () => {
+      const owner = await makeActor();
+      const stranger = await makeActor();
+
+      // Only the revalidation service is foreign. Every other stage checks its
+      // own owner, so this is the case that proves this one is checked too —
+      // and it would otherwise attach one person's history to another's
+      // Memories.
+      expect(() =>
+        createRetrievalSearchService(
+          createRetrievalSummarySourceReader(pool, owner.context),
+          createRetrievalHybridSearchService(
+            createRetrievalSearchReader(pool, owner.context),
+            createRetrievalVectorSearchService(
+              provider(),
+              createRetrievalVectorSearchReader(pool, owner.context),
+            ),
+          ),
+          createRetrievalStructuralRerankService(
+            createRetrievalStructuralReader(pool, owner.context),
+            reranker(),
+          ),
+          createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
+          createRetrievalRevalidationService(
+            createRetrievalRevalidationReader(pool, stranger.context),
+          ),
+          createRetrievalSearchCache(),
+          createRetrievalUsageLogWriter(requestContextFor(owner)),
           recordingReporter(),
         ),
       ).toThrow();
@@ -472,6 +512,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             reranker(),
           ),
           createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
+          createRetrievalRevalidationService(
+            createRetrievalRevalidationReader(pool, owner.context),
+          ),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -498,6 +541,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             reranker(),
           ),
           createRetrievalRankingService(createRetrievalRankingReader(pool, stranger.context)),
+          createRetrievalRevalidationService(
+            createRetrievalRevalidationReader(pool, stranger.context),
+          ),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -564,10 +610,10 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const seen = port.seen[0]?.candidates.map((candidate) => candidate.problemId) ?? [];
       expect(seen).not.toContain(current.problemId);
       if (outcome.kind === 'SEARCHED') {
-        expect(outcome.candidates.map((candidate) => candidate.problemId)).not.toContain(
+        expect(outcome.candidates.map((candidate) => candidate.ranking.problemId)).not.toContain(
           current.problemId,
         );
-        expect(outcome.candidates.map((candidate) => candidate.problemId)).toContain(
+        expect(outcome.candidates.map((candidate) => candidate.ranking.problemId)).toContain(
           other.problemId,
         );
       }
@@ -586,9 +632,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       expect(outcome.kind).toBe('SEARCHED');
       if (outcome.kind === 'SEARCHED') {
         const found = outcome.candidates.find(
-          (candidate) => candidate.problemId === sameProject.problemId,
+          (candidate) => candidate.ranking.problemId === sameProject.problemId,
         );
-        expect(found?.projectRelation).toBe('CURRENT_PROJECT');
+        expect(found?.ranking.projectRelation).toBe('CURRENT_PROJECT');
       }
     });
 
@@ -786,7 +832,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const first = await searchFor(service, current.problemId);
       expect(first.kind).toBe('SEARCHED');
       if (first.kind === 'SEARCHED') {
-        expect(first.candidates.map((entry) => entry.problemId)).toContain(candidate.problemId);
+        expect(first.candidates.map((entry) => entry.ranking.problemId)).toContain(
+          candidate.problemId,
+        );
       }
       return { owner, current, candidate, embedding, port, service };
     }
@@ -808,7 +856,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       expect(outcome.kind).toBe('SEARCHED');
       if (outcome.kind === 'SEARCHED') {
         expect(
-          outcome.candidates.find((entry) => entry.problemId === candidate.problemId)?.suppressed,
+          outcome.candidates.find((entry) => entry.ranking.problemId === candidate.problemId)
+            ?.ranking.suppressed,
         ).toBe(true);
       }
     });
@@ -826,8 +875,10 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       expect(port.calls).toBe(1);
       expect(outcome.kind).toBe('SEARCHED');
       if (outcome.kind === 'SEARCHED') {
-        const found = outcome.candidates.find((entry) => entry.problemId === candidate.problemId);
-        expect(found?.[field as 'confidence' | 'freshness']).toBe(Object.values(change)[0]);
+        const found = outcome.candidates.find(
+          (entry) => entry.ranking.problemId === candidate.problemId,
+        );
+        expect(found?.ranking[field as 'confidence' | 'freshness']).toBe(Object.values(change)[0]);
       }
     });
 
@@ -843,8 +894,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       expect(first.kind).toBe('SEARCHED');
       if (first.kind === 'SEARCHED') {
         expect(
-          first.candidates.find((entry) => entry.problemId === elsewhere.problemId)
-            ?.projectRelation,
+          first.candidates.find((entry) => entry.ranking.problemId === elsewhere.problemId)?.ranking
+            .projectRelation,
         ).toBe('SAME_TECH_OTHER_PROJECT');
       }
 
@@ -854,8 +905,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       expect(port.calls).toBe(1);
       if (second.kind === 'SEARCHED') {
         expect(
-          second.candidates.find((entry) => entry.problemId === elsewhere.problemId)
-            ?.projectRelation,
+          second.candidates.find((entry) => entry.ranking.problemId === elsewhere.problemId)
+            ?.ranking.projectRelation,
         ).toBe('OTHER_TECH');
       }
     });
@@ -871,7 +922,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const outcome = await searchFor(service, current.problemId);
       expect(port.calls).toBe(1);
       if (outcome.kind === 'SEARCHED') {
-        expect(outcome.candidates.map((entry) => entry.problemId)).not.toContain(
+        expect(outcome.candidates.map((entry) => entry.ranking.problemId)).not.toContain(
           candidate.problemId,
         );
       }
@@ -888,7 +939,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       // A cache must not bring back a Memory somebody deleted.
       expect(port.calls).toBe(1);
       if (outcome.kind === 'SEARCHED') {
-        expect(outcome.candidates.map((entry) => entry.problemId)).not.toContain(
+        expect(outcome.candidates.map((entry) => entry.ranking.problemId)).not.toContain(
           candidate.problemId,
         );
       }
@@ -911,9 +962,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const after = await searchFor(service, current.problemId);
       expect(port.calls).toBe(1);
       if (after.kind === 'SEARCHED') {
-        expect(after.candidates.map((entry) => entry.rankingRank)).toEqual([1, 2]);
+        expect(after.candidates.map((entry) => entry.ranking.rankingRank)).toEqual([1, 2]);
         // The hybrid positions came from the cached rerank and keep their gap.
-        expect(new Set(after.candidates.map((entry) => entry.problemId))).toEqual(
+        expect(new Set(after.candidates.map((entry) => entry.ranking.problemId))).toEqual(
           new Set([first.problemId, third.problemId]),
         );
       }
@@ -1084,6 +1135,159 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
     });
   });
 
+  describe('what a search finally offers', () => {
+    it('attaches the conditions and checks behind each Memory', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      await owner.memory.appendVerification({
+        problemId: candidate.problemId,
+        verificationType: 'TEST',
+        result: true,
+        summary: 'the suite passed at the time',
+        clientEventId: randomUUID() as ClientEventId,
+      });
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+
+      const offered = outcome.candidates.find(
+        (entry) => entry.ranking.problemId === candidate.problemId,
+      );
+      expect(offered?.revalidation.historicalEnvironment).toEqual({ runtime: 'node 22.12.0' });
+      expect(offered?.revalidation.evidence.map((entry) => entry.summary)).toEqual([
+        'the suite passed at the time',
+      ]);
+      // A search result is a candidate rather than an answer, and this is how
+      // the server says so.
+      expect(offered?.revalidation.requiredChecks).toEqual([...REVALIDATION_CHECKS]);
+    });
+
+    it('asks for the same checks however current the Memory looks', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      const problem = await owner.memory.getProblem(candidate.problemId);
+      await owner.memory.updateProblem(candidate.problemId, problem?.version ?? 0, {
+        freshness: 'CURRENT',
+        confidence: 'HIGH',
+      });
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+      const offered = outcome.candidates.find(
+        (entry) => entry.ranking.problemId === candidate.problemId,
+      );
+
+      // `CURRENT` and `HIGH` are statements about the record, not about the
+      // world. The specification says the confirmation is not skipped for a
+      // trusted Memory.
+      expect(offered?.ranking.freshness).toBe('CURRENT');
+      expect(offered?.revalidation.requiredChecks).toHaveLength(4);
+    });
+
+    it('sees a check added since the search was cached', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port);
+
+      await searchFor(service, current.problemId);
+      await owner.memory.appendVerification({
+        problemId: candidate.problemId,
+        verificationType: 'BUILD',
+        result: false,
+        summary: 'the build failed afterwards',
+        clientEventId: randomUUID() as ClientEventId,
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+
+      // Nothing expensive re-ran, and the new evidence is there: none of this
+      // is cached. A Verification on a *candidate* does not move the current
+      // Problem's fingerprint, so a cached enrichment would go stale silently.
+      expect(embedding.calls).toBe(1);
+      expect(port.calls).toBe(1);
+      if (outcome.kind === 'SEARCHED') {
+        const offered = outcome.candidates.find(
+          (entry) => entry.ranking.problemId === candidate.problemId,
+        );
+        expect(offered?.revalidation.evidence.map((entry) => entry.summary)).toEqual([
+          'the build failed afterwards',
+        ]);
+      }
+    });
+
+    it('drops a Memory deleted after ranking, and renumbers what is left', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), port);
+
+      await searchFor(service, current.problemId);
+      const problem = await owner.memory.getProblem(candidate.problemId);
+      await owner.memory.deleteProblem(candidate.problemId, problem?.version ?? 0);
+
+      const outcome = await searchFor(service, current.problemId);
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+
+      expect(outcome.candidates.map((entry) => entry.ranking.problemId)).toEqual([other.problemId]);
+      expect(outcome.candidates.map((entry) => entry.ranking.rankingRank)).toEqual([1]);
+    });
+
+    it('records only the Memories it actually offered', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      await searchFor(service, current.problemId);
+      const problem = await owner.memory.getProblem(candidate.problemId);
+      await owner.memory.deleteProblem(candidate.problemId, problem?.version ?? 0);
+      const before = (await usageLogsOf(owner.ownerId)).length;
+
+      await searchFor(service, current.problemId);
+      const added = (await usageLogsOf(owner.ownerId)).slice(before);
+
+      // The second search offered one Memory, so it recorded one — the dropped
+      // candidate is not in the log, and the position recorded is the one it
+      // was actually offered at after renumbering.
+      expect(added.map((log) => log.memory_id)).toEqual([other.problemId]);
+      expect(added[0]?.reason).toContain('ranking_rank=1;');
+    });
+
+    it('carries no part of the search into the historical context', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const marker = {
+        lexical: 'lexicalmarkerrrr',
+        semantic: 'semanticmarkersss',
+        profile: 'profilemarkerttt',
+      };
+      const outcome = await searchFor(service, current.problemId, {
+        lexicalText: `deployment ${marker.lexical}`,
+        semanticText: `deployed ${marker.semantic}`,
+        currentFeatures: features({ environment_facts: [marker.profile] }),
+      });
+
+      const reported = JSON.stringify(
+        outcome.kind === 'SEARCHED' ? outcome.candidates.map((entry) => entry.revalidation) : [],
+      );
+      for (const absent of Object.values(marker)) {
+        expect(reported.includes(absent), `the context carried ${absent}`).toBe(false);
+      }
+    });
+  });
+
   describe('recording what was surfaced', () => {
     it('writes one SEARCHED row per Memory the search offered', async () => {
       const owner = await makeActor();
@@ -1128,7 +1332,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       }
 
       const logs = await usageLogsOf(owner.ownerId);
-      for (const surfaced of outcome.candidates) {
+      for (const wrapped of outcome.candidates) {
+        const surfaced = wrapped.ranking;
         const log = logs.find((entry) => entry.memory_id === surfaced.problemId);
         expect(log?.reason).toContain(`ranking_rank=${String(surfaced.rankingRank)};`);
         expect(log?.reason).toContain(`project_relation=${surfaced.projectRelation};`);

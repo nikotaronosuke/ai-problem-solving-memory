@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-10)
+Updated: 2026-08-16 (P4-11)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-10 done; P4-11 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-11 done; P4-12 next)
 
 ## Source of truth
 
@@ -885,6 +885,30 @@ A completed search records that each Memory it surfaced was surfaced. One new mo
 
 **Twenty-nine discrimination mutations, each killed by a named test or guard**: the action changed or added to, a row for a search that surfaced nothing, a non-search outcome logged, a query field on the writer, a score or a trust control in the reason, dimensions called matches, a degraded rerank claiming evidence, the earlier stage's rank reported, a result claiming success, the searcher unrecorded or unvalidated or added to the cache key, the cached rerank logged, a reused search unlogged, the rows written one at a time, a lost record swallowed or rethrown, the report growing a detail field, the reporter defaulted away, the writer's owner unchecked, the record written before the search was reusable, the rerank status no longer deciding whether dimensions are named, degraded treated as used, the neutral fallback dropped, the rule widened to the semantic channel, the contradiction check removed, and the refusal made to name what it refused. Eight survived a first run — five stale anchors, two defence-in-depth checks each hidden by the other, one mutation that left the original call behind — and each was fixed rather than accepted.
 
+## What exists now — Revalidation contract (P4-11)
+
+Every Memory a search offers now carries what it was recorded under and what has to be re-established before acting on it. Four new modules, one changed field on the search outcome, no migration, no dependency, no route.
+
+**The server says what a Memory was true of, not whether it still is** (D-310). It has no working tree, no manifest, no running process and no way to read a vendor's documentation — everything that would settle the question lives where the work is happening. So the request takes no `currentEnvironment`, `currentCode`, `currentVersion` or `currentSpec`; the current Problem's own snapshot is not "now" either; and there is no model, no provider and no network on this path.
+
+**The checklist is the specification's four and never shrinks** (D-311): `CURRENT_CODE`, `CURRENT_ENVIRONMENT`, `RELEVANT_VERSION`, `OFFICIAL_SPEC`. Not reduced for a `CURRENT` freshness, `HIGH` confidence, or a Memory from the current Project — **`CURRENT` is a statement about the record, not the world**, and the specification says the confirmation is not skipped for a trusted or important Memory. The array is `Object.freeze`d, because one array is shared by every candidate in the process and `readonly` is gone at run time.
+
+**The Environment comes back verbatim** (D-312). Which keys a snapshot carries is not fixed, so extracting an OS or a version list would mean guessing at a schema that does not exist. An empty object is an ordinary snapshot. No `environmentId`, no Environment timestamp, no Project detail.
+
+**Evidence is Verifications, failures included** (D-313). A check that failed says what was tried and did not settle the matter; keeping only successes would make every Memory read as though everything attempted had worked. Payload: `verificationType`, `result`, `summary`, `evidenceRef`, `createdAt` — no ids, no `verifiedBy`. **No cap**, because the specification names no number. Ordered `created_at` then `verification_id`. `evidenceRef` is returned as a reference and never fetched, resolved or checked.
+
+**One statement, three cases kept apart** (D-314). `unnest(...) with ordinality` with everything left-joined outwards: a Problem that is gone is dropped (all four reasons indistinguishable), a Problem with no Environment is **raised** — impossible against a not-null column and a composite foreign key, and a test confirms the database refuses to create it — and a Problem with no Verifications returns an empty list. An inner join would report a broken database as a Memory that vanished.
+
+**Two positions, one renumbers** (D-315). `rankingRank` closes up when a candidate drops out because it is the position actually offered; `hybridRank` keeps its gaps. Candidates are rebuilt, so the caller's array is untouched, and nothing is re-run.
+
+**The envelope wraps rather than widens** (D-316). `RetrievalMemoryCandidate { ranking, revalidation }` — the ranking type is unchanged and guarded against ever mentioning an Environment or a Verification. `freshness` stays in one place. No `isStale`, `needsUpdate` or `isSafe`.
+
+**Fresh on every search, stored nowhere** (D-317). A Verification appended to a *candidate* does not move the current Problem's fingerprint, so a cached enrichment would go stale with nothing to notice.
+
+**A failed read is not disguised as a search** (D-318). Database failure and the missing-Environment invariant both raise rather than returning an empty context; that is product data the contract requires, unlike the usage log's best-effort write.
+
+**Twenty-eight discrimination mutations, each killed by a named test or guard**: the checklist unfrozen or shortened, a current or trusted Memory excused, conditions omitted or interpreted or taken from the wrong candidate, evidence omitted or filtered to successes or capped or reordered, the tie-break dropped, a reference or summary dropped, an identifier added, the owner and read filters dropped, a missing Environment silently dropped, a vanished Memory returned hollow, positions unrenumbered or provenance renumbered, order taken from the database, the caller's list edited, both request checks disabled, enrichment skipped on a reused search, the log naming pre-enrichment candidates, and the revalidation owner unchecked. Four survived a first run — two stale anchors, one fixture reusing a single identifier so the duplicate rule fired before the bound could, and one owner check covered by the others — and each was fixed rather than accepted.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -912,6 +936,11 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No model router. One injected provider per deployment is the standing assumption; fallback, selection, cost routing and A/B are all absent, and concurrent-rollout overwrites are an accepted, recorded limitation (D-247)
 - No retries around the embedding provider, and no reuse of the Phase 3 retry queue for it. A provider failure is a safe error, and trying again is the caller's decision (D-248)
 - No search that changes a Memory. A completed search records that each Memory it surfaced was surfaced, and that is its only write (D-299); no ChangeLog, no Relation, no status move, and nothing generated on demand to satisfy a query (D-230, D-240)
+- No judgement about whether a Memory is still true. The server returns what it was recorded under and what to re-check; the current code, environment, versions and specification are the adapter's to establish, and no request field accepts any of them (D-310)
+- No interpretation of an Environment snapshot. It is returned exactly as stored — no OS, runtime or version extracted, no schema imposed on arbitrary JSON (D-312)
+- No `evidenceRef` resolution. References are returned, never fetched, opened, executed or checked for existence; whether one still points at anything is a question about now (D-313)
+- No Event on the retrieval path. Evidence stops at Verifications so that dead-end semantics stay with the task that owns them (D-313)
+- No revalidation state stored or cached. The historical context is read fresh on every search, hit or miss, because a Verification added to a candidate moves nothing the cache key watches (D-317)
 - No automatic `REFERENCED`, `ADOPTED`, `EXCLUDED` or `CHANGED_STRATEGY`. A search cannot observe any of them; a candidate dropped by a stage is not one an AI set aside (D-299)
 - No aggregate use counters anywhere. The usage rows are the event source; a count kept beside them would be a second answer that eventually disagrees (D-308)
 - No idempotency key on a usage log, and no third queued write kind. The retry queue replays writes that carry a key, and a replayed usage row would be a second record of one search (D-306)
@@ -949,16 +978,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-11 — Current-environment revalidation contract.
+P4-12 — Dead-end handling.
 
-**NOT STARTED.** P4-01 through P4-10 are done; nothing of P4-11 has been implemented. See the private Phase 4 breakdown for what it is.
+**NOT STARTED.** P4-01 through P4-11 are done; nothing of P4-12 has been implemented. See the private Phase 4 breakdown for what it is.
 
 Notes for whoever picks this up:
-- `RetrievalSearchService.search` returns ranked candidates carrying identifiers, a Project relation, trust, currency, suppression and structural provenance — and **no Memory content at all**. Whatever a revalidation contract needs an adapter to re-check, fetching it is this task's own work, as it was for every stage before it
-- `freshness` is already ranked on and reported (D-284). What it does **not** do is say anything about what to re-check or why; no stage produces `mustRevalidate`, a historical Environment, or a version warning, and guards fail if one appears in the retrieval path
-- An Environment is an immutable point-in-time snapshot (D-019) and is arbitrary JSON. Comparing one against "now" needs a definition of now that no stage currently has
-- The specification's rule is that a Memory is a candidate rather than an answer, and that current code, environment, versions and official specification are re-checked before adoption. That is an obligation on the adapter; this contract is how the server tells it what to re-check
-- The usage log records that a Memory surfaced, not that it was adopted. If revalidation produces an outcome worth recording, `REFERENCED` / `ADOPTED` / `EXCLUDED` are the explicit path and stay adapter-reported (D-299)
+- **No Event of any type has ever been read by the retrieval path.** The generation source reads all six to build a summary (D-219), and nothing since has touched one — the evidence contract deliberately stopped at Verifications so that dead ends stayed here (D-313). Fetching `DEAD_END` Events is this task's own work
+- The specification is explicit that a dead end is a warning and **not** a prohibition: it is used for display, for lowering priority and for comparing candidates, and re-trying is never automatically forbidden. An environment difference is a legitimate reason to try again, which is precisely what P4-11's historical Environment is for
+- `RetrievalMemoryCandidate { ranking, revalidation }` is where this attaches. The envelope was shaped so a third field could be added without widening a stage's own type (D-316), and P4-13's conflict comparison will want the same room
+- `Event.summary`, `reason` and `evidence_ref` are stored free text that has been through the write-time secret boundary. Nothing on the retrieval path re-sanitizes at read time, and P4-11 did not start (D-319)
+- A search still writes nothing but the usage record, and a dead-end warning is not a use — `REFERENCED` / `ADOPTED` / `EXCLUDED` stay adapter-reported (D-299)
 
 ## Core MVP milestone
 

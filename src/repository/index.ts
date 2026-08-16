@@ -92,6 +92,19 @@ export {
 } from './retrieval-ranking-reader.js';
 export type { RankingMetadataRow, RankingMetadataSnapshot } from '../db/retrieval-ranking-read.js';
 
+// What a Memory was recorded under: the Environment it occurred in and every
+// check performed on it. Its own reader — the joins, the columns and the
+// question are different from ranking's, and one statement keeps the answer a
+// description of a state the database really held.
+export {
+  createRetrievalRevalidationReader,
+  type RetrievalRevalidationReader,
+} from './retrieval-revalidation-reader.js';
+export type {
+  RevalidationEvidenceRow,
+  RevalidationRow,
+} from '../db/retrieval-revalidation-read.js';
+
 // Semantic candidate search. Handed a validated embedding by the service
 // above it — the embedding parameter is a storage-boundary input, not an
 // application surface; what an application caller can supply is text.

@@ -66,8 +66,9 @@ import type {
   RetrievalUsageLogFailureReporter,
   RetrievalUsageLogWriter,
 } from './retrieval-usage-log-writer.js';
-import type { RankedMemoryCandidate } from '../domain/retrieval-ranking.js';
+import type { RetrievalMemoryCandidate } from '../domain/retrieval-revalidation.js';
 import type { RetrievalSummarySourceReader } from '../repository/index.js';
+import type { RetrievalRevalidationService } from './retrieval-revalidation-service.js';
 import type { RetrievalSearchCache } from './retrieval-search-cache.js';
 import {
   resolveHybridSearchLimit,
@@ -121,7 +122,14 @@ export interface RetrievalSearchRequest {
 export type RetrievalSearchOutcome =
   | {
       readonly kind: 'SEARCHED';
-      readonly candidates: readonly RankedMemoryCandidate[];
+      /**
+       * The Memories offered, best first.
+       *
+       * Each carries why it is here and in this position, and what has to be
+       * re-established before it is acted on. A search result is a candidate
+       * rather than an answer, and the second half is how that is said.
+       */
+      readonly candidates: readonly RetrievalMemoryCandidate[];
       readonly semanticStatus: SemanticChannelStatus;
       readonly structuralStatus: StructuralRerankStatus;
     }
@@ -185,7 +193,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
  * would start empty every time and never answer anything — which would look
  * like a working cache and be a slow one.
  *
- * All five collaborators must be scoped to the same owner, and it is checked
+ * All six collaborators must be scoped to the same owner, and it is checked
  * once here. Each is owner-safe alone and none can see the others, so a
  * composition pairing one owner's reader with another's search would produce a
  * result mixing two people's Memory with every part behaving correctly. Only
@@ -203,6 +211,7 @@ export function createRetrievalSearchService(
   hybridService: RetrievalHybridSearchService,
   rerankService: RetrievalStructuralRerankService,
   rankingService: RetrievalRankingService,
+  revalidationService: RetrievalRevalidationService,
   cache: RetrievalSearchCache,
   usageLogWriter: RetrievalUsageLogWriter,
   usageLogFailureReporter: RetrievalUsageLogFailureReporter,
@@ -212,6 +221,7 @@ export function createRetrievalSearchService(
     hybridService.ownerId !== ownerId ||
     rerankService.ownerId !== ownerId ||
     rankingService.ownerId !== ownerId ||
+    revalidationService.ownerId !== ownerId ||
     usageLogWriter.ownerId !== ownerId
   ) {
     // Naming the owners would put two identifiers wherever this error goes.
@@ -219,11 +229,15 @@ export function createRetrievalSearchService(
   }
 
   /**
-   * Ranks a rerank result against the database as it is right now.
+   * Ranks a rerank result against the database as it is right now, then
+   * attaches what each surviving Memory was recorded under.
    *
    * Reached identically from a hit and a miss, which is what makes "a cached
    * search still respects every control" true by construction rather than by
-   * two code paths agreeing with each other.
+   * two code paths agreeing with each other — and what makes the historical
+   * context as fresh on a reused search as on a new one. A Verification added
+   * since the cache was filled shows up on the next search, because none of
+   * this is cached.
    */
   async function rankAndReport(
     currentProjectId: ProjectId,
@@ -233,7 +247,7 @@ export function createRetrievalSearchService(
     const ranked = await rankingService.rank({ currentProjectId, structuralResult: reranked });
     return {
       kind: 'SEARCHED',
-      candidates: ranked.candidates,
+      candidates: await revalidationService.enrich(ranked.candidates),
       semanticStatus,
       structuralStatus: ranked.structuralStatus,
     };
@@ -268,10 +282,12 @@ export function createRetrievalSearchService(
       await usageLogWriter.recordSearched({
         currentProblemId,
         sourceAi,
-        // The candidates as ranked just now — never the cached rerank. A
-        // Memory deleted or switched off since the cache was filled is absent
-        // from these, and must stay absent from the log too.
-        candidates: outcome.candidates,
+        // The candidates as ranked and enriched just now — never the cached
+        // rerank. A Memory deleted or switched off since the cache was filled
+        // is absent from these, and must stay absent from the log too. The
+        // ranking view is what the log records; a Memory's historical
+        // conditions and its evidence are not what a usage record is about.
+        candidates: outcome.candidates.map((candidate) => candidate.ranking),
         semanticStatus: outcome.semanticStatus,
         structuralStatus: outcome.structuralStatus,
       });
