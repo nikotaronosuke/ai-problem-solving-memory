@@ -3275,6 +3275,94 @@ Not built: the Phase 4 end-to-end run (P4-15). No benchmark artifact was committ
 
 P4-14 is done. P4-15 is NOT STARTED.
 
+## D-352 — A recorded fix is not a verified one, so no `FIX` Event travels as a success (P4-15)
+
+The successful-direction gap could have been closed the way the dead-end gap was: read the Events, return them. That would have been wrong, and the reason is the rule the whole status model rests on.
+
+A `DEAD_END` Event **is** the fact. Somebody tried a direction and wrote down that it did not work; nothing else is needed to report it. A `FIX` Event is not the same kind of thing. It records that a fix was tried or applied, and **there is no link between a `FIX` Event and the Verification that later passed** — deliberately, since P2-08. So a Problem with three `FIX` Events and one successful check does not say which of the three the check was about.
+
+Every way of choosing among them is an invention:
+
+- Returning all three asserts three causal claims where the record supports none.
+- Returning the latest assumes the last thing written is the thing that worked.
+- Returning the one nearest the Verification in time turns a coincidence of clocks into a rule.
+- Reading a later `USER_CORRECTION` as a retraction means parsing free text and guessing which earlier Event it meant (D-323, again).
+
+So this stage reads **no Event at all**, and a guard scans all three of its modules for `public.events`, the Event type names and `event_type` rather than only the statement — a hole a first mutation run found by injecting a `DISCOVERY` query into the service file where the statement-only guard could not see it.
+
+## D-353 — The successful direction is derived guidance, and says so (P4-15)
+
+What can honestly be said comes from the summary generator, which reads the whole canonical history — every Event, every Verification, the Environment, the status — and states what the successful direction was. That claim already carries a mechanical gate: `requiresSuccessfulVerification(status) && hasSuccessfulVerification`, enforced at generation time, where a generator claiming a direction the record does not support has its whole draft refused rather than quietly emptied (D-226).
+
+`successfulDirections` returns exactly that stored material. It is **`readonly string[]`**, and the plainness is the point: giving it a summary, a result, a reference and a timestamp would dress a generator's reading up as something somebody recorded at a moment. No `SuccessfulDirection` object was created, and no domain module was created for a string array.
+
+This is the one field on the final envelope that is derived rather than recorded. The asymmetry with `deadEndWarnings` is not an inconsistency to be tidied away — it is the difference between two things storage can and cannot establish, and D-322 is not extended mechanically to its mirror image.
+
+## D-354 — The gate is applied again, freshly, at read time (P4-15)
+
+The artifact records what was true when it was generated, and is not rewritten when a Problem is reopened or its Verification history changes. Trusting the generation-time gate for ever would leave a Memory that has left `VERIFIED` still offering directions its record no longer supports.
+
+So the same test runs again, in the same statement as the artifact read: the Problem's status and whether any Verification passed, joined to `retrieval_artifacts` with `unnest(...) with ordinality`, one statement, no Event table. The rule is **imported** from `problem-status.ts` rather than restated, so it cannot drift from the one the generation path enforces.
+
+A test drives the whole thing: a Memory offers its directions, is moved back to `INVESTIGATING`, and offers nothing — while the artifact is asserted to still name them.
+
+**An empty list is not "no fix was ever tried".** It means there is nothing that may currently be offered as a direction that worked: no artifact, or none named, or the gate no longer holds. Those three are not distinguished, because they mean the same thing to a caller.
+
+## D-355 — Derived data does not decide whether a Memory exists (P4-15)
+
+The artifact is left-joined. A Memory whose search profile has not been generated, or whose artifact was removed, is **kept** with an empty list — never dropped. A regenerable rendering must not be able to delete somebody's experience from a search, and the only reason this stage leaves a candidate out is that the Memory itself has gone since the stage before read it.
+
+Ordering, count and repeats come from the stored profile unchanged: no sort, no de-duplication, no new cap. The generator chose an order and repeating itself is its own statement. `MAX_STRUCTURAL_FEATURE_ITEMS` already bounds it.
+
+## D-356 — Five fields, five stages, one added each (P4-15)
+
+`RetrievalMemoryCandidate` now carries `ranking`, `revalidation`, `deadEndWarnings`, `successfulDirections` and `conflict`. The intermediate types follow the established shape — `SuccessfulDirectionAwareMemoryCandidate` sits between the dead-end and conflict stages — and every field set is guarded exactly, in order.
+
+The new stage runs between dead ends and conflicts, on both the cached and the recomputed path, and nothing about it enters the cache. The reason is D-317's, D-328's and D-340's, a fourth time: **reopening a Problem or appending a Verification moves nothing the cache key watches**, because that key is built from the Problem being worked on and this is about other Problems entirely. A remembered answer would keep offering a direction the record had stopped supporting.
+
+A read failure raises. Empty is a statement, and a database that could not be reached has not established it.
+
+## D-357 — Phase 4 ends with the retrieval surface still internal (P4-15)
+
+The specification lists a cross-project similarity search among the minimum API surface, and that requirement is **not cancelled** — it is handed forward, explicitly, to the task that builds the client which will call it.
+
+Publishing a route here would have shipped a contract no standard server composition can answer. Phase 4 deliberately ends with three ports and nothing concrete behind them: no summary generator, no embedding provider, no reranker is wired into the production entry point, and nothing triggers artifact generation on its own. A `POST .../search` in that state would be the only route in the API that cannot do what it says.
+
+There is a second reason, and it is about the shape of the contract rather than its readiness. A search has to be attributed to an assistant, and how an adapter identifies itself is a Phase 5 question. Fixing `source_ai` into a published route before that is decided would settle it by accident.
+
+So: API 0.4.0, 27 operations, no new route, `src/http/openapi.ts` untouched. The handoff says which task owns it, and says that an adapter importing the internal service directly instead is **not** an acceptable substitute — the common JSON API is the contract, and adapters sit on top of it.
+
+## D-358 — Phase 4's proof is continuity, and the middle is not seeded (P4-15)
+
+`tests/e2e/phase4.e2e.test.ts` carries one investigation from Project A to Project B in nineteen ordered steps on one state. The canonical history is written **over a real socket** through the production HTTP application; the artifacts are generated **through the production generation service**; the search runs the production composition. The evaluation corpus's direct artifact upsert — allowed in P4-14, where controlling the profile exactly was the point — is forbidden here, because the step from a Memory to its search rendering is what this file exists to prove.
+
+Two Memories are seeded and only one is verified by a check that passed, so one search shows the gate working in both directions: `[DERIVED_DIRECTION]` for the first, `[]` for the second, from a generator that never saw an identifier and could not tell them apart except by their histories.
+
+Four wordings are kept deliberately distinct, and each difference is asserted:
+
+- the `FIX` Event's wording, which never appears as a successful direction;
+- the generator's successful direction, which does;
+- the `DEAD_END` Event's wording, which is what the warning carries;
+- the artifact's paraphrase of that dead end, which is comparison material and stays out of the warning.
+
+What P4-15 does **not** do: no write-back to Project B (Phase 5 captures Events, Phase 7 closes the loop), no automatic search trigger (P5-05), no actual re-checking of the current environment — the response carries the historical conditions and the four required checks, and performing them is the adapter's work.
+
+## D-359 — What P4-14 proved is cited rather than re-proved (P4-15)
+
+Owner boundary, suppression, currency, trust, the five-candidate bound and cache reuse were all established at corpus level by P4-14, with a foreign decoy written to match perfectly and seven controls candidates whose structural strength runs the reverse of their expected order. Re-seeding any of that into the end-to-end run would have made it longer without making it say more.
+
+So the Phase 4 Definition of Done is closed as a matrix — each item against the task that proved it — and P4-15 asserts only continuity: cross-project, both channels, structural rerank, one to five offered, all four enrichments present, the usage log written, and the canonical record byte-identical before and after.
+
+## D-360 — What P4-15 changed, and Phase 4 is complete (P4-15)
+
+Three new modules, one new intermediate type, one added field, two new test files, one new public document. No migration, no dependency, no route, no schema. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies, `HYBRID_RRF_K` 10, source depth 20, rerank default and ceiling 5, cache TTL 300000, capacity 100 — every one measured and unchanged. No constant was tuned.
+
+Fifty mutations for this task, all killed by a named test or guard: thirty on behaviour and twenty injecting a forbidden construct, both sets finished before the commit. Two needed correcting first — a fixture whose dead-end warnings were already empty, so a mutation dropping them was invisible; and an Event guard that read only the statement, so an Event query injected into the service file survived. The P4-12, P4-13 and P4-14 sets were re-run and all hold; two anchors were refreshed where the new stage moved a line in the search chain.
+
+**The successful-direction OPEN is closed.** The final response now carries verification-gated derived directions, which is what "成功方向とdead-endの両方を利用できる" asks for, and the reason it is derived rather than historical is D-352.
+
+Phase 4 is **COMPLETE**. P4-01 through P4-15 are done. P5-01 — a fresh audit of Claude Code's current official capabilities — is NOT STARTED, and that audit must be made against the specification as it stands when the work begins rather than against anything recorded here.
+
 ## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
 
 D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced
