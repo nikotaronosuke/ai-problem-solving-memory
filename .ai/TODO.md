@@ -633,9 +633,27 @@ Forty-three discrimination mutations each killed by a named test or guard. Eight
 
 3184 tests across 103 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-09 Search cache
+### P4-09 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. The retrieval pipeline is complete end to end and writes nothing; a cache is the first thing on this path that would store something, and every control a cached result depends on is editable (D-285, D-287).
+Search cache: the three retrieval stages as one call, and a short-lived memory of searches already run.
+
+The composition came first, because the specification's rule is about a whole search and there was no whole search — each stage had a factory and no caller (D-289). A caller names the Problem being worked on, the two texts, a structural profile, an optional filter and the two limits, and gets one of four outcomes.
+
+**What is reused is the rerank result — the output of both expensive calls — and ranking runs on every search** (D-290). That is what keeps the cache safe rather than merely fast: suppressing a Memory, lowering its confidence, marking it invalid, relabelling its Project, switching its reading off or deleting it all take effect on the next search even when nothing was recomputed, because the stage that reads those never sees the cache.
+
+Sameness is P4-02's canonical-source fingerprint, reused rather than reinvented: Events and Verifications count, controls do not. **`Problem.version` was measured and rejected — appending an Event or a Verification does not move it** (D-291). The key is a SHA-256 over a fixed-order JSON array with the owner inside it, and the search values are hashed and never kept, because a query may legitimately contain credential-shaped text and is safe only while it stays ephemeral (D-292). Nothing about the search is normalised except the limits, so an unstated limit and the default are one search.
+
+Storage is a process-local `Map`, five minutes, a hundred entries, injected clock, no dependency, no schema — **D-202 does not fire because nothing is persisted**, and a disposable optimisation should not acquire a delete path to survive a restart it does not need (D-293). Reading refreshes recency and never extends the expiry.
+
+The current Project is read from the Problem's own row as metadata beside the canonical document, so P4-02's fingerprint is untouched and a caller cannot name one Problem and another Project's neighbourhood (D-294). The Problem is read again after the two long calls, and a search whose question moved is reported rather than returned or kept (D-295). Only a clean search is cached; every degraded outcome is a statement about a moment (D-296). No single-flight and no hit/miss field, both recorded as deliberate (D-297).
+
+Thirty-seven discrimination mutations each killed by a named test or guard. Four survived a first run — one mutation that changed no behaviour, three guards too loose to see the change — and each was fixed rather than accepted.
+
+3272 tests across 105 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-10 Search usage logging
+
+**NOT STARTED.** See the private Phase 4 breakdown. `RetrievalSearchService.search` is the one entry point a log would be written from, and nothing on the retrieval path writes anything today. A query must never reach a log (D-238, D-298).
 
 ## BLOCKED
 

@@ -2693,6 +2693,92 @@ Forty discrimination mutations, each killed by a named test or guard. Eight surv
 
 P4-08 is done. P4-09 is NOT STARTED.
 
+## D-289 — The three stages become one call, and that call is where reuse lives (P4-09)
+
+Until now nothing joined hybrid search, structural reranking and ranking: each had a factory and no production caller. P4-09 adds the composition, because the specification's rule — do not repeat the same search for the same Problem in the same state — is a statement about a whole search, and there was no whole search to make it about.
+
+A caller supplies the Problem being worked on, the two texts, a structural profile, an optional Project filter and the two limits. Not the owner, not the current Project, not which Problem to exclude, and nothing about trust or currency. The outcome is one of four: a search, a Problem that cannot be read, a Problem whose reading is switched off, or a Problem that changed while the search ran. Three of those are ordinary rather than exceptional — a deleted Problem and a user's own setting are not faults — so they are outcomes rather than thrown errors.
+
+## D-290 — What is reused is the rerank result, and ranking always runs again (P4-09)
+
+The cache holds `StructuralRerankResult` — the output of both expensive calls, an embedding provider and a model asked to compare structure. Ranking is never cached and runs on every search, hit or miss.
+
+That division is the whole design, and it is what makes the cache safe rather than merely fast. Everything a person can change about a *candidate* — its confidence, its currency, whether it is suppressed, its Project's technology label, whether its reading is on, whether it still exists — is read by the ranking stage, every time (D-285). So suppressing a Memory takes effect on the next search even when nothing was recomputed. A cache of the final ranked list would have frozen all of it, and would have needed a revalidation pass that read the same rows anyway.
+
+Both paths reach ranking through one function, so "a reused search still respects every control" is true by construction rather than by two code paths agreeing with each other.
+
+## D-291 — Sameness is the canonical source, and `Problem.version` will not do (P4-09)
+
+The key is built over P4-02's fingerprint of the Problem's canonical source: its semantic fields, its Environment, every Event and every Verification, and none of the controls. Appending a Verification misses; marking the Problem important does not. That is exactly the line the specification draws between the state of an investigation and the settings on it, and it exists already — no second fingerprint was invented.
+
+`Problem.version` was measured and rejected. **Appending an Event or a Verification does not move it**: the append paths touch no `problems` row, and only the three update paths increment. A key built on the version would keep answering with a search made before half the investigation existed.
+
+## D-292 — What identifies a search, and why none of it is kept (P4-09)
+
+A SHA-256 over a fixed-order JSON array: the owner, the Problem, the understanding fingerprint, both texts verbatim, the Project filter, both effective limits, and the structural profile spelled out field by field in schema order. Prefixed `retrieval-cache-v1:` so no other digest in the system can be mistaken for it, and so a later change to what a key means cannot silently collide with an older one.
+
+Three decisions inside that:
+
+**The digest is the only thing kept.** A query is allowed to contain credential-shaped text — that permission exists so searching for the Memory about a leaked credential works, and it is safe because a query is bound, used and gone (D-238). A cache is a new place text could stay, so the values are hashed and never stored.
+
+**JSON rather than a delimiter.** Two fields joined by a separator cannot be told apart from one field containing that separator; JSON escapes, and a fixed-order array avoids depending on how an object was built.
+
+**No normalisation of the search itself.** No trimming, folding, sorting or deduplication. Two searches a person would call equivalent but that differ by a character are different searches, and that is the safe direction: a missed reuse costs one recomputation, an invented equivalence answers a question nobody asked. The single exception is the limits, resolved to their effective values first, because not specifying one and specifying the default are the same request rather than two similar ones — which is why the stage resolvers were made reusable rather than reimplemented here.
+
+## D-293 — A process-local map, bounded and short-lived (P4-09)
+
+A `Map`, a five-minute lifetime, a hundred entries, an injected clock, no dependency and no schema. **D-202 does not fire, because nothing is persisted** — and that is the reason to keep it in memory rather than an excuse. A five-minute optimisation stored in a table would have to arrive with a delete path, an export exclusion and a place in the deletion guarantees, all so that something disposable could survive a restart it has no need to survive. Losing the cache costs one recomputation and can never make an answer wrong.
+
+Five minutes is chosen against what the window actually protects. A change in the Problem misses already; an edit to a candidate is reflected already. What is left is the rest of the Memory — a Problem verified in another Project a moment ago, an artifact just regenerated — so the number needs to be long enough to cover the repeated searching of one investigation step and short enough that a Memory written during it surfaces while that step is still going on.
+
+Recency is the `Map`'s own insertion order: delete and re-set moves an entry to the end, so the first key the iterator yields is the least recently used one. No list, no counters, no package. Reading refreshes recency and deliberately does **not** extend the expiry — a search repeated every four minutes would otherwise be answered forever from a result nobody ever recomputed. An expired entry is removed and never handed out, not even once.
+
+One instance serves every owner in a process, which is why the owner is inside the key rather than around the cache. A per-owner cache would have to be created somewhere, and the only natural somewhere is the per-request scope — where it would be empty on every call, and would look like a working cache while being a slow one. The cache is therefore a constructor parameter: a guard fails if the service builds its own.
+
+## D-294 — The current Project comes from the Problem, not from the caller (P4-09)
+
+`RetrievalSummarySource` gained one field: `projectId`, read from the same row, as metadata beside the canonical document rather than inside it. The document is what the fingerprint is taken over, and a Project identifier appearing there would regenerate every artifact for a fact no summary describes — so P4-02's behaviour, input and fingerprint bytes are all unchanged, and a guard asserts the identifier is outside the canonical object.
+
+The reason to read it rather than accept it: a caller naming one Problem and a different Project's neighbourhood is a contradiction, and the fix is to make it unstateable rather than to detect it. The same reasoning removes `excludeProblemId` from the request — the excluded Problem is always the current one, so two fields could disagree where one cannot.
+
+The Problem is excluded from both stages. Either exclusion alone keeps it out of the answer, so neither is observable in a result on its own; the hybrid one matters because without it the Problem occupies a slot in its own candidate window and crowds out a real Memory. A guard requires both, by count.
+
+## D-295 — The Problem is read twice, and a search that outlived its question is not kept (P4-09)
+
+Between the first read and the answer sit two network calls, which is a long time in a system where an assistant appends Events while it works. So the Problem is read again afterwards, and a fingerprint that has moved yields `CURRENT_SOURCE_CHANGED`: nothing ranked, nothing cached. Deleted and switched-off are re-checked in the same read and give the same outcomes as they would have at the start.
+
+Nothing is retried. A loop would keep going for as long as the Problem keeps changing, and whether to search again now or carry on is a decision for whoever is doing the work.
+
+Two reads of one Problem disagreeing about its Project raises. A Problem cannot move between Projects, so it is not a race — it is a contradiction, and ranking on either answer would build on it.
+
+## D-296 — Only a search that ran cleanly is worth remembering (P4-09)
+
+Cacheable: the semantic channel used, and the rerank either used or not needed. Nothing else.
+
+Every degraded outcome is a statement about a moment rather than about the search — a provider that did not answer, a credential recognised in the text, features that could not be parsed, a reranker that was unreachable. Keeping one would answer the next five minutes with the consequences of a failure that may already be over, and the sensitive-input case would additionally reuse a privacy decision instead of making it. `NOT_NEEDED` is kept because it is not a degradation: it means there was nothing to reorder, which is a complete answer.
+
+Nothing is stored until ranking has succeeded, so a partial search never acquires a five-minute life, and an invalid request, a database failure or a malformed model answer all leave the cache untouched.
+
+Invalidation is three layers and no hooks. Understanding changes move the key; candidate controls are re-read by ranking; everything else — a Memory written elsewhere, an artifact regenerated — waits at most five minutes. An explicit hook on every write path was considered and rejected: it would spread a cache dependency through the Memory core and be forgotten by the next write path added, to buy a few minutes on a case the TTL already covers. **That the rest of the Memory can be up to five minutes stale is a known limitation, recorded rather than hidden.**
+
+## D-297 — No single-flight, and no cache status (P4-09)
+
+Two identical searches arriving at once will both run. The specification's rule is about repeating a search, and the MVP's caller is one assistant working sequentially; promise sharing brings error propagation, cancellation and cleanup, which is a lot of machinery for a case that has not appeared. Recorded as a known limitation rather than built.
+
+The result reports no hit or miss. Whether an answer was recomputed is not something a caller acts on, and a field saying so would be a product promise made for the convenience of tests. Reuse is proven by counting provider and reranker calls instead.
+
+## D-298 — What P4-09 changed, and what it did not build (P4-09)
+
+No migration, no table, no column, no index, no function, no dependency, no route. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies — every one measured and unchanged. Three new modules, one new metadata field on an existing read, and two private helpers made public without changing what they do.
+
+A search writes nothing at any stage, on any outcome, hit or miss. Proven byte-for-byte across all nine tables.
+
+Not built: usage logging, which this composition is now the obvious caller for and which is P4-10's. No revalidation contract — currency is ranked on and reported, and nothing says "re-check this" (P4-11). No dead-end handling (P4-12), no conflict details (P4-13), no evaluation fixtures (P4-14). No HTTP route: the search surface should be published once, when it means what it will keep meaning.
+
+Thirty-seven discrimination mutations, each killed by a named test or guard. Four survived a first run — one was a mutation that did not change behaviour, and three were guards loose enough not to see the change — and in each case the guard or the mutation was fixed rather than the result accepted.
+
+P4-09 is done. P4-10 is NOT STARTED.
+
 ## D-288 — A missing structural score is refused, not defaulted (P4-08, after review)
 
 D-283 established that a null score is never read as a zero, and the comparator then did exactly that: `(b.structuralScore ?? 0) - (a.structuralScore ?? 0)`. The comment directly above it said "there is no `?? 0` anywhere on this path". The comment was the intent and the line was the code.

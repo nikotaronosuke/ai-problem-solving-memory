@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-08)
+Updated: 2026-08-16 (P4-09)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-08 done; P4-09 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-09 done; P4-10 next)
 
 ## Source of truth
 
@@ -835,6 +835,30 @@ The last retrieval stage: what order a handful of Memories are offered in. A pur
 
 **Forty-three discrimination mutations, each killed by a named test or guard**: the owner filter and read control dropped, an unscoped Project join, a timestamp pulled into the read, suppression removed / made exclusion, currency and trust dropped or reordered, invalid ranked as merely untrusted, conflicted above weak evidence, structure dropped or placed after proximity, a missing score read as zero, both tie-breaks dropped, the two positions conflated, matched dimensions counted, a magic weight, a threshold, unknown technology called same or different, case folding dropped, a substring match, the current Project double-counted, each request check disabled, caller metadata believed, a foreign Project accepted, the cross-Project invariant skipped, a vanished candidate raising, an empty ranking querying, the label returned, the outcome dropped, the strict null check removed, the coalescing restored, and the refusal quoting a candidate. Eight survived a first run — six fixtures whose expected order matched the identifier tie-break, one rule tested only through inputs another rule constrained, one stale anchor — and every one was fixed in the tests.
 
+## What exists now — Search and its cache (P4-09)
+
+The three retrieval stages as one call, with a short-lived memory of searches already run. A key module, a bounded map and an orchestration service. No migration, no dependency, no route.
+
+**The composition is the point** (D-289). Until now each stage had a factory and no caller, and the specification's rule about not repeating a search is a statement about a whole search. A caller names the Problem being worked on, the two texts, a structural profile, an optional Project filter and the two limits — and gets one of four outcomes, three of which are ordinary rather than exceptional.
+
+**What is reused is the rerank result; ranking always runs again** (D-290). The cache holds the output of both expensive calls. Every candidate control — confidence, currency, suppression, a Project's label, reading, existence — is re-read on every search, so suppressing a Memory takes effect immediately even when nothing was recomputed. Both paths reach ranking through one function.
+
+**Sameness is the canonical source** (D-291). P4-02's fingerprint, reused: semantic fields, Environment, every Event, every Verification, and none of the controls. **`Problem.version` was measured and rejected** — appending an Event or a Verification does not move it, so a key built on it would answer with a search made before half the investigation existed.
+
+**The key is a digest and the inputs are not kept** (D-292). SHA-256 over a fixed-order JSON array, prefixed `retrieval-cache-v1:`. JSON rather than a delimiter, because no value can then impersonate a field boundary. No trimming, folding or sorting of the search itself — a missed reuse costs a recomputation, an invented equivalence answers the wrong question. Limits are resolved to their effective values first, so an unstated limit and the default are one search.
+
+**A process-local map, bounded and short-lived** (D-293). Five minutes, a hundred entries, injected clock, no dependency, no schema — **D-202 does not fire because nothing is persisted**. Recency is the `Map`'s insertion order; reading refreshes it and deliberately does not extend the expiry. One instance serves every owner, which is why the owner is in the key; the cache is injected, because one built per request would be empty every time.
+
+**The current Project comes from the Problem** (D-294). `RetrievalSummarySource` gained a `projectId` metadata field — outside the canonical document, so no fingerprint moves and P4-02 is unchanged. Naming one Problem and another Project's neighbourhood is unstateable, and so is disagreeing about which Problem to exclude.
+
+**The Problem is read twice on a miss** (D-295). Two network calls is a long time in a system where an assistant appends Events while it works, so a fingerprint that moved yields `CURRENT_SOURCE_CHANGED` — nothing ranked, nothing cached, and no retry loop.
+
+**Only a clean search is kept** (D-296). Semantic used, rerank used or not needed. Every degraded outcome is a statement about a moment, and freezing one would outlast its cause. Invalidation is three layers and no write-path hooks; **the rest of the Memory can be up to five minutes stale, recorded as a limitation rather than hidden**.
+
+**No single-flight, no cache status** (D-297). Two simultaneous identical searches both run — a known limitation. Reuse is proven by counting provider and reranker calls, not by a field in the result.
+
+**Thirty-seven discrimination mutations, each killed by a named test or guard**: each key component removed in turn, the key sorted / case-folded / joined with a separator / left unhashed, copies shared in either direction, the lifetime unchecked or off by one, reading extending the expiry, the bound removed, recency not refreshed, an expired entry answered once, degraded searches kept, ranking skipped on reuse, the second read removed, a changed Problem kept anyway, an unavailable or read-disabled Problem searched anyway, self-exclusion dropped from either stage, unresolved limits, owners uncompared, storing before ranking, the Project taken from the first read, and the Project moved into the canonical document. Four survived a first run — one mutation that changed no behaviour and three guards too loose to see the change — and each was fixed rather than accepted.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -844,7 +868,11 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI
 - No concrete summary generator and no concrete embedding provider. Both are ports (D-223, D-241); no vendor SDK or HTTP client is a dependency, and no provider credential exists anywhere. A deployed server therefore still cannot generate artifacts by itself — the orchestration path exists and is proven with scripted ports (D-249)
 - No caller of the generation pipeline. Nothing invokes `generateArtifact` in production: no route, no scheduler, no backfill worker, no adapter. Who calls it, and when, is a later wiring decision (D-249)
-- No search cache. Ranking exists and stops at ordering: it stores nothing, remembers no previous search and reuses no result (D-287). Structural reranking still weighs none of the ranking signals itself (D-263, D-275)
+- No persistent cache. Reuse is a process-local map with a five-minute life; a restart empties it and that is correct, because it is an optimisation and never a source of truth (D-293). No Redis, no cache table, no distributed invalidation
+- No cache of the final ranked list. What is reused is the rerank result, so every ranking control is re-read on every search (D-290)
+- No single-flight. Two identical searches arriving at once both run — a recorded limitation, not an oversight (D-297)
+- No hit/miss reported to a caller. Reuse is not a product promise, and proving it is the tests' job (D-297)
+- No write-path invalidation hooks. Appending an Event already misses because the key is built over the Problem's canonical source; a hook would spread a cache dependency through the Memory core (D-296)
 - No importance, status or timestamp anywhere in ranking. Importance has no ranking rule in the specification and is a boolean; `VERIFIED` is already reflected in confidence; currency is the `freshness` field and not a clock (D-284)
 - No technology identity beyond a Project's free-form `platform` label, compared case-insensitively and exactly. No manifest parsing, framework detection, synonym table or fuzzy match — `Node.js` and `node` are different technologies to this system (D-279)
 - No ranking threshold and no ranking-time removal. Suppressed, invalid, conflicted and structurally-unlike candidates are all returned, last (D-281)
@@ -892,17 +920,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-09 — Search cache.
+P4-10 — Search usage logging.
 
-**NOT STARTED.** P4-01 through P4-08 are done; nothing of P4-09 has been implemented. See the private Phase 4 breakdown for what it is.
+**NOT STARTED.** P4-01 through P4-09 are done; nothing of P4-10 has been implemented. See the private Phase 4 breakdown for what it is.
 
 Notes for whoever picks this up:
-- The retrieval pipeline is now complete end to end and writes nothing at any stage. A cache is the first thing on this path that stores something, so what invalidates it, and who may read it back, are the questions to settle before any storage is chosen (D-230, D-240, D-287)
-- What comes out of P4-08 is zero to five `RankedMemoryCandidate`s and the structural status. A cached result would be a snapshot of controls that are all editable — trust, currency, suppression, a Project's technology label — so a cache that outlives an edit would return an order the current state does not support (D-285)
-- The specification's rule is "do not repeat the same search for the same Problem in the same understanding state", and it says re-search when the understanding changes. What counts as a changed understanding is the whole of the design question
-- No stage before this logs a search. `SEARCHED / REFERENCED / ADOPTED / EXCLUDED` exist in storage and nothing writes them; usage logging is P4-10, and a cache must not start it by accident
-- `hybridRank` keeps its gaps and `rankingRank` is contiguous — two facts, and a cache that stored one in place of the other would lose whichever it replaced (D-286)
-- A null `structuralScore` means no judgement was made, never a low one (D-283)
+- `RetrievalSearchService.search` is now the one entry point for a whole search and the obvious place a log would be written from. Nothing on the path writes anything today, on any outcome, hit or miss (D-298) — so this is the task that changes "a search is a read" and it should say so deliberately
+- `SEARCHED / REFERENCED / ADOPTED / EXCLUDED` exist as a stored enum and nothing writes them. What a search *did* is knowable here; what a caller later did with the results is not, and arrives from somewhere else
+- **A search query must never reach a log** (D-238). A UsageLog records that a search happened and what became of the results, not what was typed — and the cache was built the same way, keeping only a digest (D-292)
+- A reused search is still a search. Whether a cache hit is logged, and whether it is distinguishable from a miss in the log, is a decision for this task; the search result deliberately does not report which it was (D-297)
+- Four outcomes exist, and three of them are not searches at all: an unavailable Problem, one with reading switched off, and one that changed mid-search. Logging those as searches would misreport what happened (D-289, D-295)
 
 ## Core MVP milestone
 
