@@ -713,9 +713,25 @@ So a caller receiving a search result gets the ranking, the historical Environme
 
 This is recorded rather than fixed. It was **not** merged into P4-12, whose scope is dead ends, and it must **not** be quietly absorbed into P4-13, whose scope is conflict comparison. It needs a deliberate decision: whether the successful side belongs in the search response at all, or whether fetching the Problem's Events is the intended second step. Settle it before the Phase 4 Definition of Done is called satisfied.
 
-### NEXT — P4-13 Conflict comparison
+### P4-13 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. No Relation has ever been read by the retrieval path — `CONTRADICTS` exists and is written through the ordinary Relation service, while `CONFLICTED` travels only as the `Confidence` value it already was (D-283) — and the two enrichments already built are the shape to follow (D-326, D-328, D-329).
+Conflict handling: every Memory a search offers now also carries what was recorded as disagreeing with it, and the material for working out which applies here.
+
+**Material, never a verdict** (D-332). The specification says a conflict is not decided by majority: what gets compared is the difference in environment, in version, in symptoms, the stated reason, and the strength of the verification behind each, and if that cannot settle it the record stays `CONFLICTED` rather than being resolved. Every one of the five the server can supply and none is one it can judge, so there is no winner, no preferred Memory, no resolution, no score and no notification decision. A test performs all five comparisons against a single search result.
+
+Two things called conflict are kept apart (D-333). `CONFLICTED` confidence is a statement about one record; a `CONTRADICTS` Relation is a link between two Problems. Neither implies the other, all four combinations occur and all four are distinguishable, and no derived marker restates what the confidence already says.
+
+The candidate's own semantic side travels with the disagreements, because symptom difference is one of the five and the result did not previously carry the candidate's symptoms (D-334). The other Memory arrives as a snapshot rather than a search result — no rank, no score, and nothing recursive: one hop and stop (D-335). Only `CONTRADICTS` is read, and no relation is treated as settling another; a mistaken link is not withdrawn, because there is no update path and how one is corrected stays undecided (D-336). Direction decides which Problem to look up and then stops mattering; every link comes back, uncapped, unmerged and deterministically ordered (D-337).
+
+One statement, because the answer is meant to be compared against itself — and because deleting a Problem removes its Relations in the same transaction, a link whose counterpart is gone cannot be observed within one snapshot (D-338). A disagreement never drops, demotes or reorders a candidate, and P4-08 is untouched: the specification asks for order adjustment for dead ends and asks for nothing of the kind here (D-339). Fresh on every search and cached nowhere, since a Relation between two candidates moves nothing the cache key watches; a read failure raises rather than reporting empty contradictions (D-340).
+
+Eighty-one mutations each killed by a named test or guard — fifty-two on behaviour and twenty-nine injecting a forbidden construct, **both sets completed before the commit**. Five survived a first run: two unreachable through behaviour because the composite foreign key already makes a cross-owner link unstorable, re-aimed at the guard asserting the predicates textually while the predicates stayed; three real gaps in the tests, all strengthened. The P4-11 and P4-12 sets were re-run and all seventy still hold.
+
+3526 tests across 110 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-14 Retrieval evaluation fixtures
+
+**NOT STARTED.** See the private Phase 4 breakdown. Every fixture shape it names — same technology and symptom, cross-technology structural similarity, surface-similar but differently caused, stale Memory, dead ends, conflicting Memories — is now producible against a real database, and the six retrieval integration suites already seed them. This is the first Phase 4 task that measures rather than decides, and several numbers fixed by argument are waiting for evidence: RRF `k = 10`, the five-candidate ceiling, the cache TTL and capacity, and the deliberate absence of caps on evidence, dead ends and contradictions.
 
 ## BLOCKED
 

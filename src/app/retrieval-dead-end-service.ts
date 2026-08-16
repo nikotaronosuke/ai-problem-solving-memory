@@ -31,7 +31,7 @@
 import type { OwnerId } from '../domain/owner.js';
 import { MAX_RANKED_CANDIDATES } from '../domain/retrieval-ranking.js';
 import type {
-  RetrievalMemoryCandidate,
+  DeadEndAwareMemoryCandidate,
   RevalidatedMemoryCandidate,
 } from '../domain/retrieval-result.js';
 import type { RetrievalDeadEndReader } from '../repository/index.js';
@@ -60,7 +60,7 @@ export interface RetrievalDeadEndService {
    */
   enrich(
     candidates: readonly RevalidatedMemoryCandidate[],
-  ): Promise<readonly RetrievalMemoryCandidate[]>;
+  ): Promise<readonly DeadEndAwareMemoryCandidate[]>;
 }
 
 export function createRetrievalDeadEndService(
@@ -69,7 +69,7 @@ export function createRetrievalDeadEndService(
   return {
     ownerId: reader.ownerId,
 
-    async enrich(candidates): Promise<readonly RetrievalMemoryCandidate[]> {
+    async enrich(candidates): Promise<readonly DeadEndAwareMemoryCandidate[]> {
       // The type says these came from the stage before. This function is
       // exported, so that is a claim rather than a fact, and these are the
       // cheap checks that keep a malformed list from reaching a query. The
@@ -117,7 +117,7 @@ export function createRetrievalDeadEndService(
         revalidated.map((candidate) => candidate.ranking.problemId),
       );
 
-      const offered: RetrievalMemoryCandidate[] = [];
+      const offered: DeadEndAwareMemoryCandidate[] = [];
       for (const candidate of revalidated) {
         const warnings = warningsByProblem.get(candidate.ranking.problemId);
         if (warnings === undefined) {

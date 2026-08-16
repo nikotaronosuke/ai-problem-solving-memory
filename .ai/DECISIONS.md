@@ -3096,6 +3096,104 @@ Two test gaps were closed at the same time. A warning is now proven to attach un
 
 Sixty-five P4-12 mutations in total, all caught. The P4-11 set was re-run and still holds.
 
+## D-332 — A conflict is answered with material, never with a verdict (P4-13)
+
+The specification is unusually specific here, and the whole task is built on one sentence: when two Memories conflict the answer is **not decided by majority** — what gets compared is the difference in environment, the difference in version, the difference in symptoms, the stated reason, and the strength of the verification behind each; and if that comparison cannot settle it, the record is kept as `CONFLICTED` rather than resolved.
+
+Every one of those five is something the server can supply. None of them is something it can judge. So the contract carries all five and reaches no conclusion: no `winner`, no `preferred`, no `canonical`, no `resolved`, no `conflictScore`, no `severity`, and no notification decision. Which of two disagreeing Memories applies to the work happening now depends on the conditions that work is happening under, and this process cannot see them — the same boundary D-310 draws for revalidation and D-321 for dead ends, arriving at the same place from a third direction.
+
+The five map onto the response like this, and a test performs all five against one search result:
+
+| the specification says | the response supplies |
+| --- | --- |
+| 環境差 | `revalidation.historicalEnvironment` against `other.historicalEnvironment` |
+| version差 | the versions inside those two snapshots |
+| 症状差 | `conflict.subject.symptoms` against `other.symptoms` |
+| 理由 | `contradiction.reason` |
+| Verification強度 | `revalidation.evidence` against `other.evidence` |
+
+## D-333 — Two things are called conflict, and they are different things (P4-13)
+
+`confidence = CONFLICTED` is a statement about **one record**: it holds evidence pointing both ways. `CONTRADICTS` is a link somebody stored between **two Problems**, with a required non-blank reason.
+
+Neither implies the other, and P4-13 makes neither imply the other. A `CONTRADICTS` link does not change either Problem's confidence — creating one changes neither Problem at all (D-079) — and a `CONFLICTED` Problem with no link recorded gets none invented. All four combinations occur and all four are reported as they are; a test drives the matrix and requires the four to be distinguishable.
+
+`CONFLICTED` keeps its single home in the ranking view, and no derived marker was added beside it. A `hasConflict` or a `selfConflicted` would be a second spelling of a fact already stated, and two spellings of one fact eventually disagree.
+
+Where the two do meet is in the specification's own sentence: `CONFLICTED` is what a comparison that could not be settled *becomes*. That makes it downstream of the five comparisons rather than a sixth one, which is why a `CONFLICTED` candidate with no link still comes back with its subject, its conditions and its evidence — the material for redoing that comparison — and nothing more.
+
+## D-334 — The subject is here because a difference needs two sides (P4-13)
+
+The obvious shape for this stage was a list of contradictions and nothing else. It does not work: "symptom difference" is one of the five comparisons, and a search result carries the candidate's conditions and evidence but **not its symptoms**. Returning only the other Memory's symptoms would hand a reader half of a subtraction.
+
+So `ConflictContext` has a `subject` beside its `contradictions`, carrying exactly the semantic facts the rest of the result lacks: `symptoms`, `problemDomain`, `suspectedBoundary`, `status`, `fixKind`. Not the identifier, Project, trust or currency — those are the ranking view's — and not the conditions or evidence, which are the revalidation context's. One fact with two homes is one fact that will eventually disagree with itself.
+
+`title` is not there either. It names a Problem for a person scanning a list; `symptoms` is what a comparison is made against, and adding `title` here while the candidate has none anywhere else would make the contract lopsided for no gain.
+
+## D-335 — The other Memory is a snapshot, not a search result (P4-13)
+
+`ConflictMemorySnapshot` carries `problemId`, `projectId`, the five semantic fields, `confidence`, `freshness`, `historicalEnvironment` and `evidence`. It has no rank, no structural score and no position: it was never a candidate of this search, and giving it one would mean inventing a placement nobody computed.
+
+It carries nothing recursive. No dead ends of its own, no conflicts of its own, no relations. **One hop is the whole of it** — a Memory that disagrees with a Memory that disagrees with something else is a graph, and D-080 left graph traversal to the phase that could justify it. This is that phase, and it does not justify it: the context would grow without bound, cycles are possible, and none of the five comparisons needs a second hop.
+
+`requiredChecks` is absent for a different reason. The four checks are one obligation about using a Memory at all, they never vary (D-311), and copying them onto every contradiction would turn a fixed rule into something a reader might reasonably think differed per item.
+
+`suppressed` is absent too. It is a presentation control the ranking stage already applies, and it says nothing about whether a historical disagreement happened.
+
+## D-336 — Only `CONTRADICTS`, and no relation is read as settling another (P4-13)
+
+Five other relation types exist and none of them is read. `SUPERSEDES` is the interesting refusal: `A CONTRADICTS B` together with `C SUPERSEDES A` looks like a disagreement that has been resolved, and it is not. Nothing in the record says a `SUPERSEDES` refers to the same disagreement as a `CONTRADICTS`, and deciding that it does would be the server settling an argument by walking a graph nobody asked it to walk.
+
+A mistaken `CONTRADICTS` is not withdrawn either. There is no update or delete path for a Relation and how one is corrected is deliberately undecided (D-080), so this stage returns it as what it is: a historical explicit link, recorded at a stated moment. No per-relation freshness was invented, because nothing in the record supports one.
+
+## D-337 — Direction decides which Problem to look up, and then stops mattering (P4-13)
+
+`CONTRADICTS` reads the same both ways and exactly one row is stored (D-077). So a link touching a candidate is found from either end — `from_id = candidate or to_id = candidate` — and the other Memory is whichever end the candidate is not.
+
+`fromId`, `toId`, `relationId` and `relationType` do not appear in the response. Which end somebody happened to record the link from is not a fact about the disagreement, and handing it over would pass an implementation detail off as meaning. This does not contradict D-077's rule that rows are reported as stored rather than flipped: that rule protects the *asymmetric* types from being reversed into their opposite, and none of them is read here.
+
+Every recorded link comes back. No cap, no merging by pair, no de-duplication by wording. Two links between the same two Problems were written at two moments for two reasons, nothing in the schema makes them the same link — there is no unique constraint — and merging them would lose whichever account was written second. Ordered by `created_at` then `relation_id`, because links written in one transaction share a timestamp to the microsecond.
+
+## D-338 — One statement, because the answer is meant to be compared (P4-13)
+
+The candidate, its links, each counterpart Problem, each counterpart Environment and each counterpart's Verifications come from **one PostgreSQL snapshot**. This is not a performance preference. The material exists to be compared against itself; read across several statements, the two halves of a comparison could come from two different moments, and a reader could see a difference that never existed at any single instant.
+
+It settles a race for free. Deleting a Problem removes its Relations first and the Problem last, in one transaction, so within a single snapshot a link whose counterpart has been deleted **cannot be observed**. The inaccessible counterpart that can be observed is the one whose owner switched automatic reading off — an update rather than a delete.
+
+`json_agg` with an explicit `order by` rather than a flat product. Candidate × Relation × Verification is a triple product, and unpicking it in application code means trusting repeated columns to agree. The canonical-source read already takes this approach (D-219), so it is the established shape here rather than a new one.
+
+Owner and read control are applied at **both** ends. A link between two Problems is not permission to read the second one, and the counterpart's predicate sits in a join whose failure drops that one item rather than collapsing the candidate's row.
+
+## D-339 — A disagreement never costs a Memory its place (P4-13)
+
+Nothing is dropped, demoted or reordered for being contested. No new ranking penalty was added and the P4-08 policy is untouched.
+
+That is a decision rather than an omission, and the contrast with dead ends is the argument. The specification explicitly lists 検索順位調整 among what a dead end is used for; it lists nothing of the kind for conflicts. A `CONTRADICTS` link says two Memories disagree — it does not say which is wrong, and the other end may itself be `INVALID`. Ranking a Memory down for having an honest disagreement recorded against it would punish the record for being complete, and `CONFLICTED` confidence already ranks last (D-281) for the case where the record itself says it cannot be relied on.
+
+The only reason a candidate is left out here is that the Memory has gone since the stage before read it. Then `rankingRank` closes up, `hybridRank` keeps its gaps (D-277, D-315), and the revalidation context and dead-end warnings travel through unchanged. When a *counterpart* becomes unreadable, that one contradiction goes and the candidate stays — a disagreement whose other side cannot be read is not comparison material, and returning it hollow would be worse than not returning it.
+
+## D-340 — Fresh on every search, stored nowhere, finished before anything is kept (P4-13)
+
+Both the cached and the recomputed paths go through one function, so a reused search reports disagreements exactly as current as a new one, and none of it enters the cache — which still holds the rerank result and nothing else (D-290).
+
+The reason is D-317's and D-328's, a third time. **A Relation written between two *candidates* moves nothing the cache key watches** — that key is built from the Problem being worked on, and both ends of the link are other Problems entirely. So is a change to a counterpart's confidence, and so is a Verification appended to it. Three tests append a link, a check and a trust change between two searches and require the second, cache-hit search to show all three while the provider and reranker stay at one call each.
+
+The cache is filled and the usage log written only after this stage succeeds. A read failure raises rather than returning empty contradictions: "nothing was recorded as disagreeing" is a positive statement, and a database that could not be reached has not established it. The failure travels as itself and not through the usage-log reporter, which exists for a side observation that could not be written.
+
+## D-341 — What P4-13 changed, and what it did not build (P4-13)
+
+No migration, no table, no column, no index, no domain, no dependency, no route. `CONTRADICTS` was already a relation type and every column already existed. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies — every one measured and unchanged. Four new modules, one renamed type, one added field.
+
+The envelope grew by exactly one field, and the rename is the whole of the churn: what P4-12 called `RetrievalMemoryCandidate` is now `DeadEndAwareMemoryCandidate`, and `RetrievalMemoryCandidate` is the final shape again. Three named types for three stage boundaries, each intermediate named for the stage that produced it, and the exact field set of every one of them is guarded.
+
+Writes: none. No Relation, no Problem update, no confidence or freshness mutation, no Event, no Verification, no ChangeLog. No `UsageAction` was added — a disagreement shown is not a use, the same way a warning is not (D-299).
+
+Not built: evaluation fixtures (P4-14). No HTTP route, so the API is unchanged and the public README is untouched. The successful-direction scope gap opened in P4-12 stays open and untouched: the specification's five comparisons do not include a successful direction, so P4-13 stands on its own and the gap remains a P4-15 decision.
+
+Eighty-one mutations, all killed by a named test or guard — fifty-two on behaviour and twenty-nine injecting a forbidden construct, both sets completed **before** the commit rather than after. Five behaviour mutations survived a first run: two were unreachable through behaviour because the composite foreign key already makes a cross-owner link unstorable, and were re-aimed at the guard that asserts the predicates textually while the predicates were kept; three were real gaps in the tests. A fixture had set the counterpart's confidence to `HIGH`, the same value a stage that had stopped reading the column would invent; the timestamp on a link was never checked against anything; and the empty-list gate was proven at the statement but not at the service. All three tests were strengthened. The P4-11 and P4-12 sets were re-run and all seventy still hold.
+
+P4-13 is done. P4-14 is NOT STARTED.
+
 ## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
 
 D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced

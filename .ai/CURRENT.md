@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-12)
+Updated: 2026-08-16 (P4-13)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-12 done; P4-13 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-13 done; P4-14 next)
 
 ## Source of truth
 
@@ -937,6 +937,30 @@ Every Memory a search offers now also carries the directions already recorded as
 
 **Forty-one discrimination mutations, each killed by a named test or guard**: every Event type treated as a dead end or a correction or an attempt read as one, the owner filter dropped, the read control not re-applied, an Event taken from another owner's or another Problem, either join made inner, the caller's order or the timestamp order or the identifier tie-break dropped, the warnings capped or de-duplicated, a Problem with none left out of the answer or an empty join row reported as a warning, a row for an invisible Problem kept, an absent result or reason or reference filled in, the summary swapped for the reason, the Event's identifier carried out, the empty request still costing a round trip at either gate, the count bound and duplicate and position checks removed or moved after the database read, the refusal naming what it refused, a vanished Memory returned hollow, a Memory dropped for having warnings, the candidates sorted by warning count, positions unrenumbered or provenance renumbered, the caller's candidate edited in place, the historical context dropped in passing, a retry judgement attached to a warning, the stage skipped on a reused search, the cache filled before it succeeded, a failed read reported as none, and a foreign dead-end stage composed into a search. Six survived a first run: three were undetectable through behaviour and were re-aimed at the guard asserting the statement's text — a defence-in-depth owner predicate, a left join equivalent to an inner one here, and an `order by` the Map-keyed consumer does not depend on — all three kept, because the statement is exported and being deterministic on its own is worth having. The other three were real gaps and the tests were fixed: a key set checked only indirectly, an empty-list gate proven at the statement but not the service, and a fixture whose expected order agreed with what a warning-count sort would produce. A seventh detector turned out to be a coin flip on random identifiers and was re-aimed at a fixture that contradicts the mutation by construction. **A second round injected twenty-four forbidden constructs** — the derived profile wired in as the source, a dead-end count on the ranking view, a warning penalty on the ranking request, the reranker's dead-end dimension removed, `currentEnvironment` and `plannedAction` on the request, an `evidenceRef` followed, the filesystem reached, Relations fetched, the envelope growing a conflict field or redefined in the module it came from, the warnings cached, the log written early, `EXCLUDED` introduced, an Event written, a freshness updated, an HTTP surface, a migration — and two survived, both real gaps now closed: the stage could have read `process.env` or `process.platform` and compared the record against *its own* surroundings, and the envelope's field set was never pinned so a conflict field could have landed ahead of the stage meant to fill it (D-331). Sixty-five in total, all caught.
 
+## What exists now — Conflict handling (P4-13)
+
+Every Memory a search offers now also carries what was recorded as disagreeing with it, and the material for working out which applies here. Four new modules, one renamed type, one added field, no migration, no dependency, no route.
+
+**Material, never a verdict** (D-332). The specification says a conflict is not settled by majority: what gets compared is the difference in environment, in version, in symptoms, the stated reason, and the strength of the verification behind each — and if that cannot settle it, the record stays `CONFLICTED` rather than being resolved. Every one of those five the server can supply; none is one it can judge. So there is no `winner`, no `preferred`, no `canonical`, no `resolved`, no `conflictScore`, no `severity` and no notification decision. A test performs all five comparisons against one search result, which is this task's central obligation.
+
+**Two things called conflict, kept apart** (D-333). `confidence = CONFLICTED` is a statement about one record — it holds evidence pointing both ways. `CONTRADICTS` is a link somebody stored between two Problems with a required reason. A link does not change either Problem's confidence, and a `CONFLICTED` Problem with no link recorded gets none invented. All four combinations occur, all four are distinguishable, and no derived `hasConflict` marker was added beside a fact the confidence already states.
+
+**The subject is here because a difference needs two sides** (D-334). A search result carries the candidate's conditions and evidence but not its symptoms, and symptom difference is one of the five. Returning only the other Memory's symptoms would be half a subtraction. So `conflict.subject` carries exactly what the rest of the result lacks — `symptoms`, `problemDomain`, `suspectedBoundary`, `status`, `fixKind` — and nothing the ranking view or the revalidation context already owns.
+
+**The other Memory is a snapshot, not a search result** (D-335). No rank, no structural score, no position: it was never a candidate here. Nothing recursive either — no dead ends of its own, no conflicts of its own, **one hop and stop** — because a Memory disagreeing with a Memory disagreeing with something else is a graph, with cycles, that none of the five comparisons needs. `requiredChecks` is absent because the four never vary and copying them per item would make a fixed rule look variable; `suppressed` is absent because it is a presentation control, not a fact about the past.
+
+**Only `CONTRADICTS`, and nothing settles anything** (D-336). The other five relation types are not read. `SUPERSEDES` is the interesting refusal: nothing says a later conclusion refers to the same disagreement, so reading it as a resolution would be the server settling an argument by walking a graph. A mistaken link is not withdrawn either — there is no update path and how one is corrected stays undecided — so it comes back as the historical link it is.
+
+**Direction decides which Problem to look up, then stops mattering** (D-337). One row is stored and `CONTRADICTS` reads the same both ways, so the link is found from either end and the other Memory is whichever end the candidate is not. `fromId`, `toId`, `relationId` and `relationType` do not travel. Every link comes back — no cap, no merging by pair, no de-duplication by wording, ordered by when it was recorded with the identifier breaking ties.
+
+**One statement, because the answer is meant to be compared** (D-338). Candidate, links, counterpart Problems, counterpart Environments and counterpart Verifications from one snapshot: read across several statements, two halves of a comparison could come from two moments and a reader could see a difference that never existed. It settles a race for free — deleting a Problem removes its Relations first in the same transaction, so a link whose counterpart is deleted cannot be observed within one snapshot. Owner and read control at both ends; a link is not permission to read the Problem at its far end.
+
+**A disagreement never costs a Memory its place** (D-339). Nothing dropped, demoted or reordered for being contested, and P4-08 is untouched. The contrast with dead ends is the argument: the specification lists 検索順位調整 among what a dead end is for and lists nothing of the kind for conflicts. A link says two Memories disagree, not which is wrong, and the other end may itself be `INVALID`. When a counterpart becomes unreadable that one contradiction goes and the candidate stays.
+
+**Fresh on every search, stored nowhere, finished before anything is kept** (D-340). A Relation between two *candidates* moves nothing the cache key watches — that key is built from the Problem being worked on — and neither does a counterpart's confidence change or a Verification appended to it. Three tests append each between two searches and require the cache-hit search to show it with the provider and reranker still at one call each. A read failure raises rather than reporting empty contradictions, and travels as itself rather than through the usage-log reporter.
+
+**Eighty-one mutations, each killed by a named test or guard** — fifty-two on behaviour and twenty-nine injecting a forbidden construct, both sets finished before the commit rather than after: every relation type read as a disagreement, a similarity or a supersession read as one, only one end of a link found, the far end taken as the stored target or as the candidate itself, either owner filter or either read control dropped, an unreadable counterpart returned hollow, the reason dropped or rewritten, either side's symptoms dropped or swapped for the other's, either side's conditions or checks dropped or swapped, failures filtered out, trust or currency dropped, the link's timestamp stamped at read time, the identifier carried out, the subject removed, the links capped or reversed or merged, the checks reversed, all four request checks disabled, a contested Memory dropped or demoted or reordered, positions unrenumbered or provenance renumbered, the caller's list edited, either earlier enrichment discarded, the stage skipped on a reused search, the cache filled early, a failed read reported as none, a foreign stage composed in — and, injected: a winner, a preferred Memory, a severity score, a notification, a derived marker, a sort by strength, a second graph hop, dead ends or conflicts or the checklist nested in the snapshot, a contradiction count or penalty on ranking, the trust order rearranged, `proposedDirection` or `currentEnvironment` on the request, the ambient process read, the reason sent to be summarised, the filesystem reached, the regenerable profile used as a source, a Relation or Problem write, `EXCLUDED` introduced, the disagreements cached or logged early, the envelope growing an evaluation or a recommendation field, the stored direction exposed, an HTTP surface, a migration. Five behaviour mutations survived a first run: two were unreachable through behaviour because the composite foreign key already makes a cross-owner link unstorable, and were re-aimed at the guard asserting the predicates textually while the predicates stayed; three were real gaps — a fixture whose counterpart confidence was `HIGH`, the value a stage that stopped reading the column would invent; a link timestamp never checked against anything; and an empty-list gate proven at the statement but not the service — and all three tests were strengthened. The P4-11 and P4-12 sets were re-run and all seventy still hold.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -1006,16 +1030,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-13 — Conflict comparison.
+P4-14 — Retrieval evaluation fixtures.
 
-**NOT STARTED.** P4-01 through P4-12 are done; nothing of P4-13 has been implemented. See the private Phase 4 breakdown for what it is.
+**NOT STARTED.** P4-01 through P4-13 are done; nothing of P4-14 has been implemented. See the private Phase 4 breakdown for what it is.
 
 Notes for whoever picks this up:
-- **No Relation has ever been read by the retrieval path.** `CONTRADICTS` exists as a Relation type and is written through the ordinary Relation service; the retrieval side has never touched one, and `CONFLICTED` travels only as the `Confidence` value it already was, ranked below `LOW` (D-283). Fetching Relations is this task's own work
-- `RetrievalMemoryCandidate` is where this attaches, and the envelope now lives in `src/domain/retrieval-result.ts` rather than inside a stage (D-327). A fourth field goes there without either existing stage widening
-- The two enrichments before it are the shape to follow: a dedicated reader, one statement, owner and read control re-applied, a service that renumbers the offered positions and leaves `hybridRank` alone, and a failure that raises rather than being disguised as an empty answer (D-326, D-329)
-- Both enrichments run on every search and neither is cached, for a reason that will apply here too: a Relation written between two Problems moves nothing the cache key watches, because that key is built from the Problem being worked on (D-328)
-- A search still writes nothing but the usage record. A conflict shown is not a use, the same way a warning is not (D-299)
+- The fixture set the specification names covers same-technology same-symptom, cross-technology structural similarity, surface-similar but differently caused, stale Memory, dead ends and conflicting Memories. Every one of those is now producible against a real database — the six integration suites under `tests/retrieval/` seed exactly these shapes, and a fixture task should read them before inventing new seeding
+- **This is the first Phase 4 task that measures rather than decides.** Several numbers were fixed by argument and left for measurement: RRF `k = 10` (D-259), the five-candidate rerank ceiling, the 300-second cache TTL and 100-entry capacity (D-289), and the deliberate absence of a cap on Verifications, dead ends and contradictions. Evidence for any of them belongs here
+- The retrieval pipeline is complete end to end: source → hybrid → rerank → ranking → revalidation → dead ends → conflicts, with the final envelope in `src/domain/retrieval-result.ts` carrying `ranking`, `revalidation`, `deadEndWarnings` and `conflict`
+- There is still no HTTP route. The whole retrieval surface should be published once, when it means what it will keep meaning, and that documentation sync belongs at the end of the phase rather than after each task
+- **The successful-direction gap is still open** and is a P4-15 decision, not a P4-14 one. See the OPEN entry in `TODO.md`
 
 ## Core MVP milestone
 

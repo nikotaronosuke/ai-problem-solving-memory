@@ -68,6 +68,7 @@ import type {
 } from './retrieval-usage-log-writer.js';
 import type { RetrievalMemoryCandidate } from '../domain/retrieval-result.js';
 import type { RetrievalSummarySourceReader } from '../repository/index.js';
+import type { RetrievalConflictService } from './retrieval-conflict-service.js';
 import type { RetrievalDeadEndService } from './retrieval-dead-end-service.js';
 import type { RetrievalRevalidationService } from './retrieval-revalidation-service.js';
 import type { RetrievalSearchCache } from './retrieval-search-cache.js';
@@ -214,6 +215,7 @@ export function createRetrievalSearchService(
   rankingService: RetrievalRankingService,
   revalidationService: RetrievalRevalidationService,
   deadEndService: RetrievalDeadEndService,
+  conflictService: RetrievalConflictService,
   cache: RetrievalSearchCache,
   usageLogWriter: RetrievalUsageLogWriter,
   usageLogFailureReporter: RetrievalUsageLogFailureReporter,
@@ -225,6 +227,7 @@ export function createRetrievalSearchService(
     rankingService.ownerId !== ownerId ||
     revalidationService.ownerId !== ownerId ||
     deadEndService.ownerId !== ownerId ||
+    conflictService.ownerId !== ownerId ||
     usageLogWriter.ownerId !== ownerId
   ) {
     // Naming the owners would put two identifiers wherever this error goes.
@@ -249,13 +252,16 @@ export function createRetrievalSearchService(
   ): Promise<RetrievalSearchOutcome> {
     const ranked = await rankingService.rank({ currentProjectId, structuralResult: reranked });
     // Each stage adds one thing and may drop a Memory that has gone since the
-    // one before it read. Both enrichments run on every search — a dead end
-    // recorded against a *candidate* moves nothing the cache key watches, so
-    // anything remembered here would go stale with nothing to notice.
+    // one before it read. All three enrichments run on every search — a
+    // Verification, a dead end or a contradiction recorded against a
+    // *candidate* moves nothing the cache key watches, which is built from the
+    // Problem being worked on, so anything remembered here would go stale with
+    // nothing to notice.
     const revalidated = await revalidationService.enrich(ranked.candidates);
+    const withDeadEnds = await deadEndService.enrich(revalidated);
     return {
       kind: 'SEARCHED',
-      candidates: await deadEndService.enrich(revalidated),
+      candidates: await conflictService.enrich(withDeadEnds),
       semanticStatus,
       structuralStatus: ranked.structuralStatus,
     };

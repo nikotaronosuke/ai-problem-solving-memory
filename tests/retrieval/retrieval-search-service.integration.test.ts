@@ -33,6 +33,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createRetrievalHybridSearchService,
   createRetrievalRankingService,
+  createRetrievalConflictService,
   createRetrievalDeadEndService,
   createRetrievalRevalidationService,
   createRetrievalSearchCache,
@@ -77,6 +78,7 @@ import {
   createMemoryRepository,
   createRetrievalArtifactRepository,
   createRetrievalRankingReader,
+  createRetrievalConflictReader,
   createRetrievalDeadEndReader,
   createRetrievalRevalidationReader,
   createRetrievalSearchReader,
@@ -223,6 +225,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       readonly reporter?: RetrievalUsageLogFailureReporter;
       /** Substituted only to make the last stage fail on demand. */
       readonly deadEndExecutor?: DatabaseExecutor;
+      readonly conflictExecutor?: DatabaseExecutor;
     } = {},
   ): RetrievalSearchService {
     return createRetrievalSearchService(
@@ -242,6 +245,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       createRetrievalRevalidationService(createRetrievalRevalidationReader(pool, owner.context)),
       createRetrievalDeadEndService(
         createRetrievalDeadEndReader(options.deadEndExecutor ?? pool, owner.context),
+      ),
+      createRetrievalConflictService(
+        createRetrievalConflictReader(options.conflictExecutor ?? pool, owner.context),
       ),
       cache,
       options.writer ?? createRetrievalUsageLogWriter(requestContextFor(owner)),
@@ -458,6 +464,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
+          createRetrievalConflictService(createRetrievalConflictReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -492,6 +499,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalConflictService(createRetrievalConflictReader(pool, owner.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(owner)),
           recordingReporter(),
@@ -526,6 +534,42 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, owner.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
+          createRetrievalConflictService(createRetrievalConflictReader(pool, owner.context)),
+          createRetrievalSearchCache(),
+          createRetrievalUsageLogWriter(requestContextFor(owner)),
+          recordingReporter(),
+        ),
+      ).toThrow();
+    });
+
+    it('refuses a conflict service belonging to a different owner', async () => {
+      const owner = await makeActor();
+      const stranger = await makeActor();
+
+      // Only the conflict service is foreign. Every other stage checks its own
+      // owner, so this is the case that proves this one is checked too — and
+      // it would otherwise set one person's Memory against another's, quoting
+      // a reason written about Problems they have never seen.
+      expect(() =>
+        createRetrievalSearchService(
+          createRetrievalSummarySourceReader(pool, owner.context),
+          createRetrievalHybridSearchService(
+            createRetrievalSearchReader(pool, owner.context),
+            createRetrievalVectorSearchService(
+              provider(),
+              createRetrievalVectorSearchReader(pool, owner.context),
+            ),
+          ),
+          createRetrievalStructuralRerankService(
+            createRetrievalStructuralReader(pool, owner.context),
+            reranker(),
+          ),
+          createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
+          createRetrievalRevalidationService(
+            createRetrievalRevalidationReader(pool, owner.context),
+          ),
+          createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalConflictService(createRetrievalConflictReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(owner)),
           recordingReporter(),
@@ -560,6 +604,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, owner.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalConflictService(createRetrievalConflictReader(pool, owner.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -590,6 +635,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
+          createRetrievalConflictService(createRetrievalConflictReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -1499,6 +1545,225 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       // remembered result behind for the next caller to be served instead.
       expect(embedding.calls).toBe(2);
       expect(port.calls).toBe(2);
+    });
+  });
+
+  describe('Memories that disagree', () => {
+    /** A `CONTRADICTS` link between two seeded Problems. */
+    const contradict = async (
+      owner: Actor,
+      from: ProblemId,
+      to: ProblemId,
+      reason: string,
+    ): Promise<void> => {
+      await owner.memory.createRelation({
+        fromId: from,
+        toId: to,
+        relationType: 'CONTRADICTS',
+        reason,
+      });
+    };
+
+    it('attaches them, with both sides of every comparison', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      await contradict(
+        owner,
+        candidate.problemId,
+        other.problemId,
+        'they reached opposite conclusions',
+      );
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+
+      const contested = outcome.candidates.find(
+        (entry) => entry.ranking.problemId === candidate.problemId,
+      );
+      const contradiction = contested?.conflict.contradictions[0];
+
+      // The candidate's own symptoms and conditions, and the other Memory's:
+      // a difference needs two sides, and one of the five things the
+      // specification says to compare is the difference in symptoms.
+      expect(contested?.conflict.subject.symptoms).toBe('seeded symptoms');
+      expect(contradiction?.reason).toBe('they reached opposite conclusions');
+      expect(contradiction?.other.problemId).toBe(other.problemId);
+      expect(contradiction?.other.symptoms).toBe('seeded symptoms');
+      expect(contradiction?.other.historicalEnvironment).toEqual({ runtime: 'node 22.12.0' });
+      expect(contested?.revalidation.historicalEnvironment).toEqual({ runtime: 'node 22.12.0' });
+    });
+
+    it('sees one recorded since the search was cached', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port);
+
+      await searchFor(service, current.problemId);
+      await contradict(owner, candidate.problemId, other.problemId, 'recorded after the first');
+      await owner.memory.appendVerification({
+        problemId: other.problemId,
+        verificationType: 'BUILD',
+        result: false,
+        summary: 'and this was checked afterwards too',
+        clientEventId: randomUUID() as ClientEventId,
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+
+      // Nothing expensive re-ran, and both the new link and the new check are
+      // there. A Relation between two *candidates* moves nothing the cache key
+      // watches — that key is built from the Problem being worked on — so a
+      // remembered enrichment would keep two Memories looking agreed.
+      expect(embedding.calls).toBe(1);
+      expect(port.calls).toBe(1);
+      if (outcome.kind === 'SEARCHED') {
+        const contested = outcome.candidates.find(
+          (entry) => entry.ranking.problemId === candidate.problemId,
+        );
+        expect(contested?.conflict.contradictions.map((entry) => entry.reason)).toEqual([
+          'recorded after the first',
+        ]);
+        expect(
+          contested?.conflict.contradictions[0]?.other.evidence.map((entry) => entry.summary),
+        ).toEqual(['and this was checked afterwards too']);
+      }
+    });
+
+    it('sees the other Memory’s trust change since the search was cached', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port);
+      await contradict(owner, candidate.problemId, other.problemId, 'they disagree');
+
+      await searchFor(service, current.problemId);
+      const problem = await owner.memory.getProblem(other.problemId);
+      await owner.memory.updateProblem(other.problemId, problem?.version ?? 0, {
+        confidence: 'CONFLICTED',
+        freshness: 'INVALID',
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+
+      expect(embedding.calls).toBe(1);
+      expect(port.calls).toBe(1);
+      if (outcome.kind === 'SEARCHED') {
+        const contradiction = outcome.candidates.find(
+          (entry) => entry.ranking.problemId === candidate.problemId,
+        )?.conflict.contradictions[0];
+        expect(contradiction?.other.confidence).toBe('CONFLICTED');
+        expect(contradiction?.other.freshness).toBe('INVALID');
+      }
+    });
+
+    it('offers a contested Memory in the position ranking gave it', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const before = await searchFor(service, current.problemId);
+      await contradict(owner, candidate.problemId, other.problemId, 'they disagree');
+      const after = await searchFor(service, current.problemId);
+
+      if (before.kind !== 'SEARCHED' || after.kind !== 'SEARCHED') {
+        return;
+      }
+      // A disagreement is material for the reader, never an input to ranking.
+      expect(after.candidates.map((entry) => entry.ranking.problemId)).toEqual(
+        before.candidates.map((entry) => entry.ranking.problemId),
+      );
+      expect(after.candidates.map((entry) => entry.ranking.rankingRank)).toEqual(
+        before.candidates.map((entry) => entry.ranking.rankingRank),
+      );
+      expect(after.candidates.map((entry) => entry.ranking.confidence)).toEqual(
+        before.candidates.map((entry) => entry.ranking.confidence),
+      );
+    });
+
+    it('records every Memory it offered, contested or not', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      await contradict(owner, candidate.problemId, other.problemId, 'they disagree');
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      const logs = await usageLogsOf(owner.ownerId);
+
+      if (outcome.kind === 'SEARCHED') {
+        expect(logs.map((log) => log.memory_id).sort()).toEqual(
+          outcome.candidates.map((entry) => entry.ranking.problemId).sort(),
+        );
+      }
+      // And nothing about the disagreement is copied into the record of it.
+      for (const log of logs) {
+        expect(log.reason.includes('they disagree'), 'the log quoted a relation').toBe(false);
+      }
+    });
+
+    it('remembers nothing and records nothing when the last stage fails', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      const reporter = recordingReporter();
+      let refuse = true;
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port, {
+        reporter,
+        conflictExecutor: {
+          query: (text, values) =>
+            refuse
+              ? Promise.reject(new Error('connection terminated unexpectedly'))
+              : pool.query(text, values),
+        },
+      });
+
+      await expect(searchFor(service, current.problemId)).rejects.toThrow(
+        'connection terminated unexpectedly',
+      );
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+      // The failure travels as itself rather than through the usage-log
+      // reporter, which is for a side observation that could not be written.
+      expect(reporter.failures).toEqual([]);
+
+      refuse = false;
+      await searchFor(service, current.problemId);
+
+      // The expensive stages ran a second time, which is how the absence of a
+      // cache entry shows.
+      expect(embedding.calls).toBe(2);
+      expect(port.calls).toBe(2);
+    });
+
+    it('carries no part of the search into the comparison material', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      await contradict(owner, candidate.problemId, other.problemId, 'they disagree');
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const marker = {
+        lexical: 'lexicalmarkerrrr',
+        semantic: 'semanticmarkersss',
+        profile: 'profilemarkerttt',
+      };
+      const outcome = await searchFor(service, current.problemId, {
+        lexicalText: `deployment ${marker.lexical}`,
+        semanticText: `deployed ${marker.semantic}`,
+        currentFeatures: features({ environment_facts: [marker.profile] }),
+      });
+
+      const reported = JSON.stringify(
+        outcome.kind === 'SEARCHED' ? outcome.candidates.map((entry) => entry.conflict) : [],
+      );
+      for (const absent of Object.values(marker)) {
+        expect(reported.includes(absent), `the comparison carried ${absent}`).toBe(false);
+      }
     });
   });
 
