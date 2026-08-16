@@ -3763,9 +3763,15 @@ describe('dead ends', () => {
     // field landing here ahead of the stage that fills it would ship a shape
     // the server cannot honour.
     expect(declared(bodyOf('RevalidatedMemoryCandidate'))).toEqual(['ranking', 'revalidation']);
-    expect(declared(bodyOf('RetrievalMemoryCandidate'))).toEqual(['deadEndWarnings']);
-    for (const later of ['conflict', 'Conflict', 'CONTRADICTS', 'suggestion', 'approval']) {
-      expect(result.includes(later), `the envelope carries ${later}`).toBe(false);
+    expect(declared(bodyOf('DeadEndAwareMemoryCandidate'))).toEqual(['deadEndWarnings']);
+    // The conflict field is the stage after this one and now belongs here; the
+    // exact field sets above are what keep each stage to one addition. What
+    // must stay out is anything that turns material into instruction —
+    // measured on the declarations, since the prose explains that an empty
+    // list is not a recommendation.
+    const declarations = result.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const later of ['suggestion', 'approval', 'recommendation', 'action']) {
+      expect(declarations.includes(later), `the envelope carries ${later}`).toBe(false);
     }
 
     const revalidation = await readFile(join(SRC, 'domain', 'retrieval-revalidation.ts'), 'utf8');
@@ -3931,6 +3937,411 @@ describe('dead ends', () => {
     const routes = await readModules(join(SRC, 'http'));
     for (const module of routes) {
       for (const exposed of ['deadEndWarnings', 'DeadEndWarning', 'RetrievalDeadEnd']) {
+        expect(module.source.includes(exposed), `${module.path} exposes ${exposed}`).toBe(false);
+      }
+    }
+
+    const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>;
+    };
+    expect(Object.keys(manifest.dependencies).sort()).toEqual([
+      '@fastify/swagger',
+      'fastify',
+      'pg',
+    ]);
+  });
+});
+
+describe('conflicts', () => {
+  /** The four modules this stage is made of. */
+  const CONFLICT_PATHS = [
+    join(SRC, 'domain', 'retrieval-conflict.ts'),
+    join(SRC, 'db', 'retrieval-conflict-read.ts'),
+    join(SRC, 'repository', 'retrieval-conflict-reader.ts'),
+    join(SRC, 'app', 'retrieval-conflict-service.ts'),
+  ];
+
+  /** All four, comments stripped. */
+  async function conflictCode(): Promise<string> {
+    const sources = await Promise.all(CONFLICT_PATHS.map((path) => readFile(path, 'utf8')));
+    return sources
+      .map((source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+  }
+
+  const bodyOf = (source: string, name: string): string => {
+    const start = source.indexOf(`export interface ${name}`);
+    expect(start, `${name} is missing`).toBeGreaterThan(-1);
+    const body = source.slice(start);
+    return body.slice(0, body.indexOf('\n}'));
+  };
+
+  const declared = (body: string): string[] =>
+    [...body.matchAll(/^ {2}readonly (\w+)[?]?:/gm)].map((match) => match[1] ?? '');
+
+  it('reads the links somebody recorded as disagreements, and only those', async () => {
+    const { CONFLICT_STATEMENT } = await import('../src/db/retrieval-conflict-read.js');
+
+    // One relation type. The other five mean something else entirely, and a
+    // `SUPERSEDES` read as settling a disagreement would be the server
+    // deciding an argument by walking a graph nobody asked it to walk.
+    expect(CONFLICT_STATEMENT).toContain("rel.relation_type = 'CONTRADICTS'");
+    for (const other of ['SIMILAR_TO', 'RELATED_TO', 'CAUSED_BY', 'SUPERSEDES', 'DERIVED_FROM']) {
+      expect(CONFLICT_STATEMENT.includes(other), `the read also takes ${other}`).toBe(false);
+    }
+
+    // Both ends of the link, because `CONTRADICTS` reads the same both ways
+    // and only one row is ever stored.
+    expect(CONFLICT_STATEMENT).toContain(
+      '(rel.from_id = pr.problem_id or rel.to_id = pr.problem_id)',
+    );
+    expect(CONFLICT_STATEMENT).toContain('when rel.from_id = pr.problem_id then rel.to_id');
+
+    // Owner and read control at *both* ends. A link between two Problems is
+    // not permission to read the second one.
+    expect(CONFLICT_STATEMENT).toContain('pr.owner_id = $1');
+    expect(CONFLICT_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(CONFLICT_STATEMENT).toContain('op.owner_id = rel.owner_id');
+    expect(CONFLICT_STATEMENT).toContain('op.memory_read_enabled');
+    expect(CONFLICT_STATEMENT).toContain('rel.owner_id = pr.owner_id');
+    expect(CONFLICT_STATEMENT).toContain('v.owner_id = op.owner_id');
+
+    // Deterministic, oldest first, stable when two share a moment.
+    expect(CONFLICT_STATEMENT).toContain('unnest($2::uuid[]) with ordinality');
+    expect(CONFLICT_STATEMENT).toContain('order by requested.position asc');
+    expect(CONFLICT_STATEMENT).toContain('order by rel.created_at asc, rel.relation_id asc');
+    expect(CONFLICT_STATEMENT).toContain('order by v.created_at asc, v.verification_id asc');
+
+    // No cap: cutting the record of what disagrees at some N would silently
+    // drop whichever disagreement somebody needed.
+    expect(CONFLICT_STATEMENT.includes(' limit '), 'the read caps the disagreements').toBe(false);
+    expect(CONFLICT_STATEMENT.includes('distinct'), 'the read merges disagreements').toBe(false);
+  });
+
+  it('goes one hop and stops', async () => {
+    const { CONFLICT_STATEMENT } = await import('../src/db/retrieval-conflict-read.js');
+
+    // The candidate's own relations, and nothing beyond the Problem at the far
+    // end of each. A second traversal would make a search return a graph, and
+    // a graph with cycles at that.
+    expect((CONFLICT_STATEMENT.match(/public\.relations/g) ?? []).length).toBe(1);
+
+    const code = await conflictCode();
+    for (const traversal of ['listRelations', 'recurse', 'traverse', 'depth', 'visited']) {
+      expect(code.includes(traversal), `the stage walks the graph with ${traversal}`).toBe(false);
+    }
+
+    // And the other Memory carries nothing that would nest another stage's
+    // answer inside this one.
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-conflict.ts'), 'utf8');
+    const snapshot = bodyOf(domain, 'ConflictMemorySnapshot');
+    for (const recursive of ['deadEndWarnings', 'conflict', 'contradictions', 'requiredChecks']) {
+      expect(snapshot.includes(recursive), `the snapshot nests ${recursive}`).toBe(false);
+    }
+  });
+
+  it('reads in one statement and asks nothing when there is nothing to ask about', async () => {
+    const code = await readFile(join(SRC, 'db', 'retrieval-conflict-read.ts'), 'utf8');
+    const stripped = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // One query for the candidate, its links, each counterpart, each
+    // counterpart's Environment and each counterpart's checks. The material is
+    // meant to be compared, and two halves read at two moments would let a
+    // reader see a difference that never existed at any single instant.
+    expect((stripped.match(/executor\.query/g) ?? []).length).toBe(1);
+    expect(stripped).toContain('problemIds.length === 0');
+  });
+
+  it('supplies comparison material and reaches no verdict', async () => {
+    const code = await conflictCode();
+    // Declarations only: the prose above them explains at length why there is
+    // no winner here, and a guard that read the explanation as the offence
+    // would forbid saying so.
+    const domain = (await readFile(join(SRC, 'domain', 'retrieval-conflict.ts'), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    // The specification says a conflict is not settled by majority: what gets
+    // compared is the difference in environment, in version, in symptoms, the
+    // stated reason, and the strength of the verification behind each. Every
+    // one of those the server can supply; none is one it can judge.
+    for (const verdict of [
+      'winner',
+      'loser',
+      'preferred',
+      'canonical',
+      'resolved',
+      'resolution',
+      'conflictScore',
+      'severity',
+      'chooseThis',
+      'ignoreOther',
+      'notify',
+      'notification',
+      'hasConflict',
+      'conflictState',
+    ]) {
+      expect(domain.includes(verdict), `the contract declares ${verdict}`).toBe(false);
+    }
+    for (const deciding of ['.sort(', 'Math.max', 'Math.min', 'rank(']) {
+      expect(code.includes(deciding), `the stage decides with ${deciding}`).toBe(false);
+    }
+
+    // And the five materials are all named by the types.
+    expect(domain).toContain('historicalEnvironment: EnvironmentSnapshot');
+    expect(domain).toContain('symptoms: string');
+    expect(domain).toContain('reason: string');
+    expect(domain).toContain('evidence: readonly VerificationEvidence[]');
+  });
+
+  it('never drops or reorders a Memory for being contested', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-conflict-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The only reason a candidate is left out here is that the Memory itself
+    // has gone since the stage before read it — never how much disagrees with
+    // it. A Memory that records its disagreements is not a worse Memory.
+    expect(code).toContain('conflict === undefined');
+    for (const weighing of [
+      '.sort(',
+      'contradictions.length >',
+      'penalt',
+      'demote',
+      'confidence =',
+      'freshness =',
+    ]) {
+      expect(code.includes(weighing), `the stage weighs conflicts with ${weighing}`).toBe(false);
+    }
+
+    // Renumbering reads a candidate's place in the array, which is only
+    // correct if the array *was* the order — checked before the database, so
+    // an unusable list costs nothing.
+    expect(code).toContain('candidate.ranking.rankingRank !== index + 1');
+    const checked = code.indexOf('candidate.ranking.rankingRank !== index + 1');
+    expect(checked).toBeGreaterThan(-1);
+    expect(checked).toBeLessThan(code.indexOf('reader.readForCandidates('));
+
+    // Positions close up; the first stage's provenance keeps its gaps; the two
+    // earlier enrichments travel through unchanged.
+    expect(code).toContain('rankingRank: offered.length + 1');
+    expect(code.includes('hybridRank:'), 'the provenance is renumbered').toBe(false);
+    expect(code).toContain('matchedDimensions: [...candidate.ranking.matchedDimensions]');
+    expect(code).toContain('revalidation: candidate.revalidation');
+    expect(code).toContain('deadEndWarnings: candidate.deadEndWarnings');
+  });
+
+  it('keeps a record own conflict apart from a link between two', async () => {
+    const code = await conflictCode();
+    const modules = await readModules(SRC);
+
+    // `CONFLICTED` is a statement about one record: it holds evidence pointing
+    // both ways. A `CONTRADICTS` Relation is a link somebody stored between
+    // two Problems. Neither implies the other, and this stage writes neither.
+    expect(code.includes("'CONFLICTED'"), 'the stage acts on CONFLICTED').toBe(false);
+    expect(code.includes('createRelation'), 'the stage writes a link').toBe(false);
+
+    // The ranking view stays the single source for the confidence value, and
+    // the ranking stage stays free of any of this.
+    const ranking = modules.filter((module) => module.path.includes('retrieval-ranking'));
+    expect(ranking.length).toBeGreaterThan(0);
+    for (const module of ranking) {
+      // Comments stripped: the ranking module explains that which Memories
+      // disagree is a separate question, and saying so is not doing it.
+      const source = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      for (const later of ['CONTRADICTS', 'contradiction', 'Contradiction', 'conflict']) {
+        expect(source.includes(later), `${module.path} took on ${later}`).toBe(false);
+      }
+    }
+    const { CONFIDENCES } = await import('../src/domain/enums.js');
+    expect(CONFIDENCES).toEqual(['HIGH', 'MEDIUM', 'LOW', 'CONFLICTED']);
+  });
+
+  it('hangs the disagreements off the envelope, with an exact field set', async () => {
+    const result = await readFile(join(SRC, 'domain', 'retrieval-result.ts'), 'utf8');
+
+    // One stage, one field, and each intermediate named for the stage that
+    // produced it. P4-14 is evaluation and adds nothing here.
+    expect(declared(bodyOf(result, 'RevalidatedMemoryCandidate'))).toEqual([
+      'ranking',
+      'revalidation',
+    ]);
+    expect(declared(bodyOf(result, 'DeadEndAwareMemoryCandidate'))).toEqual(['deadEndWarnings']);
+    expect(declared(bodyOf(result, 'RetrievalMemoryCandidate'))).toEqual(['conflict']);
+    expect(result).toContain('extends DeadEndAwareMemoryCandidate');
+
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-conflict.ts'), 'utf8');
+    expect(declared(bodyOf(domain, 'ConflictContext'))).toEqual(['subject', 'contradictions']);
+    expect(declared(bodyOf(domain, 'Contradiction'))).toEqual([
+      'reason',
+      'relationCreatedAt',
+      'other',
+    ]);
+    expect(declared(bodyOf(domain, 'ConflictSubject'))).toEqual([
+      'symptoms',
+      'problemDomain',
+      'suspectedBoundary',
+      'status',
+      'fixKind',
+    ]);
+    expect(declared(bodyOf(domain, 'ConflictMemorySnapshot'))).toEqual([
+      'problemId',
+      'projectId',
+      'symptoms',
+      'problemDomain',
+      'suspectedBoundary',
+      'status',
+      'fixKind',
+      'confidence',
+      'freshness',
+      'historicalEnvironment',
+      'evidence',
+    ]);
+
+    // The stored row's direction does not travel: `CONTRADICTS` reads the same
+    // both ways, so which end it was written from is not a fact about the
+    // disagreement.
+    for (const stored of ['fromId', 'toId', 'relationId', 'relationType']) {
+      expect(domain.includes(stored), `the contract exposes ${stored}`).toBe(false);
+    }
+  });
+
+  it('writes nothing, calls nobody and reaches no later task', async () => {
+    for (const path of CONFLICT_PATHS) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      // Reading what disagrees with a Memory changes neither Memory, and a
+      // usage log written from here would record a comparison as a use.
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'appendEvent',
+        'appendVerification',
+        'createUsageLog',
+        'createChangeLog',
+        'for update',
+        'DatabaseTransactionRunner',
+        'cache',
+      ]) {
+        expect(
+          code.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} has ${forbidden}`,
+        ).toBe(false);
+      }
+
+      // Deciding which of two disagreeing Memories applies now would need the
+      // working tree, the manifest or a vendor's documentation — and the
+      // ambient process is on that list too, because this server's own
+      // surroundings are not the ones the caller is working in.
+      expect(/\bfetch\s*\(|node:http|node:https|node:fs|undici|axios/.test(code)).toBe(false);
+      for (const ambient of [
+        'process.env',
+        'process.version',
+        'process.platform',
+        'process.cwd',
+        'os.',
+      ]) {
+        expect(code.includes(ambient), `${path} reads ${ambient}`).toBe(false);
+      }
+      for (const specifier of importsOf(source)) {
+        expect(
+          /^(openai|@anthropic|@google|@mistral|cohere|langchain|node:fs|node:child_process)/.test(
+            specifier,
+          ),
+          `${path} imports ${specifier}`,
+        ).toBe(false);
+      }
+
+      // The regenerable search profile is not a source here either, for the
+      // reason the dead-end stage gives: a paraphrase is not the record.
+      for (const derived of [
+        'retrieval_artifacts',
+        'normalized_summary',
+        'structural_features',
+        'StructuralFeatures',
+      ]) {
+        expect(code.includes(derived), `${path} reads ${derived}`).toBe(false);
+      }
+    }
+  });
+
+  it('takes nothing from a caller about the present', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const request = service.slice(service.indexOf('export interface RetrievalSearchRequest {'));
+    const body = request.slice(0, request.indexOf('\n}'));
+
+    // Accepting what is being attempted, or the environment it is being
+    // attempted in, would invite this stage to settle the disagreement — a
+    // judgement about the present, made where the present cannot be seen.
+    for (const present of [
+      'currentAttempt',
+      'plannedFix',
+      'proposedDirection',
+      'currentHypothesis',
+      'currentEnvironment',
+      'currentVersion',
+      'currentSpec',
+      'currentCode',
+    ]) {
+      expect(body.includes(present), `the request accepts ${present}`).toBe(false);
+    }
+  });
+
+  it('enriches on every search, stores none of it, and finishes before anything is kept', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // One call, inside the function both a hit and a miss go through, and last
+    // of the three. A Relation between two *candidates* moves nothing the
+    // cache key watches — that key is built from the Problem being worked on —
+    // so a remembered enrichment would keep two Memories looking agreed.
+    expect((code.match(/conflictService\.enrich\(/g) ?? []).length).toBe(1);
+    const ranked = code.indexOf('async function rankAndReport(');
+    const enriched = code.indexOf('conflictService.enrich(');
+    expect(ranked).toBeGreaterThan(-1);
+    expect(enriched).toBeGreaterThan(ranked);
+    expect(enriched).toBeGreaterThan(code.indexOf('revalidationService.enrich('));
+    expect(enriched).toBeGreaterThan(code.indexOf('deadEndService.enrich('));
+
+    // The cache still holds the rerank result and nothing else.
+    const key = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    for (const enrichment of ['conflict', 'Conflict', 'contradiction', 'CONTRADICTS']) {
+      expect(key.includes(enrichment), `the cache stores ${enrichment}`).toBe(false);
+    }
+
+    // It is filled, and the log written, only after a search has run through
+    // this stage: a result stored before the last stage succeeded would be a
+    // partial answer with a five-minute life, and the log must describe what
+    // was offered, which is not known until the drops here have happened.
+    const reported = code.indexOf('await rankAndReport(after.projectId');
+    const stored = code.indexOf('cache.set(key, reranked)');
+    expect(reported).toBeGreaterThan(-1);
+    expect(stored).toBeGreaterThan(reported);
+    expect(code).toContain('await recordSurfaced(request.currentProblemId, sourceAi, reused)');
+    expect(code).toContain('await recordSurfaced(request.currentProblemId, sourceAi, outcome)');
+    expect(code).toContain('candidates: outcome.candidates.map((candidate) => candidate.ranking)');
+  });
+
+  it('adds no schema, no contract and no dependency', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    for (const file of await readdir(migrations)) {
+      const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      // Not the bare word: `CONFLICTED` is a confidence value the schema has
+      // had since the enums went in, and `on conflict` is ordinary SQL. What
+      // must be absent is a table or column added for this stage.
+      for (const added of ['conflict_', 'contradiction', 'table public.conflicts']) {
+        expect(sql.includes(added), `${file} was written for conflicts`).toBe(false);
+      }
+    }
+
+    // `CONTRADICTS` is already a relation type and every column already
+    // exists. Nor is any of this reachable over HTTP yet.
+    const routes = await readModules(join(SRC, 'http'));
+    for (const module of routes) {
+      // Not the bare word: `VERSION_CONFLICT` is the optimistic-lock message
+      // and predates all of this. What must be absent is the retrieval shape.
+      for (const exposed of ['ConflictContext', 'Contradiction', 'contradictions']) {
         expect(module.source.includes(exposed), `${module.path} exposes ${exposed}`).toBe(false);
       }
     }
