@@ -527,6 +527,47 @@ describe('the ranking order', () => {
   });
 
   describe('a score of zero is not the absence of a score', () => {
+    // Three cases, one distinction. A judged zero is ranked; an absent score
+    // on a degraded status is skipped; an absent score on a used rerank is
+    // refused. What never happens is a null becoming a number.
+    it('refuses a missing score when the status says a rerank ran', () => {
+      // Straight at the exported function, past the request check. The two
+      // guarantees are separate on purpose: if this one rested on the other,
+      // the rule would hold only as long as every caller went through the
+      // service — and the one conversion this stage exists to prevent would be
+      // one direct call away.
+      expect(() =>
+        rankCandidates(
+          [rankable('a', { structuralScore: 0.5 }), rankable('b', { structuralScore: null })],
+          'USED',
+        ),
+      ).toThrow(InvalidRetrievalRankingError);
+    });
+
+    it('names no candidate when it refuses one', () => {
+      let raised: unknown;
+      try {
+        rankCandidates([rankable('a'), rankable('b', { structuralScore: null })], 'USED');
+      } catch (error) {
+        raised = error;
+      }
+      expect(raised).toBeInstanceOf(InvalidRetrievalRankingError);
+      expect((raised as Error).message.includes(problem('b')), 'the refusal named a Problem').toBe(
+        false,
+      );
+    });
+
+    it('ranks a judged zero without complaint', () => {
+      const ranked = rankCandidates(
+        [rankable('a', { structuralScore: 0 }), rankable('b', { structuralScore: 0 })],
+        'USED',
+      );
+      // Zero is a judgement — the reranker looked and found nothing in common
+      // — so it orders like any other score rather than raising.
+      expect(ranked).toHaveLength(2);
+      expect(ranked.map((candidate) => candidate.structuralScore)).toEqual([0, 0]);
+    });
+
     it('lets a judged zero lose to a judged score, as a judgement should', () => {
       expect(
         order([

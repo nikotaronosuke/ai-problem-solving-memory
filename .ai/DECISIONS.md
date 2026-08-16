@@ -2693,6 +2693,18 @@ Forty discrimination mutations, each killed by a named test or guard. Eight surv
 
 P4-08 is done. P4-09 is NOT STARTED.
 
+## D-288 — A missing structural score is refused, not defaulted (P4-08, after review)
+
+D-283 established that a null score is never read as a zero, and the comparator then did exactly that: `(b.structuralScore ?? 0) - (a.structuralScore ?? 0)`. The comment directly above it said "there is no `?? 0` anywhere on this path". The comment was the intent and the line was the code.
+
+The defence was that it is unreachable — the request check guarantees every score exists on `USED`, so nothing arriving through the service can trip it. That is true and it is not enough. `rankCandidates` is exported and callable on its own, its own documentation states the rule, and a guarantee that holds only while every caller goes through one particular path is a property of today's wiring rather than of the function. The one conversion this stage exists to prevent was one direct call away.
+
+So the coalescing is gone. When the status says a rerank ran and a score is missing, the comparator raises `InvalidRetrievalRankingError` naming neither candidate nor value: the status and the data contradict each other, which is a broken input rather than a candidate to place somewhere. The two directions are now one rule — no judgement is ever turned into a number — with the degraded path skipping the step and the used path refusing the gap, and neither resting on the other.
+
+Three cases pin the distinction directly against the exported function: a judged zero ranks normally, an absent score on a degraded status is skipped, and an absent score on a used rerank raises.
+
+The guard was strengthened at the same time and for the same reason. It had checked the prose and a couple of coercion spellings; it now fails on `?? 0` and `??0` inside the comparator itself, because a guard that reads the comment while the line below it coerces is not a guard. Three mutations confirm it: removing the strict check, restoring the coalescing, and putting the identifiers into the error.
+
 ## D-276 — A claimed dimension must have had something on both sides (P4-07, after review)
 
 D-272 checked that a named dimension is one of the seven, is not repeated, and agrees with the score. It did not check that the dimension had **anything in it** on either side. A reranker could therefore report two Problems as alike in their `successful_directions` when both lists were empty, and a reader would have no way to tell that from a real match.
