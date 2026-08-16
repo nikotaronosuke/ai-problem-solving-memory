@@ -3017,12 +3017,18 @@ describe('search caching', () => {
       'EXCLUDED',
       'mustRevalidate',
       'historicalEnvironment',
-      'deadEnd',
       'CONTRADICTS',
       'fastify',
     ]) {
       expect(both.includes(later), `the search stage already does ${later}`).toBe(false);
     }
+
+    // The search service now names a dead-end stage, which is the whole point
+    // of composing one. The cache itself still knows nothing about it — what
+    // is remembered is the rerank result, and warnings are read fresh every
+    // time.
+    expect(code.includes('deadEnd'), 'the cache took on dead ends').toBe(false);
+    expect(code.includes('DeadEnd'), 'the cache took on dead ends').toBe(false);
   });
 
   it('records only what a search can observe', async () => {
@@ -3558,5 +3564,350 @@ describe('search caching', () => {
         false,
       );
     }
+  });
+});
+
+describe('dead ends', () => {
+  /** The four modules this stage is made of. */
+  const DEAD_END_PATHS = [
+    join(SRC, 'domain', 'retrieval-dead-end.ts'),
+    join(SRC, 'db', 'retrieval-dead-end-read.ts'),
+    join(SRC, 'repository', 'retrieval-dead-end-reader.ts'),
+    join(SRC, 'app', 'retrieval-dead-end-service.ts'),
+  ];
+
+  /** All four, comments stripped. */
+  async function deadEndCode(): Promise<string> {
+    const sources = await Promise.all(DEAD_END_PATHS.map((path) => readFile(path, 'utf8')));
+    return sources
+      .map((source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+  }
+
+  it('reads the Events that recorded a dead end, and only those', async () => {
+    const { DEAD_END_STATEMENT } = await import('../src/db/retrieval-dead-end-read.js');
+
+    // The one Event type that means "this direction was tried and does not
+    // lead anywhere". A `USER_CORRECTION` or an `ATTEMPT` warns nobody off
+    // anything, and reading them as though they did would put words in the
+    // record's mouth.
+    expect(DEAD_END_STATEMENT).toContain("ev.event_type = 'DEAD_END'");
+    for (const other of ['HYPOTHESIS', 'ATTEMPT', 'DISCOVERY', 'FIX', 'USER_CORRECTION']) {
+      expect(DEAD_END_STATEMENT.includes(other), `the read also takes ${other}`).toBe(false);
+    }
+
+    // Owner and read control re-applied. What was visible when ranking ran is
+    // not a filter now, and the predicates sit in the join because a `where`
+    // on a left-joined table turns it back into an inner join.
+    expect(DEAD_END_STATEMENT).toContain('pr.owner_id = $1');
+    expect(DEAD_END_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(DEAD_END_STATEMENT).toContain('ev.owner_id = pr.owner_id');
+
+    // Deterministic, oldest first, and stable when two share a moment.
+    expect(DEAD_END_STATEMENT).toContain('unnest($2::uuid[]) with ordinality');
+    expect(DEAD_END_STATEMENT).toContain('order by requested.position asc');
+    expect(DEAD_END_STATEMENT).toContain('ev.created_at asc, ev.event_id asc');
+
+    // Left joins, so a Problem that is gone and one with nothing recorded
+    // against it stay distinguishable. An inner join would report the second
+    // as the first, and the caller would lose a Memory rather than a warning.
+    expect((DEAD_END_STATEMENT.match(/left join/g) ?? []).length).toBe(2);
+
+    // No cap, no `limit`: cutting historical fact at some N would silently
+    // drop the part somebody needed.
+    expect(DEAD_END_STATEMENT.includes(' limit '), 'the read caps the warnings').toBe(false);
+  });
+
+  it('asks in one statement and asks nothing when there is nothing to ask about', async () => {
+    const code = await readFile(join(SRC, 'db', 'retrieval-dead-end-read.ts'), 'utf8');
+    const stripped = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // One query for every candidate, so the answer describes a state the
+    // database really held rather than several it passed through.
+    expect((stripped.match(/executor\.query/g) ?? []).length).toBe(1);
+    expect(stripped).toContain('problemIds.length === 0');
+  });
+
+  it('warns and never forbids', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-dead-end.ts'), 'utf8');
+    const warning = domain.slice(domain.indexOf('export interface DeadEndWarning {'));
+    const body = warning.slice(0, warning.indexOf('\n}'));
+
+    // A direction that failed under one runtime or one library version may be
+    // right under another, and the record cannot tell which. Anything here
+    // that read as permission would turn a description of the past into a rule
+    // about the present — which is exactly the judgement the revalidation
+    // contract exists to hand back to the caller.
+    for (const prohibition of [
+      'retryBlocked',
+      'retryAllowed',
+      'blocked',
+      'forbidden',
+      'doNotTry',
+      'hardBlock',
+      'mustNotRetry',
+      'approvalRequired',
+      'severity',
+      'notify',
+      'notification',
+      'alert',
+      'warnLevel',
+    ]) {
+      expect(body.includes(prohibition), `a warning carries ${prohibition}`).toBe(false);
+    }
+
+    // What was tried, what happened, why, and where to look. Nothing about
+    // whose assistant hit it, and none of the identifiers the candidate it
+    // hangs from already carries.
+    expect(body).toContain('summary: string');
+    expect(body).toContain('createdAt: Date');
+    for (const carried of ['eventId', 'ownerId', 'problemId', 'sourceAi', 'clientEventId']) {
+      expect(body.includes(carried), `a warning repeats ${carried}`).toBe(false);
+    }
+  });
+
+  it('never drops or reorders a Memory for having them', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-dead-end-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The only reason a candidate is left out here is that the Memory itself
+    // has gone since the stage before read it — never how much is recorded
+    // against it. Sorting or filtering on the warnings would make an honest
+    // record a liability.
+    expect(code).toContain('warnings === undefined');
+    for (const weighing of ['.sort(', 'deadEndWarnings.length >', 'penalt', 'score -=', 'demote']) {
+      expect(code.includes(weighing), `the stage weighs warnings with ${weighing}`).toBe(false);
+    }
+
+    // Positions close up when something drops; the first stage's provenance
+    // keeps its gaps. Rebuilt rather than edited, so the caller's array is
+    // unchanged.
+    //
+    // Renumbering reads a candidate's place in the array, which is only
+    // correct if the array *was* the order — so the input positions are
+    // required to agree with it, and required before the database is asked, so
+    // that an unusable list costs nothing. This service is exported, which is
+    // why the previous stage producing 1, 2, 3 is not enough on its own.
+    expect(code).toContain('candidate.ranking.rankingRank !== index + 1');
+    const checked = code.indexOf('candidate.ranking.rankingRank !== index + 1');
+    expect(checked).toBeGreaterThan(-1);
+    expect(checked).toBeLessThan(code.indexOf('reader.readForCandidates('));
+    expect(code).toContain('rankingRank: offered.length + 1');
+    expect(code.includes('hybridRank:'), 'the provenance is renumbered').toBe(false);
+    expect(code).toContain('matchedDimensions: [...candidate.ranking.matchedDimensions]');
+  });
+
+  it('leaves the earlier stages exactly as they were', async () => {
+    const modules = await readModules(SRC);
+
+    // Ranking is a deterministic tuple of stored controls, and a count of
+    // recorded failures is not one of them. The dead-end comparison already
+    // has its place: the reranker weighs it as one of seven dimensions, on
+    // structure rather than on how many Events happen to exist.
+    const ranking = modules.filter((module) => module.path.includes('retrieval-ranking'));
+    expect(ranking.length).toBeGreaterThan(0);
+    for (const module of ranking) {
+      for (const later of ['deadEnd', 'DeadEnd', 'dead_end', 'DEAD_END', 'warning']) {
+        expect(module.source.includes(later), `${module.path} took on ${later}`).toBe(false);
+      }
+    }
+    const { STRUCTURAL_COMPARISON_DIMENSIONS } =
+      await import('../src/domain/retrieval-structural-rerank.js');
+    expect(STRUCTURAL_COMPARISON_DIMENSIONS).toContain('dead_end_directions');
+
+    // And the checklist the previous task fixed is untouched — four checks,
+    // asked for unconditionally, whatever is recorded against a Memory.
+    const revalidation = await readFile(join(SRC, 'domain', 'retrieval-revalidation.ts'), 'utf8');
+    expect(revalidation).toContain('export const REVALIDATION_CHECKS = Object.freeze([');
+    for (const check of [
+      'CURRENT_CODE',
+      'CURRENT_ENVIRONMENT',
+      'RELEVANT_VERSION',
+      'OFFICIAL_SPEC',
+    ]) {
+      expect(revalidation).toContain(`'${check}'`);
+    }
+    const revalidationService = await readFile(
+      join(SRC, 'app', 'retrieval-revalidation-service.ts'),
+      'utf8',
+    );
+    expect(
+      revalidationService.includes('deadEnd'),
+      'the revalidation stage took on dead ends',
+    ).toBe(false);
+  });
+
+  it('hangs the warnings off the envelope rather than inside a stage', async () => {
+    const result = await readFile(join(SRC, 'domain', 'retrieval-result.ts'), 'utf8');
+
+    // Neither stage owns the shape a search hands back. Left in the
+    // revalidation module, that module would have had to widen every time a
+    // later task had something to add.
+    expect(result).toContain('export interface RevalidatedMemoryCandidate {');
+    expect(result).toContain('export interface RetrievalMemoryCandidate extends');
+    expect(result).toContain('deadEndWarnings: readonly DeadEndWarning[]');
+
+    const revalidation = await readFile(join(SRC, 'domain', 'retrieval-revalidation.ts'), 'utf8');
+    expect(
+      revalidation.includes('export interface RetrievalMemoryCandidate'),
+      'the envelope stayed in the revalidation module',
+    ).toBe(false);
+  });
+
+  it('takes them from the Events, never from the regenerable profile', async () => {
+    const code = await deadEndCode();
+
+    // `dead_end_directions` on an artifact is a summary generator's paraphrase,
+    // rewritten whenever the artifact is regenerated and kept for structural
+    // comparison. What a caller is warned with is what somebody recorded.
+    expect(code).toContain('public.events');
+    for (const derived of [
+      'retrieval_artifacts',
+      'structural_features',
+      'dead_end_directions',
+      'StructuralFeatures',
+    ]) {
+      expect(code.includes(derived), `the stage reads ${derived}`).toBe(false);
+    }
+  });
+
+  it('writes nothing, calls nobody and reaches no later task', async () => {
+    for (const path of DEAD_END_PATHS) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      // Reading what a Memory already knows changes nothing about it, and a
+      // usage log written from here would record a warning as a use.
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'appendEvent',
+        'createUsageLog',
+        'createChangeLog',
+        'for update',
+        'DatabaseTransactionRunner',
+        'cache',
+      ]) {
+        expect(
+          code.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} has ${forbidden}`,
+        ).toBe(false);
+      }
+
+      // Judging a dead end still current would need the working tree, the
+      // manifest or a vendor's documentation — none of which are here.
+      expect(/\bfetch\s*\(|node:http|node:https|node:fs|undici|axios/.test(code)).toBe(false);
+      for (const specifier of importsOf(source)) {
+        expect(
+          /^(openai|@anthropic|@google|@mistral|cohere|langchain|node:fs|node:child_process)/.test(
+            specifier,
+          ),
+          `${path} imports ${specifier}`,
+        ).toBe(false);
+      }
+
+      // Conflicting Memories are the next task's question.
+      for (const later of ['public.relations', 'CONTRADICTS', 'Relation', 'conflict']) {
+        expect(code.includes(later), `${path} reaches ${later}`).toBe(false);
+      }
+    }
+  });
+
+  it('takes nothing from a caller about what is being attempted now', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const request = service.slice(service.indexOf('export interface RetrievalSearchRequest {'));
+    const body = request.slice(0, request.indexOf('\n}'));
+
+    // Accepting the direction about to be tried would invite this stage to
+    // compare it against the recorded ones and answer "you may not" — a
+    // judgement about the present, made where the present cannot be seen.
+    for (const present of [
+      'currentAction',
+      'plannedAction',
+      'attempt',
+      'intendedFix',
+      'currentEnvironment',
+      'currentDirection',
+    ]) {
+      expect(body.includes(present), `the request accepts ${present}`).toBe(false);
+    }
+  });
+
+  it('enriches on every search, stores none of it, and finishes before anything is kept', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // One call, inside the function both a hit and a miss go through. A
+    // `DEAD_END` recorded against a *candidate* moves nothing the cache key
+    // watches, so a remembered enrichment would keep sending people down a
+    // direction that is by then known not to work.
+    expect((code.match(/deadEndService\.enrich\(/g) ?? []).length).toBe(1);
+    const ranked = code.indexOf('async function rankAndReport(');
+    const enriched = code.indexOf('deadEndService.enrich(');
+    expect(ranked).toBeGreaterThan(-1);
+    expect(enriched).toBeGreaterThan(ranked);
+    expect(enriched).toBeGreaterThan(code.indexOf('revalidationService.enrich('));
+
+    // The cache still holds the rerank result and nothing else, and it is set
+    // only after a search has run through this stage — a result stored before
+    // the last stage succeeded would be a partial answer with a five-minute
+    // life. The log follows for the same reason: it must describe what was
+    // offered, which is not known until the drops here have happened.
+    const key = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    for (const enrichment of ['deadEnd', 'DeadEnd', 'warning']) {
+      expect(key.includes(enrichment), `the cache stores ${enrichment}`).toBe(false);
+    }
+    const reported = code.indexOf('await rankAndReport(after.projectId');
+    const stored = code.indexOf('cache.set(key, reranked)');
+    expect(reported).toBeGreaterThan(-1);
+    expect(stored).toBeGreaterThan(reported);
+
+    // The log follows by data dependency rather than by luck of ordering: it
+    // is handed the finished outcome, on both paths, and records the ranking
+    // view of exactly the candidates that survived this stage. A Memory
+    // dropped here is absent from the list and so absent from the log.
+    expect(code).toContain('await recordSurfaced(request.currentProblemId, sourceAi, reused)');
+    expect(code).toContain('await recordSurfaced(request.currentProblemId, sourceAi, outcome)');
+    expect((code.match(/recordSurfaced\(request\.currentProblemId/g) ?? []).length).toBe(2);
+    expect(code).toContain('candidates: outcome.candidates.map((candidate) => candidate.ranking)');
+    const reused = code.indexOf('const reused = await rankAndReport(before.projectId');
+    expect(reused).toBeGreaterThan(-1);
+    expect(
+      code.indexOf('recordSurfaced(request.currentProblemId, sourceAi, reused)'),
+    ).toBeGreaterThan(reused);
+    expect(
+      code.indexOf('recordSurfaced(request.currentProblemId, sourceAi, outcome)'),
+    ).toBeGreaterThan(reported);
+  });
+
+  it('adds no schema, no contract and no dependency', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    for (const file of await readdir(migrations)) {
+      const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      expect(sql.includes('dead_end_warning'), `${file} was written for dead ends`).toBe(false);
+    }
+
+    // `DEAD_END` is already an Event type and the columns already exist, so
+    // there is nothing to migrate. Nor is any of this reachable over HTTP yet:
+    // what a client may ask of a search belongs to the task that exposes one.
+    // `deadEndSummary` on the close-problem route is a different thing and
+    // predates all of this: what a person writes when they close a Problem.
+    // What must not appear is the retrieval warning.
+    const routes = await readModules(join(SRC, 'http'));
+    for (const module of routes) {
+      for (const exposed of ['deadEndWarnings', 'DeadEndWarning', 'RetrievalDeadEnd']) {
+        expect(module.source.includes(exposed), `${module.path} exposes ${exposed}`).toBe(false);
+      }
+    }
+
+    const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>;
+    };
+    expect(Object.keys(manifest.dependencies).sort()).toEqual([
+      '@fastify/swagger',
+      'fastify',
+      'pg',
+    ]);
   });
 });

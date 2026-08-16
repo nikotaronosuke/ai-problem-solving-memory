@@ -2981,6 +2981,101 @@ So a candidate at index *i* must state position *i + 1*, checked before the read
 
 Five further mutations, each killed by a named test or guard: the check removed, compared against a zero-based index, applied only to the first candidate, softened to rounding, and moved after the database read.
 
+## D-321 — A dead end is a warning, and never a prohibition (P4-12)
+
+The specification says this in four places and makes it an acceptance test, so it is the rule the whole task is built around rather than a caveat on it. A candidate with ten recorded dead ends comes back in exactly the position ranking gave it, with every field it would have had otherwise.
+
+Concretely, and each one guarded: no candidate is dropped for having them; no order changes because of them; the warning type carries no `retryBlocked`, `severity`, `approvalRequired`, `notify` or anything else a caller could read as permission; and the service is guarded against sorting or filtering on the list.
+
+The reason is the one the retrieval design keeps returning to. A direction that failed under one runtime, one library version or one deployment target may be right under another, and the record cannot tell which — the Event says what was true when it was recorded, not what is true now. **An environment difference is a legitimate reason to try again**, which is exactly what P4-11's historical Environment and its four checks are for. The warning and the conditions it was recorded under arrive together, and the caller decides.
+
+There is no post-ranking penalty either, and that is deliberate rather than an omission. The dead-end comparison already has its place: `dead_end_directions` is one of the seven dimensions the reranker weighs (D-262), which compares *structure*. A second, arithmetic penalty on how many `DEAD_END` Events happen to exist would rank a Problem down for being honestly recorded, and would double-count the one comparison the design already makes.
+
+## D-322 — The Event is the source, and the search profile is not (P4-12)
+
+A stored artifact carries `structural_features.dead_end_directions`, and it would have been the cheaper read — it is already fetched for reranking. It is the wrong source.
+
+That list is a generator's paraphrase: produced by a summary generator, regenerated whenever the artifact is (D-227), and never checked against the Events it was drawn from. Nothing in the code derives it from `DEAD_END` Events, and nothing reconciles the two. It exists to compare Problems structurally, where a rewritten approximation is fine.
+
+What a caller is warned with is a claim about something that happened, and that has to come from the record of it happening. So the read goes to `public.events`, and the modules are guarded against naming `retrieval_artifacts`, `structural_features` or `dead_end_directions` at all. A test makes the two deliberately disagree — the artifact says one thing, the Event another — and requires the Event's wording to be what comes back and the artifact's not to appear.
+
+The two are not expected to agree, and nothing tries to make them.
+
+## D-323 — No cancellation is inferred from a later Event (P4-12)
+
+A `USER_CORRECTION` recorded after a `DEAD_END` may well be saying the dead end was a misreading. It does not retract it here.
+
+There is no structural link between the two. An Event states what was true when it was recorded, and a later correction is another Event with no reference back — the schema comment says as much, and P4-12 did not add one. Treating the second as cancelling the first would mean reading free text and guessing which earlier Event it meant, which is precisely the kind of inference this system is built not to make.
+
+So a dead end recorded stays a dead end recorded: a historical fact. Whether it still applies is the question P4-11 hands back to the caller with the Environment and the four checks. A test appends a correction after a dead end and requires the warning to survive intact — and requires the correction itself not to appear in the list, because it is not one.
+
+## D-324 — All of them, oldest first, and never merged (P4-12)
+
+No cap. The specification names no number, and cutting historical fact at an arbitrary N would silently drop whichever part somebody needed; the surrounding bounds — five candidates from a rerank — already keep the total small.
+
+Ordered `created_at` ascending, then `event_id` ascending. The tie-break is not decoration: several Events written in one transaction share a timestamp to the microsecond, and without it their order would be whatever the query plan produced that day. Oldest first because the sequence of what was tried is the thing worth reading.
+
+Two dead ends with identical text are two dead ends. They were recorded at two moments, possibly for two reasons, and merging on matching strings would lose both facts to save a line.
+
+## D-325 — Four fields and a time, and nothing the candidate already carries (P4-12)
+
+`summary`, `result`, `reason`, `evidenceRef`, `createdAt`. Absent values stay absent — `null` is returned as `null` and never filled in with an empty string or an invented "no reason recorded", because an attempt may genuinely have no result worth stating separately.
+
+Deliberately not present: `eventId`, `ownerId` and `problemId`, which the candidate the warning hangs from already names or which no caller needs; `clientEventId`, which is a write-path idempotency key; and `sourceAi`, because which assistant hit the dead end is not what makes it worth knowing, and carrying it invites reading warnings differently by vendor. An exact key-set test pins all of this.
+
+`evidenceRef` is a reference and is returned as one. Nothing follows it, fetches it or validates it — this stage makes no network call of any kind (D-310 applies unchanged).
+
+## D-326 — One statement, and two answers that must stay apart (P4-12)
+
+The requested identifiers become rows through `unnest(...) with ordinality`, and the Problem and its Events are joined outwards from them. Owner and read control are re-applied, both in the join rather than a `where`, because a `where` on a left-joined table turns it back into an inner join — the same shape and the same reason as D-314.
+
+What that buys is the distinction that matters:
+
+- the Problem is gone, was never this owner's, or has had automatic reading switched off — no Problem row, and the candidate is dropped, one outcome for all four so that which applies stays unknowable from outside;
+- the Problem is there and nothing was ever recorded — an entry with an empty list.
+
+"Nowhere is known not to lead" and "this Memory is no longer available" are different statements, and the second must never be delivered as the first. A reader-level test asserts the key set directly rather than inferring it from the service's output.
+
+The event type is filtered in the join for the same reason. `DEAD_END` and nothing else: a guard names the other five and requires none of them.
+
+## D-327 — The envelope moves out of the stage that happened to introduce it (P4-12)
+
+`RetrievalMemoryCandidate` was defined in the revalidation module because that is where it was first needed. Adding a third field would have meant that module owning a shape describing a stage it knows nothing about — the thing D-316 was trying to avoid one level up.
+
+It now lives in `src/domain/retrieval-result.ts`, which owns both `RevalidatedMemoryCandidate { ranking, revalidation }` and `RetrievalMemoryCandidate`, which extends it with `deadEndWarnings`. Neither stage owns the answer; each owns its own contribution. The revalidation module keeps `REVALIDATION_CHECKS` and its context type and is guarded against mentioning dead ends; the ranking modules are guarded against mentioning either.
+
+`deadEndWarnings` is the final field of the search result as it stands. P4-13's conflict comparison attaches the same way, without either existing stage widening.
+
+## D-328 — Fresh on every search, stored nowhere, and finished before anything is kept (P4-12)
+
+Both the cached and the recomputed paths go through one function, so a reused search reports dead ends exactly as current as a new one, and nothing about them enters the cache — which still holds the rerank result and nothing else (D-290).
+
+The reason is the same one D-317 gives for the revalidation context, and it is not tidiness. **A `DEAD_END` appended to a *candidate* moves nothing the cache key watches** — that key is built from the Problem being worked on, and the warnings belong to other Problems entirely. A remembered enrichment would keep sending people down a direction that was by then known not to work, for five minutes, with nothing to notice. A test appends a dead end between two searches and requires the second, cache-hit search to show it while the provider and the reranker stay at one call each.
+
+On a miss the cache is filled only after this stage has succeeded, and the usage log is written only from the finished list. Both follow for the same reason: a result stored before the last stage completed would be a partial answer with a five-minute life, and a log written earlier would record Memories that were never offered. The log's ordering is a data dependency rather than a happy arrangement of lines — it is handed the finished outcome and records the ranking view of exactly what survived.
+
+## D-329 — A failed read is not answered as "nothing recorded" (P4-12)
+
+If the database cannot be reached, the search raises. It does not return warning lists that happen to be empty.
+
+An empty list is a positive statement — this Memory is here and nothing was recorded against it — and a connection that failed has established nothing of the sort. Swallowing it would present a Memory full of known dead ends as one with none, which is worse than no answer at all: the caller would act on it. This is D-318's rule applied to the second enrichment, and it is deliberately not the usage log's best-effort rule (D-306), because that write is a side observation and this is what the caller was handed.
+
+A candidate that has become unreadable *is* dropped, and the positions close up — `rankingRank` renumbers, `hybridRank` keeps its gaps (D-315, D-277). That is a different thing from a read that failed, and the query is shaped so the two never arrive looking alike.
+
+## D-330 — What P4-12 changed, and what it did not build (P4-12)
+
+No migration, no table, no column, no index, no domain, no dependency, no route. `DEAD_END` was already an Event type and every column already existed. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies — every one measured and unchanged. Five new modules, one moved type, one added field.
+
+Writes: none. No Event, no Problem update, no usage log written from this stage, no ChangeLog, no freshness or confidence mutation. Reading what a Memory already knows does not change the Memory. No `UsageAction` was added either — a warning shown is not a use, and `REFERENCED` / `ADOPTED` / `EXCLUDED` stay adapter-reported (D-299).
+
+Not built: conflict comparison — no Relation is read and no `CONTRADICTS` appears (P4-13). No evaluation fixtures (P4-14). No HTTP route, so the API is unchanged and the public README is untouched; the retrieval surface is published once, at the end of the phase.
+
+Forty-one discrimination mutations, each killed by a named test or guard. Six survived a first run: three were genuinely undetectable through behaviour and were re-aimed at the guard that asserts the statement's text — a defence-in-depth owner predicate, a left join that an inner join would be equivalent to here, and an `order by` clause the Map-keyed consumer does not depend on. All three were kept, because `DEAD_END_STATEMENT` is exported and a statement deterministic on its own is worth having. The other three were real gaps in the tests and the tests were fixed: a reader whose key set was only checked indirectly, an empty-list gate proven at the statement but not at the service, and a fixture whose expected order agreed with what a warning-count sort would have produced. A seventh detector turned out to be a coin flip — the search fixture's ranking ties break on random identifiers — and was re-aimed at a fixture that contradicts the mutation by construction.
+
+The P4-11 correction set was re-run and all five still hold.
+
+P4-12 is done. P4-13 is NOT STARTED.
+
 ## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
 
 D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced
