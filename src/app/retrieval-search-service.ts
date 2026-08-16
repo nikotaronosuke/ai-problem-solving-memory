@@ -61,6 +61,11 @@ import {
   parseStructuralFeatures,
   type StructuralFeatures,
 } from '../domain/retrieval-summary.js';
+import { toUsageSourceAi } from '../domain/usage-log.js';
+import type {
+  RetrievalUsageLogFailureReporter,
+  RetrievalUsageLogWriter,
+} from './retrieval-usage-log-writer.js';
 import type { RankedMemoryCandidate } from '../domain/retrieval-ranking.js';
 import type { RetrievalSummarySourceReader } from '../repository/index.js';
 import type { RetrievalSearchCache } from './retrieval-search-cache.js';
@@ -133,6 +138,26 @@ export type RetrievalSearchOutcome =
       readonly kind: 'CURRENT_SOURCE_CHANGED';
     };
 
+/**
+ * Who is running this search.
+ *
+ * Separate from the request because it answers a different question. The
+ * request says what to look for; this says who is looking, which changes
+ * nothing about what comes back and everything about what the usage record
+ * means. Keeping them apart is also what lets one search be reused across two
+ * assistants while each is recorded under its own name.
+ */
+export interface RetrievalSearchInvocation {
+  /**
+   * The assistant, tool or person searching.
+   *
+   * Free-form, as everywhere else `source_ai` appears: provider and model
+   * names change, and manual entries exist alongside them. Descriptive only —
+   * it never affects which owner's Memory is reachable.
+   */
+  readonly sourceAi: string;
+}
+
 export interface RetrievalSearchService {
   /** The owner every stage of this search is scoped to. */
   readonly ownerId: OwnerId;
@@ -140,9 +165,14 @@ export interface RetrievalSearchService {
   /**
    * Finds past Memories worth reading for the Problem being worked on.
    *
-   * Writes nothing, at any stage, on any outcome.
+   * Changes no Memory. It does record, in the usage log, that each Memory it
+   * surfaced was surfaced — which is an observation about the search rather
+   * than a change to anything it found.
    */
-  search(request: RetrievalSearchRequest): Promise<RetrievalSearchOutcome>;
+  search(
+    request: RetrievalSearchRequest,
+    invocation: RetrievalSearchInvocation,
+  ): Promise<RetrievalSearchOutcome>;
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -155,12 +185,18 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
  * would start empty every time and never answer anything — which would look
  * like a working cache and be a slow one.
  *
- * All four collaborators must be scoped to the same owner, and it is checked
+ * All five collaborators must be scoped to the same owner, and it is checked
  * once here. Each is owner-safe alone and none can see the others, so a
  * composition pairing one owner's reader with another's search would produce a
  * result mixing two people's Memory with every part behaving correctly. Only
  * the pairing can be wrong, so only the pairing is checked — and a wrongly
  * built service should not exist rather than fail later on somebody's search.
+ * The usage log writer is in that check for the same reason as the rest: a row
+ * recorded against the wrong owner is a false statement about who searched
+ * what.
+ *
+ * The failure reporter has no default, deliberately. See its own
+ * documentation: a default would make silence the easiest thing to get.
  */
 export function createRetrievalSearchService(
   sourceReader: RetrievalSummarySourceReader,
@@ -168,12 +204,15 @@ export function createRetrievalSearchService(
   rerankService: RetrievalStructuralRerankService,
   rankingService: RetrievalRankingService,
   cache: RetrievalSearchCache,
+  usageLogWriter: RetrievalUsageLogWriter,
+  usageLogFailureReporter: RetrievalUsageLogFailureReporter,
 ): RetrievalSearchService {
   const ownerId = sourceReader.ownerId;
   if (
     hybridService.ownerId !== ownerId ||
     rerankService.ownerId !== ownerId ||
-    rankingService.ownerId !== ownerId
+    rankingService.ownerId !== ownerId ||
+    usageLogWriter.ownerId !== ownerId
   ) {
     // Naming the owners would put two identifiers wherever this error goes.
     throw new Error('The retrieval stages belong to different owners.');
@@ -200,10 +239,57 @@ export function createRetrievalSearchService(
     };
   }
 
+  /**
+   * Records that each surfaced Memory was surfaced.
+   *
+   * Best effort, and the asymmetry is deliberate. The search has already
+   * succeeded and the caller is holding its answer; losing the record of it is
+   * a real loss, but it is a smaller one than throwing away work somebody is
+   * waiting on because a side observation could not be written. That is the
+   * standing rule that a Memory failure must not stop ordinary work, applied
+   * to the one write on the retrieval path.
+   *
+   * What is not done is swallowing it. The failure goes to a reporter that
+   * cannot be defaulted away, carrying a kind and a count and nothing else.
+   */
+  async function recordSurfaced(
+    currentProblemId: ProblemId,
+    sourceAi: string,
+    outcome: RetrievalSearchOutcome,
+  ): Promise<void> {
+    // Only a search that surfaced something. The three other outcomes returned
+    // no candidates at all, and a row claiming otherwise would be a false
+    // record of a Memory having been offered.
+    if (outcome.kind !== 'SEARCHED' || outcome.candidates.length === 0) {
+      return;
+    }
+
+    try {
+      await usageLogWriter.recordSearched({
+        currentProblemId,
+        sourceAi,
+        // The candidates as ranked just now — never the cached rerank. A
+        // Memory deleted or switched off since the cache was filled is absent
+        // from these, and must stay absent from the log too.
+        candidates: outcome.candidates,
+        semanticStatus: outcome.semanticStatus,
+        structuralStatus: outcome.structuralStatus,
+      });
+    } catch {
+      // Whatever it threw stops here. The count is a number this code chose;
+      // everything the failure knew — the driver's message, the Problem, the
+      // Memories, who was searching — stays out of a report that travels.
+      usageLogFailureReporter.report({
+        kind: 'SEARCH_USAGE_LOG_WRITE_FAILED',
+        attemptedRows: outcome.candidates.length,
+      });
+    }
+  }
+
   return {
     ownerId,
 
-    async search(request): Promise<RetrievalSearchOutcome> {
+    async search(request, invocation): Promise<RetrievalSearchOutcome> {
       // Everything a caller controls, before the database is touched. The
       // stage resolvers are reused rather than reimplemented, so a request
       // this accepts is one they accept, and the effective limits below are
@@ -213,6 +299,17 @@ export function createRetrievalSearchService(
         !UUID_PATTERN.test(request.currentProblemId)
       ) {
         throw new InvalidRetrievalSearchError('current problem', 'it is not an identifier');
+      }
+      // The same rule the usage log itself applies, borrowed rather than
+      // rewritten, and applied here so a search that could never be attributed
+      // does not reach a database or a provider first. Re-raised as this
+      // surface's own error: a caller of a search should not have to catch a
+      // usage log's.
+      let sourceAi: string;
+      try {
+        sourceAi = toUsageSourceAi(invocation.sourceAi);
+      } catch {
+        throw new InvalidRetrievalSearchError('source ai', 'it does not name who is searching');
       }
       const filters = request.projectId === undefined ? {} : { projectId: request.projectId };
       resolveFullTextSearchQuery({ text: request.lexicalText, ...filters });
@@ -252,7 +349,12 @@ export function createRetrievalSearchService(
         // Everything expensive skipped, and everything editable re-read. The
         // semantic status is known without being stored: only a search whose
         // semantic half ran normally was ever eligible to be here.
-        return rankAndReport(before.projectId, cached, 'USED');
+        const reused = await rankAndReport(before.projectId, cached, 'USED');
+        // A reused search is still a search. The same Memories were offered
+        // again, to whoever is searching now, and that is a second observation
+        // rather than a repeat of the first.
+        await recordSurfaced(request.currentProblemId, sourceAi, reused);
+        return reused;
       }
 
       const hybrid = await hybridService.search({
@@ -306,6 +408,14 @@ export function createRetrievalSearchService(
       if (isCacheable(hybrid.semanticStatus, reranked.status)) {
         cache.set(key, reranked);
       }
+
+      // After the cache, and independent of it. Reuse is a performance
+      // question and this is an observation: a lost log line must not discard
+      // a result worth reusing, and a stored result must not depend on the log
+      // line having been written. A degraded search that still surfaced
+      // Memories is recorded here even though it was not worth caching —
+      // those Memories really were offered.
+      await recordSurfaced(request.currentProblemId, sourceAi, outcome);
 
       return outcome;
     },

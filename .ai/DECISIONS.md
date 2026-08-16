@@ -2779,6 +2779,102 @@ Thirty-seven discrimination mutations, each killed by a named test or guard. Fou
 
 P4-09 is done. P4-10 is NOT STARTED.
 
+## D-299 — A search records one action, because it can observe one (P4-10)
+
+The specification asks to be able to tell later which AI searched, referenced and adopted which Memory. Of the five usage actions, a search can honestly observe exactly one: that a Memory came back as a candidate. Whether anybody then read it, took its direction, set it aside, or changed course because of it happens where this code cannot see, and an adapter reports those when it observes them.
+
+So the automatic action is `SEARCHED` and nothing else. The temptations were both refused explicitly. **Candidates dropped by the hybrid or rerank stages are not `EXCLUDED`** — that word means considered and set aside, and a stage narrowing its own window is not an AI weighing a Memory and declining it. **Returning a result is not `REFERENCED`** — a caller may look at none of it. The existing enum documents these as observations with no order between them; deriving three from a fourth would turn the log into the workflow it was deliberately not made into.
+
+The four explicit paths are untouched and remain how an adapter reports what it did see.
+
+## D-300 — The rows are the final candidates, and nothing when there are none (P4-10)
+
+One row per `RankedMemoryCandidate` the search actually returned — never the hybrid stage's ten-to-twenty, never the rerank's intermediate set. `SEARCHED` means a Memory appeared as a candidate, and the ones a caller was shown are the ones that appeared; logging the wider nets would record a search as several, and would claim Memories were offered that nobody ever saw.
+
+A search that surfaced nothing writes nothing. A row needs a Memory to point at and there is none; pointing it at the Problem being worked on — the only identifier to hand — would record a use that never happened. That a search *ran* is a real question and a different one, for a wider audit than this table was built to be, and the migration that created it already drew that line.
+
+The three non-search outcomes write nothing either. `CURRENT_SOURCE_CHANGED` in particular returns no candidates, so a row would be a plain falsehood.
+
+## D-301 — A degraded search that still surfaced Memories is recorded (P4-10)
+
+Cache eligibility and log eligibility are different questions and are answered differently. A provider that could not be reached, a credential recognised in the query, a reranker that failed — none of those is worth freezing in a cache for five minutes, and all of them can still end with real Memories being offered. When they do, those Memories really were offered, and the log records facts rather than the quality of the run that produced them.
+
+The reason carries both statuses, so a later reader can see that a search which surfaced Memories did so without a semantic channel, or without a structural judgement.
+
+## D-302 — A reused search is a second observation (P4-10)
+
+A cache hit records a fresh set of rows. Reuse is an execution optimisation; the Memories were offered again, to whoever asked this time, and that is a second observation rather than a repeat of the first. Suppressing it would undercount how often a Memory actually surfaced, which is the one thing this table exists to be able to answer.
+
+What is logged is the ranking produced now, never the cached rerank. A Memory deleted or switched off since the cache was filled is already absent from the ranked list, and must stay absent from the log — a cache must not resurrect a Memory into an audit trail either.
+
+`cacheStatus` is not recorded. Whether an answer was recomputed is not a fact about the Memory.
+
+## D-303 — Who searched is invocation context, not part of the search (P4-10)
+
+`search(request, invocation)`. The request says what to look for; the invocation says who is looking. They are separated because they answer different questions and because the separation is load-bearing: **who is searching is not part of what makes a search the same search**, so one assistant's result serves another, and each is recorded under its own name. That is the specification's "Memory is common, only the usage history is kept per AI", made structural.
+
+`sourceAi` is validated with the usage log's own rule rather than a second one written here, and validated in preflight — a search that could never be attributed reaches no database, no provider and no model. It is re-raised as this surface's error, because a caller of a search should not have to catch a usage log's. Free-form, never an enum: provider and model names change, and it is descriptive rather than a credential.
+
+It is deliberately absent from the cache key, and a guard asserts that absence.
+
+## D-304 — The reason is composed by the server from a closed vocabulary (P4-10)
+
+The column requires a non-blank reason, and the specification wants "what looked similar" recoverable later. A caller-supplied reason would satisfy the column and would put the query, the caller's own description of their Problem, and whatever a model returned into a permanent row — and a query is allowed to contain credential-shaped text precisely because it is used and thrown away.
+
+So the reason is built here, in one fixed shape:
+
+`Surfaced by retrieval search; ranking_rank=N; project_relation=ENUM; semantic_status=ENUM; structural_status=ENUM; comparison_dimensions=LIST|none.`
+
+Fixed rather than prose because the text is permanent and something will read it; a format that varied by case would be a parsing problem handed to whoever wants to know what a search found.
+
+**What is left out is the argument.** No structural score — one model's internal number, meaningless a year later and not a description of similarity. No confidence, freshness or suppression — those decide an order, and the reason is where the account of resemblance goes, not a copy of the ranking inputs. No identifiers, which have their own columns. No Project technology label, which is the owner's free text.
+
+`comparison_dimensions` is worded neutrally on purpose. The rerank guarantees a named dimension had content on both sides; it does not guarantee, and nothing checked, that the contents agree. Calling them "matched" would claim a verification nobody performed. A degraded rerank names none, and the reason then makes no structural claim at all.
+
+`result` is null. A Memory just found has no outcome, and the search's own success is not the Memory's.
+
+## D-305 — A narrow writer, through the boundary every other write uses (P4-10)
+
+`RetrievalUsageLogWriter` has one method and an owner. The search service knows only that — not the twenty-five-operation Memory repository, which would put every write in the system within reach of a read path.
+
+Its input type has no field for a query, a structural profile, a summary or an owner. That is the real guarantee: a rule about what must not be logged is only as good as the next person who reads it, while a shape with nowhere to put the text is checked by the compiler.
+
+Writes go through the request context's transactional repository — the sanitized one — rather than to the database directly. `source_ai` is caller-derived text, so that boundary is doing real work on this path rather than standing by.
+
+One transaction around the rows and nothing else. Two of five would record a search that offered fewer Memories than it did. The provider and the model are long finished by then; a transaction spanning either would hold a connection across somebody else's network.
+
+The writer's owner joins the existing construction-time check, and a test where *only* the writer is foreign proves it is checked rather than covered by the others.
+
+## D-306 — A lost record does not lose the search, and is not lost silently (P4-10)
+
+The write is best effort. The search has already succeeded and the caller is holding an answer that cost two network calls; losing the record of it is a real loss and a smaller one than throwing that away. That is the standing rule that a Memory failure must not stop ordinary work, applied to the one write on the retrieval path.
+
+Swallowing it is refused just as firmly. The failure goes to `RetrievalUsageLogFailureReporter`, which is **required and has no default** — a default that printed would choose an output nobody asked for, and a default that did nothing would make silence the easiest thing to get, which is the failure the port exists to prevent.
+
+The report is a kind and a count. Not the driver's error, not its message, not who was searching, not which Problem or which Memories: a failure report travels to wherever an operator looks, and the reasoning that keeps a query out of an operational log keeps all of it out of here. `attemptedRows` is a number this code chose, and it distinguishes one lost observation from five.
+
+The retry queue is not extended. It replays writes carrying an idempotency key, and a usage log has none — a replayed one would be a second row for one search. Adding a key would answer an adapter-retry question no adapter has asked yet, and the queue schema stays `"2"`.
+
+## D-307 — The cache and the log succeed independently (P4-10)
+
+On a miss the cache is filled first and the log written after. A lost log line must not discard a result worth reusing, and a stored result must not depend on a log line having been written. Reuse is a performance question; the log is an observation; coupling their success conditions would make each less reliable for the other's reasons.
+
+A candidate deleted between the ranking and the write makes the insert fail on its foreign key. The transaction rolls back whole, the search still answers, and the reporter is told once. The deletion path and the foreign keys are unchanged: a Problem that has been used cannot be quietly removed out from under the record of it, and deleting one removes its usage rows in both directions, which it already did.
+
+## D-308 — What P4-10 changed, and what it did not build (P4-10)
+
+No migration, no table, no column, no index, no domain, no dependency, no route. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies — every one measured and unchanged. One new module, one new parameter pair on the search factory, one new argument on `search`.
+
+The retrieval stages below the whole search stay write-free: lexical, vector, hybrid, rerank and ranking record nothing, and neither does any generic read. The whole search is the operation somebody performed; a stage of it is not, and a stage that logged would record several uses for one search.
+
+No aggregate counters. `use_count`, `last_used_at` and their relatives are not added anywhere: the rows are the event source, and a count kept beside them would be a second answer to the same question that would eventually disagree.
+
+Not built: `/v1/search`, any adapter, and every P4-11, P4-12 and P4-13 concern — no revalidation flag, no historical environment, no dead-end warning, no conflict detail. The reason names a structural status; it fetches nothing to explain one.
+
+Twenty-three discrimination mutations, each killed by a named test or guard. Eight survived a first run — five stale anchors, two defence-in-depth checks that each looked redundant because the other covered them, and one mutation that left the original call in place — and in every case the test or the mutation was fixed rather than the result accepted.
+
+P4-10 is done. P4-11 is NOT STARTED.
+
 ## D-288 — A missing structural score is refused, not defaulted (P4-08, after review)
 
 D-283 established that a null score is never read as a zero, and the comparator then did exactly that: `(b.structuralScore ?? 0) - (a.structuralScore ?? 0)`. The comment directly above it said "there is no `?? 0` anywhere on this path". The comment was the intent and the line was the code.

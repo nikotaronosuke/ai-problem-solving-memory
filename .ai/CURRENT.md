@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-09)
+Updated: 2026-08-16 (P4-10)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-09 done; P4-10 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-10 done; P4-11 next)
 
 ## Source of truth
 
@@ -859,6 +859,30 @@ The three retrieval stages as one call, with a short-lived memory of searches al
 
 **Thirty-seven discrimination mutations, each killed by a named test or guard**: each key component removed in turn, the key sorted / case-folded / joined with a separator / left unhashed, copies shared in either direction, the lifetime unchecked or off by one, reading extending the expiry, the bound removed, recency not refreshed, an expired entry answered once, degraded searches kept, ranking skipped on reuse, the second read removed, a changed Problem kept anyway, an unavailable or read-disabled Problem searched anyway, self-exclusion dropped from either stage, unresolved limits, owners uncompared, storing before ranking, the Project taken from the first read, and the Project moved into the canonical document. Four survived a first run — one mutation that changed no behaviour and three guards too loose to see the change — and each was fixed rather than accepted.
 
+## What exists now — Search usage logging (P4-10)
+
+A completed search records that each Memory it surfaced was surfaced. One new module, one new argument, no migration, no dependency, no route.
+
+**One action, because a search observes one** (D-299). `SEARCHED` and nothing else. Candidates dropped by the hybrid or rerank stages are **not** `EXCLUDED` — that means considered and set aside, and a stage narrowing its own window is not an AI declining a Memory. Returning a result is **not** `REFERENCED`. The four other actions stay with the explicit path an adapter uses when it observes them.
+
+**The rows are the final candidates** (D-300). One per Memory a caller was actually shown — never the hybrid stage's wider net, never the rerank's intermediate set. A search that surfaced nothing writes nothing: a row needs a Memory to point at, and pointing it at the Problem being worked on would record a use that never happened. The three non-search outcomes write nothing.
+
+**Degraded but surfaced is still recorded** (D-301). Cache eligibility and log eligibility are different questions: a provider outage is not worth freezing for five minutes and can still end with real Memories being offered. The reason carries both statuses.
+
+**A reused search is a second observation** (D-302). A cache hit writes fresh rows — the Memories were offered again, to whoever asked this time. Logged from the ranking produced now, never the cached rerank, so a Memory since deleted or switched off is not resurrected into an audit trail. No cache status is recorded.
+
+**Who searched is invocation context** (D-303). `search(request, invocation)`. It is deliberately not part of what makes a search the same search, so one assistant's result serves another and each is recorded under its own name — the specification's "Memory is common, only the usage history is per AI", made structural. Validated in preflight with the usage log's own rule; a search that could never be attributed reaches no database and no provider.
+
+**The reason is server-composed from a closed vocabulary** (D-304): rank, Project relation, both channel statuses, comparison dimensions, in one fixed shape. No structural score, no trust controls, no identifiers, no technology label — and `comparison_dimensions` is worded neutrally because the rerank guarantees both sides had content, not that the contents agree. `result` is null.
+
+**A narrow writer through the sanitized boundary** (D-305). One method, no field for a query or a profile — a shape with nowhere to put the text beats a rule somebody has to remember. One transaction around the rows and nothing else; the provider and model are long finished. The writer's owner joins the construction check, with a test where only the writer is foreign.
+
+**Best effort, never silent** (D-306). A lost record does not lose a search that cost two network calls; it goes to a required reporter with no default, carrying a kind and a count and nothing else. The retry queue is untouched — it replays writes with an idempotency key, and a usage log has none.
+
+**The cache and the log succeed independently** (D-307). The cache is filled first, so a lost log line cannot discard a result worth reusing.
+
+**Twenty-three discrimination mutations, each killed by a named test or guard**: the action changed or added to, a row for a search that surfaced nothing, a non-search outcome logged, a query field on the writer, a score or a trust control in the reason, dimensions called matches, a degraded rerank claiming evidence, the earlier stage's rank reported, a result claiming success, the searcher unrecorded or unvalidated or added to the cache key, the cached rerank logged, a reused search unlogged, the rows written one at a time, a lost record swallowed or rethrown, the report growing a detail field, the reporter defaulted away, the writer's owner unchecked, and the record written before the search was reusable. Eight survived a first run — five stale anchors, two defence-in-depth checks each hidden by the other, one mutation that left the original call behind — and each was fixed rather than accepted.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -885,7 +909,10 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No vector index, still: an untyped `vector` cannot carry one and no model is chosen to type a cast index. Exact scan is the implementation, measured feasible at MVP scale; migrations 16 and vector indexes 0 are boundary assertions a hardening task will deliberately update (D-254)
 - No model router. One injected provider per deployment is the standing assumption; fallback, selection, cost routing and A/B are all absent, and concurrent-rollout overwrites are an accepted, recorded limitation (D-247)
 - No retries around the embedding provider, and no reuse of the Phase 3 retry queue for it. A provider failure is a safe error, and trying again is the caller's decision (D-248)
-- No search that writes. No UsageLog, no ChangeLog, no Relation, and nothing generated on demand to satisfy a query (D-230, D-240)
+- No search that changes a Memory. A completed search records that each Memory it surfaced was surfaced, and that is its only write (D-299); no ChangeLog, no Relation, no status move, and nothing generated on demand to satisfy a query (D-230, D-240)
+- No automatic `REFERENCED`, `ADOPTED`, `EXCLUDED` or `CHANGED_STRATEGY`. A search cannot observe any of them; a candidate dropped by a stage is not one an AI set aside (D-299)
+- No aggregate use counters anywhere. The usage rows are the event source; a count kept beside them would be a second answer that eventually disagrees (D-308)
+- No idempotency key on a usage log, and no third queued write kind. The retry queue replays writes that carry a key, and a replayed usage row would be a second record of one search (D-306)
 - No morphological analysis. `pgroonga`, `pg_trgm` and `unaccent` are available on the server and deliberately not installed; Japanese sentences are one lexeme to the built-in parser (D-239)
 - No query language of this system's own, and no term extraction, OR-relaxation or query expansion — ordinary terms are joined with AND and that is left visible (D-236)
 - No HTTP surface for artifacts or for generation. No route, no OpenAPI operation, no debug endpoint; the contract stays at 0.4.0 with 27 operations. Generation is background work, and what a client may ask of a search belongs to the task that has one to expose (D-216, D-228)
@@ -920,16 +947,16 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-10 — Search usage logging.
+P4-11 — Current-environment revalidation contract.
 
-**NOT STARTED.** P4-01 through P4-09 are done; nothing of P4-10 has been implemented. See the private Phase 4 breakdown for what it is.
+**NOT STARTED.** P4-01 through P4-10 are done; nothing of P4-11 has been implemented. See the private Phase 4 breakdown for what it is.
 
 Notes for whoever picks this up:
-- `RetrievalSearchService.search` is now the one entry point for a whole search and the obvious place a log would be written from. Nothing on the path writes anything today, on any outcome, hit or miss (D-298) — so this is the task that changes "a search is a read" and it should say so deliberately
-- `SEARCHED / REFERENCED / ADOPTED / EXCLUDED` exist as a stored enum and nothing writes them. What a search *did* is knowable here; what a caller later did with the results is not, and arrives from somewhere else
-- **A search query must never reach a log** (D-238). A UsageLog records that a search happened and what became of the results, not what was typed — and the cache was built the same way, keeping only a digest (D-292)
-- A reused search is still a search. Whether a cache hit is logged, and whether it is distinguishable from a miss in the log, is a decision for this task; the search result deliberately does not report which it was (D-297)
-- Four outcomes exist, and three of them are not searches at all: an unavailable Problem, one with reading switched off, and one that changed mid-search. Logging those as searches would misreport what happened (D-289, D-295)
+- `RetrievalSearchService.search` returns ranked candidates carrying identifiers, a Project relation, trust, currency, suppression and structural provenance — and **no Memory content at all**. Whatever a revalidation contract needs an adapter to re-check, fetching it is this task's own work, as it was for every stage before it
+- `freshness` is already ranked on and reported (D-284). What it does **not** do is say anything about what to re-check or why; no stage produces `mustRevalidate`, a historical Environment, or a version warning, and guards fail if one appears in the retrieval path
+- An Environment is an immutable point-in-time snapshot (D-019) and is arbitrary JSON. Comparing one against "now" needs a definition of now that no stage currently has
+- The specification's rule is that a Memory is a candidate rather than an answer, and that current code, environment, versions and official specification are re-checked before adoption. That is an obligation on the adapter; this contract is how the server tells it what to re-check
+- The usage log records that a Memory surfaced, not that it was adopted. If revalidation produces an outcome worth recording, `REFERENCED` / `ADOPTED` / `EXCLUDED` are the explicit path and stay adapter-reported (D-299)
 
 ## Core MVP milestone
 

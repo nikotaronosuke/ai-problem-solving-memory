@@ -3025,6 +3025,242 @@ describe('search caching', () => {
     }
   });
 
+  it('records only what a search can observe', async () => {
+    const writer = await readFile(join(SRC, 'app', 'retrieval-usage-log-writer.ts'), 'utf8');
+    const code = writer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // A search sees that a Memory came back. Whether anybody then read it,
+    // took its direction, set it aside, or changed course because of it
+    // happens somewhere this code cannot see — and the four other actions are
+    // observations, so inventing them from this one would make the log a
+    // workflow it was deliberately not made into.
+    expect(code).toContain("const SEARCHED: UsageAction = 'SEARCHED'");
+    for (const unobserved of ['REFERENCED', 'ADOPTED', 'EXCLUDED', 'CHANGED_STRATEGY']) {
+      expect(code.includes(unobserved), `the writer produces ${unobserved}`).toBe(false);
+    }
+
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const serviceCode = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const unobserved of ['REFERENCED', 'ADOPTED', 'EXCLUDED', 'CHANGED_STRATEGY']) {
+      expect(serviceCode.includes(unobserved), `the search produces ${unobserved}`).toBe(false);
+    }
+  });
+
+  it('gives the writer nowhere to put what was searched for', async () => {
+    const writer = await readFile(join(SRC, 'app', 'retrieval-usage-log-writer.ts'), 'utf8');
+    const input = writer.slice(writer.indexOf('export interface RecordSearchedInput {'));
+    const body = input.slice(0, input.indexOf('\n}'));
+
+    // A rule about what must not be logged is only as good as the next person
+    // who reads it. A shape with nowhere to put the text is checked by the
+    // compiler.
+    for (const raw of [
+      'lexicalText',
+      'semanticText',
+      'currentFeatures',
+      'canonicalSource',
+      'query',
+      'ownerId',
+      'normalizedSummary',
+      'keywords',
+      'embedding',
+    ]) {
+      expect(body.includes(raw), `the writer accepts ${raw}`).toBe(false);
+    }
+    expect(body).toContain('currentProblemId');
+    expect(body).toContain('candidates');
+  });
+
+  it('composes a reason from closed vocabulary and nothing else', async () => {
+    const writer = await readFile(join(SRC, 'app', 'retrieval-usage-log-writer.ts'), 'utf8');
+    const compose = writer.slice(writer.indexOf('export function composeSearchedReason('));
+    const body = compose
+      .slice(0, compose.indexOf('\n}'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    // Five facts, all enums or small numbers. Trust, currency and suppression
+    // decide an order rather than describing what looked similar; a raw
+    // structural score is one model's internal number; the identifiers have
+    // their own columns; a Project's technology label is the owner's free
+    // text.
+    for (const excluded of [
+      'structuralScore',
+      'confidence',
+      'freshness',
+      'suppressed',
+      'hybridRank',
+      'problemId',
+      'projectId',
+      'platform',
+    ]) {
+      expect(body.includes(excluded), `the reason carries ${excluded}`).toBe(false);
+    }
+    expect(body).toContain('rankingRank');
+    expect(body).toContain('projectRelation');
+    expect(body).toContain('semanticStatus');
+    expect(body).toContain('structuralStatus');
+    expect(body).toContain('matchedDimensions');
+
+    // Neutral wording. The rerank guarantees both sides had content in a named
+    // dimension, not that the contents agree — "matched" would claim a check
+    // nobody performed.
+    expect(body).toContain('comparison_dimensions=');
+    expect(body.includes('matched_dimensions='), 'the reason claims a match').toBe(false);
+  });
+
+  it('writes one search’s rows together, and wraps nothing else', async () => {
+    const writer = await readFile(join(SRC, 'app', 'retrieval-usage-log-writer.ts'), 'utf8');
+    const code = writer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Two of five rows would record a search that offered fewer Memories than
+    // it did. And the transaction holds a connection, so it must not span the
+    // provider or the model — both of which are long finished by here.
+    expect(code).toContain('context.runInTransaction(');
+    for (const outside of ['embed(', 'rerank(', 'hybridService', 'rerankService', 'cache.']) {
+      expect(code.includes(outside), `the writer transaction reaches ${outside}`).toBe(false);
+    }
+
+    // Through the sanitized repository the context established, not past it.
+    // `source_ai` is caller-derived text, so that boundary is doing real work
+    // on this path.
+    expect(code).toContain('repository.createUsageLog(');
+    expect(code.includes("from '../db/"), 'the writer reaches the database directly').toBe(false);
+  });
+
+  it('reports a lost record in terms that carry nothing', async () => {
+    const writer = await readFile(join(SRC, 'app', 'retrieval-usage-log-writer.ts'), 'utf8');
+    const failure = writer.slice(writer.indexOf('export interface RetrievalUsageLogFailure {'));
+    const body = failure.slice(0, failure.indexOf('\n}'));
+
+    // A kind and a count. Both are values this code chose, and a failure
+    // report travels to wherever an operator looks.
+    expect(body).toContain("kind: 'SEARCH_USAGE_LOG_WRITE_FAILED'");
+    expect(body).toContain('attemptedRows: number');
+    for (const leak of [
+      'Error',
+      'message',
+      'cause',
+      'sourceAi',
+      'ownerId',
+      'problemId',
+      'detail',
+    ]) {
+      expect(body.includes(leak), `the failure report carries ${leak}`).toBe(false);
+    }
+
+    // No default reporter. One that printed would choose an output nobody
+    // asked for; one that did nothing would make silence the easiest thing to
+    // get, which is the failure the port exists to prevent.
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const factory = code.slice(code.indexOf('export function createRetrievalSearchService('));
+    const parameters = factory.slice(factory.indexOf('('), factory.indexOf('): RetrievalSearch'));
+    expect(parameters).toContain('usageLogFailureReporter: RetrievalUsageLogFailureReporter');
+    expect(parameters.includes('= '), 'a collaborator is defaulted away').toBe(false);
+    expect(code.includes('console.'), 'the search logs to a console').toBe(false);
+  });
+
+  it('lets a lost record stop neither the search nor its reuse', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The search has already succeeded and the caller is holding an answer
+    // that cost two network calls. Losing the record of it is a smaller loss
+    // than throwing that away — but it is not silence: the catch reports.
+    const recordAt = code.indexOf('async function recordSurfaced(');
+    const record = code.slice(recordAt, code.indexOf('return {', recordAt));
+    expect(record).toContain('usageLogFailureReporter.report(');
+    expect(record.includes('throw'), 'a lost record fails the search').toBe(false);
+
+    // On a miss the cache is filled first, so a lost log line cannot discard a
+    // result worth reusing. Checked as "between the cache and the return"
+    // rather than by position alone, so moving the call earlier cannot be
+    // hidden by leaving a second one behind.
+    const stored = code.indexOf('cache.set(');
+    expect(stored).toBeGreaterThan(-1);
+    const afterCache = code.slice(stored);
+    const logged = afterCache.indexOf('recordSurfaced(');
+    expect(logged, 'the miss path does not record after filling the cache').toBeGreaterThan(-1);
+    expect(logged).toBeLessThan(afterCache.indexOf('return outcome;'));
+  });
+
+  it('records from the ranked candidates, on every search', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Both paths record, and both record what ranking just produced — never
+    // the cached rerank, which may still name a Memory since deleted or
+    // switched off.
+    expect((code.match(/await recordSurfaced\(/g) ?? []).length).toBe(2);
+    expect(code).toContain('outcome.candidates');
+    const recordAt = code.indexOf('async function recordSurfaced(');
+    const record = code.slice(recordAt, code.indexOf('return {', recordAt));
+    expect(record).toContain("outcome.kind !== 'SEARCHED' || outcome.candidates.length === 0");
+  });
+
+  it('keeps who is searching out of what makes a search the same search', async () => {
+    const key = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+
+    // Two assistants asking the same question of the same Problem get the same
+    // Memories, and each is recorded under its own name. Putting the searcher
+    // in the key would split the cache for no retrieval reason.
+    expect(key.includes('sourceAi'), 'the cache key carries the searcher').toBe(false);
+
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const request = service.slice(service.indexOf('export interface RetrievalSearchRequest {'));
+    const requestBody = request.slice(0, request.indexOf('\n}'));
+    expect(requestBody.includes('sourceAi'), 'the request carries the searcher').toBe(false);
+    expect(service).toContain('export interface RetrievalSearchInvocation {');
+  });
+
+  it('leaves the lower stages and the generic reads write-free', async () => {
+    const modules = await readModules(SRC);
+    const lower = modules.filter(
+      (module) =>
+        module.path.includes('retrieval-hybrid-search') ||
+        module.path.includes('retrieval-structural-rerank') ||
+        module.path.includes('retrieval-ranking') ||
+        module.path.includes('retrieval-full-text-search') ||
+        module.path.includes('retrieval-vector-search'),
+    );
+    expect(lower.length).toBeGreaterThan(0);
+
+    // The whole search is the operation somebody performed. A stage of it is
+    // not, and a stage that logged would record several uses for one search.
+    for (const module of lower) {
+      expect(module.source.includes('UsageLog'), `${module.path} records usage of its own`).toBe(
+        false,
+      );
+    }
+  });
+
+  it('adds no counter that would compete with the log', async () => {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter((module) => module.path.includes('retrieval-'))
+      .map((module) => module.source)
+      .join('\n');
+
+    // The rows are the event source. A count kept beside them would be a
+    // second answer to the same question, and the two would disagree.
+    for (const derived of ['use_count', 'useCount', 'lastUsedAt', 'searchCount', 'searchId']) {
+      expect(code.includes(derived), `the retrieval path keeps ${derived}`).toBe(false);
+    }
+  });
+
+  it('leaves the retry queue alone', async () => {
+    const item = await readFile(join(SRC, 'reliability', 'item.ts'), 'utf8');
+
+    // The queue replays writes that carry an idempotency key, and a usage log
+    // has none — a replayed one would be a second row for one search. Adding a
+    // key here would answer an adapter-retry question no adapter has asked.
+    expect(item).toContain("readonly operation: 'appendEvent'");
+    expect(item).toContain("readonly operation: 'appendVerification'");
+    expect(item.includes('createUsageLog'), 'the queue replays usage logs').toBe(false);
+    expect(item.includes("'recordSearched'"), 'the queue replays searches').toBe(false);
+  });
+
   it('puts no invalidation hook into the write paths', async () => {
     const modules = await readModules(SRC);
     const writers = modules.filter(

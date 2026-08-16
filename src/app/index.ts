@@ -116,10 +116,25 @@ export { parseStructuralFeatures } from '../domain/retrieval-summary.js';
 export {
   createRetrievalSearchService,
   InvalidRetrievalSearchError,
+  type RetrievalSearchInvocation,
   type RetrievalSearchOutcome,
   type RetrievalSearchRequest,
   type RetrievalSearchService,
 } from './retrieval-search-service.js';
+
+// The one thing a search records: that each Memory it surfaced was surfaced.
+// Whether anybody then read, took or set aside a Memory is observed elsewhere
+// and reported through the ordinary usage log path.
+export {
+  composeSearchedReason,
+  createRetrievalUsageLogWriter,
+  NO_COMPARISON_DIMENSIONS,
+  SEARCHED_REASON_PREFIX,
+  type RecordSearchedInput,
+  type RetrievalUsageLogFailure,
+  type RetrievalUsageLogFailureReporter,
+  type RetrievalUsageLogWriter,
+} from './retrieval-usage-log-writer.js';
 export {
   createRetrievalSearchCache,
   RETRIEVAL_SEARCH_CACHE_MAX_ENTRIES,
