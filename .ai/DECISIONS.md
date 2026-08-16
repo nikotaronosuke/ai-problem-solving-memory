@@ -3300,7 +3300,9 @@ This is the one field on the final envelope that is derived rather than recorded
 
 ## D-354 — The gate is applied again, freshly, at read time (P4-15)
 
-The artifact records what was true when it was generated, and is not rewritten when a Problem is reopened or its Verification history changes. Trusting the generation-time gate for ever would leave a Memory that has left `VERIFIED` still offering directions its record no longer supports.
+The artifact records what was true when it was generated, and is never rewritten when what it describes changes. Trusting the generation-time gate for ever would make this answer depend on a lifecycle rule enforced somewhere else.
+
+Through the supported surface that dependency would hold today: `VERIFIED` is terminal, and nothing reopens a concluded Problem. The gate is applied again anyway, because it belongs to this read rather than to today's lifecycle — a write through a lower layer, an imported record, or a later change to which statuses are terminal would each leave a persisted state the gate no longer holds for, with an artifact still naming directions.
 
 So the same test runs again, in the same statement as the artifact read: the Problem's status and whether any Verification passed, joined to `retrieval_artifacts` with `unnest(...) with ordinality`, one statement, no Event table. The rule is **imported** from `problem-status.ts` rather than restated, so it cannot drift from the one the generation path enforces.
 
@@ -3318,7 +3320,7 @@ Ordering, count and repeats come from the stored profile unchanged: no sort, no 
 
 `RetrievalMemoryCandidate` now carries `ranking`, `revalidation`, `deadEndWarnings`, `successfulDirections` and `conflict`. The intermediate types follow the established shape — `SuccessfulDirectionAwareMemoryCandidate` sits between the dead-end and conflict stages — and every field set is guarded exactly, in order.
 
-The new stage runs between dead ends and conflicts, on both the cached and the recomputed path, and nothing about it enters the cache. The reason is D-317's, D-328's and D-340's, a fourth time: **reopening a Problem or appending a Verification moves nothing the cache key watches**, because that key is built from the Problem being worked on and this is about other Problems entirely. A remembered answer would keep offering a direction the record had stopped supporting.
+The new stage runs between dead ends and conflicts, on both the cached and the recomputed path, and nothing about it enters the cache. The reason is D-317's, D-328's and D-340's, a fourth time: **a status change or a Verification appended to a candidate moves nothing the cache key watches**, because that key is built from the Problem being worked on and this is about other Problems entirely. A remembered answer would keep offering a direction the record had stopped supporting.
 
 A read failure raises. Empty is a statement, and a database that could not be reached has not established it.
 
@@ -3351,7 +3353,7 @@ What P4-15 does **not** do: no write-back to Project B (Phase 5 captures Events,
 
 Owner boundary, suppression, currency, trust, the five-candidate bound and cache reuse were all established at corpus level by P4-14, with a foreign decoy written to match perfectly and seven controls candidates whose structural strength runs the reverse of their expected order. Re-seeding any of that into the end-to-end run would have made it longer without making it say more.
 
-So the Phase 4 Definition of Done is closed as a matrix — each item against the task that proved it — and P4-15 asserts only continuity: cross-project, both channels, structural rerank, one to five offered, all four enrichments present, the usage log written, and the canonical record byte-identical before and after.
+So the Phase 4 Definition of Done is closed as a matrix — each item against the task that proved it — and P4-15 asserts only continuity: cross-project, both channels, structural rerank, a bounded offer, all four enrichments present, the usage log written, and the canonical record byte-identical before and after. That fixture expects at least one Memory back because its corpus contains one; the contract itself bounds the result above and not below, and `SEARCHED` with nothing offered is an ordinary answer.
 
 ## D-360 — What P4-15 changed, and Phase 4 is complete (P4-15)
 

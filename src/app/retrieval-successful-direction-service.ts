@@ -23,10 +23,12 @@
  * **The gate is applied again, freshly.** The artifact was written under
  * `requiresSuccessfulVerification(status) && hasSuccessfulVerification`, and a
  * generator claiming a direction without it is refused outright at generation
- * time. But a Problem can be reopened and its checks can change afterwards
- * without the artifact being rewritten, so the same test is re-run against the
- * record as it is now. An artifact keeps its directions; a Memory that has left
- * `VERIFIED` stops offering them.
+ * time. The same test is re-run against the record as it is now, because the
+ * artifact is never rewritten when what it describes changes. `VERIFIED` is
+ * terminal through the supported surface, so this is defence rather than a live
+ * path — but it makes the answer a property of this stage instead of something
+ * inherited from a lifecycle rule enforced elsewhere. An artifact keeps its
+ * directions; a record that does not pass the gate now stops offering them.
  *
  * **An empty list is not "no fix was ever tried".** It means there is nothing
  * here that may currently be offered as a direction that worked — no artifact,

@@ -27,15 +27,20 @@
  *
  * ## Why the gate is applied again here
  *
- * The stored artifact records what was true when it was generated. A Problem
- * can be reopened, its Verification history can change, and the artifact is not
- * rewritten when either happens. Trusting the generation-time gate for ever
- * would mean a Problem that left `VERIFIED` kept offering directions its record
- * no longer supports.
+ * The stored artifact records what was true when it was generated, and nothing
+ * rewrites it if the record it describes stops supporting the claim.
+ *
+ * Through the supported surface that is not currently reachable: `VERIFIED` is
+ * terminal, so a Problem does not leave it. But the gate is a property of this
+ * read rather than a consequence of today's lifecycle — a write through a lower
+ * layer, an imported record, or a later change to which statuses are terminal
+ * would each leave a persisted state the gate no longer holds for, with an
+ * artifact still naming directions.
  *
  * So the status and the existence of a successful Verification are re-read in
  * the same statement as the artifact, and the directions come back only when
- * both hold now.
+ * both hold now. Trusting the generation-time gate for ever would make this
+ * answer depend on a lifecycle rule enforced somewhere else.
  */
 
 import { requiresSuccessfulVerification } from '../domain/problem-status.js';

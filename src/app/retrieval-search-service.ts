@@ -264,8 +264,8 @@ export function createRetrievalSearchService(
     const withDeadEnds = await deadEndService.enrich(revalidated);
     // Directions the record supports come from the stored search profile
     // rather than from an Event, and are gated again on the Problem's status
-    // and checks as they are now — so a Memory that has left `VERIFIED` stops
-    // offering them even though its artifact still names them.
+    // and checks as they are now — so a record that does not pass the gate is
+    // never offered them, whatever its artifact still names.
     const withDirections = await successfulDirectionService.enrich(withDeadEnds);
     return {
       kind: 'SEARCHED',
