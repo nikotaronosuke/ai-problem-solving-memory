@@ -689,9 +689,33 @@ Thirty-three discrimination mutations each killed by a named test or guard. Four
 
 3404 tests across 108 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-12 Dead-end handling
+### P4-12 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. No Event has ever been read by the retrieval path — evidence deliberately stopped at Verifications so dead ends stayed here (D-313) — and a dead end is a warning rather than a prohibition, with an environment difference a legitimate reason to retry.
+Dead-end handling: every Memory a search offers now also carries the directions already recorded as not leading anywhere.
+
+**A warning, and never a prohibition** (D-321). No candidate is dropped for having dead ends, no order changes because of them, and the type carries nothing a caller could read as permission — no `retryBlocked`, `severity`, `approvalRequired` or `notify`. A direction that failed under one runtime or one library version may be right under another, and an environment difference is a legitimate reason to try again, which is what P4-11's historical Environment and its four checks are for; they arrive together and the caller decides. There is no post-ranking penalty either: `dead_end_directions` is already one of the seven dimensions the reranker weighs, and a second arithmetic penalty on how many Events exist would rank a Problem down for being honestly recorded.
+
+The Event is the source, not the artifact's regenerable `dead_end_directions` — a generator's paraphrase, never reconciled with what it came from, and fine only for comparing structure (D-322). A later `USER_CORRECTION` does not cancel a dead end: nothing links the two, and inferring a retraction would mean reading free text and guessing (D-323). All of them come back, oldest first with an identifier tie-break, and identical text stays two records (D-324). Four fields and a time, with nulls preserved and nothing the candidate already names — no ids, no `clientEventId`, no `sourceAi` (D-325).
+
+One statement keeps two cases apart: a Memory that has gone is dropped indistinguishably, and a Memory with nothing recorded gets an empty list, because "nowhere is known not to lead" must never be delivered in place of "this Memory is no longer available" (D-326). The final envelope moved out of the revalidation module into `src/domain/retrieval-result.ts`, so neither stage owns the answer and P4-13 attaches without either widening (D-327). Enrichment is fresh on every search and cached nowhere, since a `DEAD_END` on a candidate moves nothing the cache key watches; the cache is filled and the log written only after this stage succeeds (D-328). A failed read raises rather than being reported as nothing recorded (D-329).
+
+Forty-one discrimination mutations each killed by a named test or guard. Six survived a first run: three were undetectable through behaviour and were re-aimed at the guard asserting the statement's text — a defence-in-depth owner predicate, a left join equivalent to an inner one here, and an `order by` the Map-keyed consumer does not depend on — all three kept, because the statement is exported and being deterministic on its own is worth having. The other three were real gaps and the tests were fixed. A seventh detector turned out to be a coin flip on random identifiers and was re-aimed at a fixture that contradicts the mutation by construction. The P4-11 correction set was re-run and all five still hold.
+
+3452 tests across 109 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### OPEN — no contract returns successful-direction detail
+
+The Phase 4 Definition of Done requires that a retrieved Memory let a caller use **both the successful directions and the dead ends**. As of P4-12 only half of that is true of the final response.
+
+Dead ends now come back as `deadEndWarnings`, read from `DEAD_END` Events. There is no equivalent for the successful side: `FIX` and `DISCOVERY` Events are read by the summary generator's source query (D-219) and by nothing on the search path, and the artifact's `successful_directions` is a regenerable paraphrase used for structural comparison — the same thing D-322 declined to use as a source for warnings, and it would be no better as a source here.
+
+So a caller receiving a search result gets the ranking, the historical Environment, the Verification evidence and the dead ends, and must go to the ordinary Event endpoints to learn what actually worked.
+
+This is recorded rather than fixed. It was **not** merged into P4-12, whose scope is dead ends, and it must **not** be quietly absorbed into P4-13, whose scope is conflict comparison. It needs a deliberate decision: whether the successful side belongs in the search response at all, or whether fetching the Problem's Events is the intended second step. Settle it before the Phase 4 Definition of Done is called satisfied.
+
+### NEXT — P4-13 Conflict comparison
+
+**NOT STARTED.** See the private Phase 4 breakdown. No Relation has ever been read by the retrieval path — `CONTRADICTS` exists and is written through the ordinary Relation service, while `CONFLICTED` travels only as the `Confidence` value it already was (D-283) — and the two enrichments already built are the shape to follow (D-326, D-328, D-329).
 
 ## BLOCKED
 

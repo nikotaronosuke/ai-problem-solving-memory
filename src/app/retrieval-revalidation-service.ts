@@ -28,10 +28,8 @@
 
 import type { OwnerId } from '../domain/owner.js';
 import { MAX_RANKED_CANDIDATES, type RankedMemoryCandidate } from '../domain/retrieval-ranking.js';
-import {
-  REVALIDATION_CHECKS,
-  type RetrievalMemoryCandidate,
-} from '../domain/retrieval-revalidation.js';
+import { REVALIDATION_CHECKS } from '../domain/retrieval-revalidation.js';
+import type { RevalidatedMemoryCandidate } from '../domain/retrieval-result.js';
 import type { RetrievalRevalidationReader } from '../repository/index.js';
 
 /** Raised when a set of ranked candidates cannot be enriched as given. */
@@ -75,7 +73,7 @@ export interface RetrievalRevalidationService {
    */
   enrich(
     candidates: readonly RankedMemoryCandidate[],
-  ): Promise<readonly RetrievalMemoryCandidate[]>;
+  ): Promise<readonly RevalidatedMemoryCandidate[]>;
 }
 
 export function createRetrievalRevalidationService(
@@ -84,7 +82,7 @@ export function createRetrievalRevalidationService(
   return {
     ownerId: reader.ownerId,
 
-    async enrich(candidates): Promise<readonly RetrievalMemoryCandidate[]> {
+    async enrich(candidates): Promise<readonly RevalidatedMemoryCandidate[]> {
       // The type says these came from the ranking stage. This function is
       // exported, so that is a claim rather than a fact, and the checks are
       // the cheap ones that keep a malformed list from reaching a query.
@@ -141,7 +139,7 @@ export function createRetrievalRevalidationService(
         ranked.map((candidate) => candidate.problemId),
       );
 
-      const offered: RetrievalMemoryCandidate[] = [];
+      const offered: RevalidatedMemoryCandidate[] = [];
       for (const candidate of ranked) {
         const found = context.get(candidate.problemId);
         if (found === undefined) {

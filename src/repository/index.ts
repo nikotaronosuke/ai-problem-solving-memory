@@ -105,6 +105,14 @@ export type {
   RevalidationRow,
 } from '../db/retrieval-revalidation-read.js';
 
+// The directions a Memory already knows do not lead. Its own reader: only
+// `DEAD_END` Events, and the distinction between "none recorded" and "no
+// longer visible" is what the query is shaped around.
+export {
+  createRetrievalDeadEndReader,
+  type RetrievalDeadEndReader,
+} from './retrieval-dead-end-reader.js';
+
 // Semantic candidate search. Handed a validated embedding by the service
 // above it — the embedding parameter is a storage-boundary input, not an
 // application surface; what an application caller can supply is text.

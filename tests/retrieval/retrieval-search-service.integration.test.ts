@@ -33,6 +33,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createRetrievalHybridSearchService,
   createRetrievalRankingService,
+  createRetrievalDeadEndService,
   createRetrievalRevalidationService,
   createRetrievalSearchCache,
   createRetrievalSearchService,
@@ -52,6 +53,7 @@ import {
 } from '../../src/app/index.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
+import type { DatabaseExecutor } from '../../src/db/executor.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
 import { createTransactionRunner } from '../../src/db/transaction.js';
@@ -75,6 +77,7 @@ import {
   createMemoryRepository,
   createRetrievalArtifactRepository,
   createRetrievalRankingReader,
+  createRetrievalDeadEndReader,
   createRetrievalRevalidationReader,
   createRetrievalSearchReader,
   createRetrievalStructuralReader,
@@ -218,6 +221,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
     options: {
       readonly writer?: RetrievalUsageLogWriter;
       readonly reporter?: RetrievalUsageLogFailureReporter;
+      /** Substituted only to make the last stage fail on demand. */
+      readonly deadEndExecutor?: DatabaseExecutor;
     } = {},
   ): RetrievalSearchService {
     return createRetrievalSearchService(
@@ -235,6 +240,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       ),
       createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
       createRetrievalRevalidationService(createRetrievalRevalidationReader(pool, owner.context)),
+      createRetrievalDeadEndService(
+        createRetrievalDeadEndReader(options.deadEndExecutor ?? pool, owner.context),
+      ),
       cache,
       options.writer ?? createRetrievalUsageLogWriter(requestContextFor(owner)),
       options.reporter ?? recordingReporter(),
@@ -449,6 +457,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
           createRetrievalRevalidationService(
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
+          createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -482,6 +491,41 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
           createRetrievalRevalidationService(
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
+          createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalSearchCache(),
+          createRetrievalUsageLogWriter(requestContextFor(owner)),
+          recordingReporter(),
+        ),
+      ).toThrow();
+    });
+
+    it('refuses a dead-end service belonging to a different owner', async () => {
+      const owner = await makeActor();
+      const stranger = await makeActor();
+
+      // Only the dead-end service is foreign. Every other stage checks its own
+      // owner, so this is the case that proves this one is checked too — and
+      // it would otherwise warn somebody off a direction on the strength of a
+      // failure recorded in a Memory they have never seen.
+      expect(() =>
+        createRetrievalSearchService(
+          createRetrievalSummarySourceReader(pool, owner.context),
+          createRetrievalHybridSearchService(
+            createRetrievalSearchReader(pool, owner.context),
+            createRetrievalVectorSearchService(
+              provider(),
+              createRetrievalVectorSearchReader(pool, owner.context),
+            ),
+          ),
+          createRetrievalStructuralRerankService(
+            createRetrievalStructuralReader(pool, owner.context),
+            reranker(),
+          ),
+          createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
+          createRetrievalRevalidationService(
+            createRetrievalRevalidationReader(pool, owner.context),
+          ),
+          createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(owner)),
           recordingReporter(),
@@ -515,6 +559,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
           createRetrievalRevalidationService(
             createRetrievalRevalidationReader(pool, owner.context),
           ),
+          createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -544,6 +589,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
           createRetrievalRevalidationService(
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
+          createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
           recordingReporter(),
@@ -1285,6 +1331,166 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       for (const absent of Object.values(marker)) {
         expect(reported.includes(absent), `the context carried ${absent}`).toBe(false);
       }
+    });
+  });
+
+  describe('directions a Memory already knows do not lead', () => {
+    /** A `DEAD_END` against a candidate, with chosen wording. */
+    const deadEnd = async (owner: Actor, problemId: ProblemId, summary: string): Promise<void> => {
+      await owner.memory.appendEvent({
+        problemId,
+        eventType: 'DEAD_END',
+        summary,
+        clientEventId: randomUUID() as ClientEventId,
+      });
+    };
+
+    it('attaches them to the Memory that recorded them', async () => {
+      const owner = await makeActor();
+      const { current, candidate, other } = await seedSearchable(owner);
+      await deadEnd(owner, candidate.problemId, 'widening the connection pool');
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+
+      const warned = outcome.candidates.find(
+        (entry) => entry.ranking.problemId === candidate.problemId,
+      );
+      const quiet = outcome.candidates.find((entry) => entry.ranking.problemId === other.problemId);
+      expect(warned?.deadEndWarnings.map((entry) => entry.summary)).toEqual([
+        'widening the connection pool',
+      ]);
+      expect(quiet?.deadEndWarnings).toEqual([]);
+    });
+
+    it('takes them from what was recorded, not from the search profile', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      await deadEnd(owner, candidate.problemId, 'widening the connection pool');
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+      const warned = outcome.candidates.find(
+        (entry) => entry.ranking.problemId === candidate.problemId,
+      );
+
+      // Every seeded artifact carries `dead_end_directions: ['timeout']` — a
+      // regenerable paraphrase written by a summary generator, kept for
+      // structural comparison. The warnings a caller is shown come from the
+      // Events somebody actually recorded, so the two are deliberately
+      // different here and only one of them may surface.
+      expect(warned?.deadEndWarnings.map((entry) => entry.summary)).toEqual([
+        'widening the connection pool',
+      ]);
+      expect(JSON.stringify(warned?.deadEndWarnings).includes('timeout')).toBe(false);
+    });
+
+    it('sees one recorded since the search was cached', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port);
+
+      await searchFor(service, current.problemId);
+      await deadEnd(owner, candidate.problemId, 'recorded after the first search');
+
+      const outcome = await searchFor(service, current.problemId);
+
+      // Nothing expensive re-ran, and the new dead end is there. A `DEAD_END`
+      // on a *candidate* moves nothing the cache key watches, so a remembered
+      // enrichment would keep sending people down a direction that is by then
+      // known not to work.
+      expect(embedding.calls).toBe(1);
+      expect(port.calls).toBe(1);
+      if (outcome.kind === 'SEARCHED') {
+        const warned = outcome.candidates.find(
+          (entry) => entry.ranking.problemId === candidate.problemId,
+        );
+        expect(warned?.deadEndWarnings.map((entry) => entry.summary)).toEqual([
+          'recorded after the first search',
+        ]);
+      }
+    });
+
+    it('offers a Memory littered with them in the position ranking gave it', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const before = await searchFor(service, current.problemId);
+      for (let index = 0; index < 4; index += 1) {
+        await deadEnd(owner, candidate.problemId, `attempt ${String(index)}`);
+      }
+      const after = await searchFor(service, current.problemId);
+
+      if (before.kind !== 'SEARCHED' || after.kind !== 'SEARCHED') {
+        return;
+      }
+      // Four recorded failures and the order is untouched: a warning is
+      // material for the reader, never an input to ranking.
+      expect(after.candidates.map((entry) => entry.ranking.problemId)).toEqual(
+        before.candidates.map((entry) => entry.ranking.problemId),
+      );
+      expect(after.candidates.map((entry) => entry.ranking.rankingRank)).toEqual(
+        before.candidates.map((entry) => entry.ranking.rankingRank),
+      );
+    });
+
+    it('records every Memory it offered, warnings and all', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      await deadEnd(owner, candidate.problemId, 'widening the connection pool');
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      const logs = await usageLogsOf(owner.ownerId);
+
+      // The log follows the final list, so a Memory a warning is attached to
+      // is still a Memory that was offered.
+      if (outcome.kind === 'SEARCHED') {
+        expect(logs.map((log) => log.memory_id).sort()).toEqual(
+          outcome.candidates.map((entry) => entry.ranking.problemId).sort(),
+        );
+      }
+      expect(logs.some((log) => log.memory_id === candidate.problemId)).toBe(true);
+    });
+
+    it('remembers nothing and records nothing when the last stage fails', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      let refuse = true;
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port, {
+        deadEndExecutor: {
+          query: (text, values) =>
+            refuse
+              ? Promise.reject(new Error('connection terminated unexpectedly'))
+              : pool.query(text, values),
+        },
+      });
+
+      await expect(searchFor(service, current.problemId)).rejects.toThrow(
+        'connection terminated unexpectedly',
+      );
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+
+      refuse = false;
+      await searchFor(service, current.problemId);
+
+      // The expensive stages ran a second time, which is how the absence of a
+      // cache entry shows. A search that never finished must not leave a
+      // remembered result behind for the next caller to be served instead.
+      expect(embedding.calls).toBe(2);
+      expect(port.calls).toBe(2);
     });
   });
 
