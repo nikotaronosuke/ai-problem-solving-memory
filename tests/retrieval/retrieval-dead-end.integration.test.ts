@@ -33,7 +33,7 @@ import type { DatabaseExecutor } from '../../src/db/executor.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
 import type { ClientEventId } from '../../src/domain/client-event-id.js';
-import type { EventType } from '../../src/domain/enums.js';
+import type { EventType, Freshness } from '../../src/domain/enums.js';
 import { generateOwnerId, type OwnerContext, type OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
 import type { ProjectId } from '../../src/domain/project.js';
@@ -477,6 +477,32 @@ describe.skipIf(databaseUrl === undefined)('retrieval dead ends', () => {
       expect(enriched.map((entry) => entry.ranking.rankingRank)).toEqual([1, 2]);
       expect(enriched.map((entry) => entry.deadEndWarnings.length)).toEqual([5, 0]);
     });
+
+    it.each([['CURRENT'], ['STALE_UNKNOWN'], ['SUPERSEDED'], ['INVALID']] as [Freshness][])(
+      'attaches them to a %s Memory without changing anything else about it',
+      async (freshness) => {
+        const owner = await makeActor();
+        const seeded = await seed(owner);
+        await append(owner, seeded.problemId, { summary: 'raising the timeout' });
+        const given = revalidated(seeded.problemId, seeded.projectId, 1);
+
+        const enriched = await serviceFor(owner).enrich([
+          { ...given, ranking: { ...given.ranking, freshness } },
+        ]);
+
+        // How current the record claims to be and what was tried and failed
+        // are two separate facts. Neither adjusts the other, and the warning
+        // arrives the same way whichever the record says.
+        expect(enriched[0]?.deadEndWarnings.map((entry) => entry.summary)).toEqual([
+          'raising the timeout',
+        ]);
+        expect(enriched[0]?.ranking.freshness).toBe(freshness);
+        expect(enriched[0]?.ranking.suppressed).toBe(false);
+        expect(enriched[0]?.ranking.confidence).toBe('HIGH');
+        expect(enriched[0]?.ranking.structuralScore).toBe(0.5);
+        expect(enriched[0]?.revalidation.requiredChecks).toEqual([...REVALIDATION_CHECKS]);
+      },
+    );
 
     it('leaves the historical context beside it', async () => {
       const owner = await makeActor();

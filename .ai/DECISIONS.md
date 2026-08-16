@@ -3076,6 +3076,26 @@ The P4-11 correction set was re-run and all five still hold.
 
 P4-12 is done. P4-13 is NOT STARTED.
 
+## D-331 — The boundaries proven by injection, not only by reading (P4-12, follow-up)
+
+The first P4-12 pass proved forty-one mutations of what the stage *does*. It left the boundaries — the things the specification forbids adding — resting on guards nobody had tried to break. A guard that has never failed is a guard whose failure mode is unknown, and two of them turned out to have one.
+
+Twenty-four further mutations, each injecting a forbidden construct and required to be caught:
+
+The warnings never attached, cut to the latest only, or stripped of the time they were recorded. The artifact's regenerable rendering wired in as the source, at the type level and in the statement. A dead-end count added to the ranking view and a warning penalty to the ranking request, and the reranker's dead-end dimension removed. The request growing `currentEnvironment` and `plannedAction`. The stage comparing against its own surroundings, following an `evidenceRef`, or reaching the filesystem. Relations fetched, the envelope growing a conflict field, the envelope redefined a second time in the module it came from. The warnings cached with the rerank, the log written before the last stage ran, `EXCLUDED` introduced, an Event written, a Problem's freshness updated, the warnings exposed over HTTP, and a migration added.
+
+Two survived, and both were real gaps rather than defensible ones:
+
+**The stage could have read its own surroundings.** `process.env`, `process.version`, `process.platform` were nowhere in the forbidden list — only network and filesystem were. Reading any of them would be the server comparing the recorded conditions against *its own* environment, which is not the one the caller is working in and never was: exactly the judgement D-321 says belongs to the Adapter, arriving through a door nobody had shut. The guard now names them.
+
+**The envelope's field set was never pinned.** The guard checked that the three fields were present, not that nothing else was, so a conflict field could have landed there ahead of the stage meant to fill it — shipping a shape the server cannot honour. Both interfaces now have their declared fields asserted exactly, in order.
+
+Neither production behaviour changed. What changed is that two rules the code already followed are now rules the tests would notice being broken.
+
+Two test gaps were closed at the same time. A warning is now proven to attach unchanged at all four `Freshness` values, with suppression, confidence, structural score and the four required checks all unmoved — how current a record claims to be and what was tried and failed are separate facts, and neither adjusts the other. And a P4-12 read failure is proven to leave the usage-log failure reporter silent: that reporter exists for a side observation that could not be written, and routing a failed search through it would file the search's own failure under a heading that says the search succeeded.
+
+Sixty-five P4-12 mutations in total, all caught. The P4-11 set was re-run and still holds.
+
 ## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
 
 D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced
