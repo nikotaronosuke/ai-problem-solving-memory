@@ -66,8 +66,9 @@ import type {
   RetrievalUsageLogFailureReporter,
   RetrievalUsageLogWriter,
 } from './retrieval-usage-log-writer.js';
-import type { RetrievalMemoryCandidate } from '../domain/retrieval-revalidation.js';
+import type { RetrievalMemoryCandidate } from '../domain/retrieval-result.js';
 import type { RetrievalSummarySourceReader } from '../repository/index.js';
+import type { RetrievalDeadEndService } from './retrieval-dead-end-service.js';
 import type { RetrievalRevalidationService } from './retrieval-revalidation-service.js';
 import type { RetrievalSearchCache } from './retrieval-search-cache.js';
 import {
@@ -193,7 +194,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
  * would start empty every time and never answer anything — which would look
  * like a working cache and be a slow one.
  *
- * All six collaborators must be scoped to the same owner, and it is checked
+ * All seven collaborators must be scoped to the same owner, and it is checked
  * once here. Each is owner-safe alone and none can see the others, so a
  * composition pairing one owner's reader with another's search would produce a
  * result mixing two people's Memory with every part behaving correctly. Only
@@ -212,6 +213,7 @@ export function createRetrievalSearchService(
   rerankService: RetrievalStructuralRerankService,
   rankingService: RetrievalRankingService,
   revalidationService: RetrievalRevalidationService,
+  deadEndService: RetrievalDeadEndService,
   cache: RetrievalSearchCache,
   usageLogWriter: RetrievalUsageLogWriter,
   usageLogFailureReporter: RetrievalUsageLogFailureReporter,
@@ -222,6 +224,7 @@ export function createRetrievalSearchService(
     rerankService.ownerId !== ownerId ||
     rankingService.ownerId !== ownerId ||
     revalidationService.ownerId !== ownerId ||
+    deadEndService.ownerId !== ownerId ||
     usageLogWriter.ownerId !== ownerId
   ) {
     // Naming the owners would put two identifiers wherever this error goes.
@@ -245,9 +248,14 @@ export function createRetrievalSearchService(
     semanticStatus: SemanticChannelStatus,
   ): Promise<RetrievalSearchOutcome> {
     const ranked = await rankingService.rank({ currentProjectId, structuralResult: reranked });
+    // Each stage adds one thing and may drop a Memory that has gone since the
+    // one before it read. Both enrichments run on every search — a dead end
+    // recorded against a *candidate* moves nothing the cache key watches, so
+    // anything remembered here would go stale with nothing to notice.
+    const revalidated = await revalidationService.enrich(ranked.candidates);
     return {
       kind: 'SEARCHED',
-      candidates: await revalidationService.enrich(ranked.candidates),
+      candidates: await deadEndService.enrich(revalidated),
       semanticStatus,
       structuralStatus: ranked.structuralStatus,
     };

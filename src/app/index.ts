@@ -133,11 +133,25 @@ export {
 } from './retrieval-revalidation-service.js';
 export {
   REVALIDATION_CHECKS,
-  type RetrievalMemoryCandidate,
   type RevalidationCheck,
   type RevalidationContext,
   type VerificationEvidence,
 } from '../domain/retrieval-revalidation.js';
+
+// Where a Memory already knows a direction does not lead. Warning material
+// only: nothing here removes a candidate, moves it, or forbids trying again.
+export {
+  createRetrievalDeadEndService,
+  InvalidDeadEndRequestError,
+  type RetrievalDeadEndService,
+} from './retrieval-dead-end-service.js';
+export type { DeadEndWarning } from '../domain/retrieval-dead-end.js';
+
+// The shape a search hands back, owned by neither of the stages that fill it.
+export type {
+  RetrievalMemoryCandidate,
+  RevalidatedMemoryCandidate,
+} from '../domain/retrieval-result.js';
 
 // The one thing a search records: that each Memory it surfaced was surfaced.
 // Whether anybody then read, took or set aside a Memory is observed elsewhere

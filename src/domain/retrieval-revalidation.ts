@@ -28,7 +28,6 @@
 
 import type { VerificationType } from './enums.js';
 import type { EnvironmentSnapshot } from './environment.js';
-import type { RankedMemoryCandidate } from './retrieval-ranking.js';
 
 /**
  * What has to be re-established before a Memory is acted on.
@@ -109,17 +108,7 @@ export interface RevalidationContext {
   readonly requiredChecks: readonly RevalidationCheck[];
 }
 
-/**
- * One Memory as a search finally offers it.
- *
- * The ranking view is nested rather than spread, so the two halves stay
- * legible: `ranking` is why this Memory is here and in this position,
- * `revalidation` is what must happen before it is believed. It also leaves
- * room — the later tasks that add dead-end handling and conflict comparison
- * have somewhere to put them that does not involve widening a stage's own
- * type.
- */
-export interface RetrievalMemoryCandidate {
-  readonly ranking: RankedMemoryCandidate;
-  readonly revalidation: RevalidationContext;
-}
+// The envelope a candidate is handed back in used to live here, which was
+// right while revalidation was the only thing hanging off a ranked candidate.
+// It is in `retrieval-result.ts` now that it is not — this module keeps what
+// revalidation means and nothing about the shape of a search result.
