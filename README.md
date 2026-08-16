@@ -26,6 +26,8 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 
 ## Current status
 
+実装 Phase 1〜4 が完了しました。次は AI Adapter（Phase 5）です。
+
 実装 Phase 1（保存基盤）が完了しました。
 
 現時点で動作するもの:
@@ -58,6 +60,32 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - `GET /openapi.json` による OpenAPI 3.1 契約（runtime の route schema から生成。手書きの複製はありません）
 
 API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にあります。
+
+実装 Phase 3（機密除去・障害耐性）が完了しました。
+
+- Memory 本文へ書き込む前の secret 検出。確定した credential は保存を拒否します
+- 運用ログは閉じた値だけを出力し、Memory 本文を持ちません
+- Memory Server 障害時に本作業を止めないための retry queue（interface と drain を提供し、scheduler は持ちません）
+- Problem の物理削除と、owner Memory の export
+
+実装 Phase 4（検索）が完了しました。別 Project の過去経験を、**技術名や文言が違っても問題構造の近さで**候補にできます。
+
+- 元 Memory と、検索用に再生成可能な RetrievalArtifact の分離
+- canonical Memory から artifact を生成する pipeline（要約・embedding・整合性つき書き込み）
+- 全文検索と vector 検索のハイブリッド候補取得、rank fusion による統合
+- 構造類似による再ランキング（1〜5件へ）
+- suppression / freshness / confidence を反映する決定的な順位付け
+- 各候補が返す判断材料:
+  - 記録時の Environment と Verification 履歴、および再確認すべき4項目
+  - 過去の dead-end（記録された Event そのまま。再試行の禁止ではありません）
+  - 記録が裏づける成功方向（検証を経た派生材料。FIX Event を成功と断定しません）
+  - 矛盾する Memory との比較材料（どちらが正しいかは決めません）
+- 同一条件の短時間再検索を抑える cache（再ランキング結果のみ。判断材料は毎回読み直します）
+- 検索が実際に提示した Memory の UsageLog 記録
+
+検索の設計と、サーバーが**判断しないこと**は [`docs/retrieval.md`](docs/retrieval.md) にあります。
+
+検索は現時点では内部 service であり、HTTP endpoint はまだ公開していません。embedding / 要約 / 再ランキングの具体的な provider も未接続です（いずれも交換可能な port として定義済み）。どちらも AI Adapter を作る次の段階で決めます。
 
 AI 連携はまだこれからです。
 

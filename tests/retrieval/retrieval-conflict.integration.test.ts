@@ -39,7 +39,7 @@ import type { EnvironmentSnapshot } from '../../src/domain/environment.js';
 import { generateOwnerId, type OwnerContext, type OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
 import type { ProjectId } from '../../src/domain/project.js';
-import type { DeadEndAwareMemoryCandidate } from '../../src/domain/retrieval-result.js';
+import type { SuccessfulDirectionAwareMemoryCandidate } from '../../src/domain/retrieval-result.js';
 import { resolveOwnerContextFor } from '../../src/owner/context.js';
 import {
   createMemoryRepository,
@@ -171,7 +171,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval conflicts', () => {
     seeded: Seeded,
     rankingRank: number,
     overrides: { readonly confidence?: Confidence; readonly snapshot?: EnvironmentSnapshot } = {},
-  ): DeadEndAwareMemoryCandidate => ({
+  ): SuccessfulDirectionAwareMemoryCandidate => ({
     ranking: {
       problemId: seeded.problemId,
       projectId: seeded.projectId,
@@ -190,6 +190,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval conflicts', () => {
       requiredChecks: REVALIDATION_CHECKS,
     },
     deadEndWarnings: [],
+    successfulDirections: [],
   });
 
   beforeAll(() => {
@@ -894,7 +895,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval conflicts', () => {
       const mine = await seed(owner);
       const theirs = await seed(owner, { projectId: mine.projectId });
       await link(owner, mine, theirs);
-      const given: DeadEndAwareMemoryCandidate = {
+      const given: SuccessfulDirectionAwareMemoryCandidate = {
         ...candidate(mine, 1),
         deadEndWarnings: [
           {

@@ -4356,3 +4356,306 @@ describe('conflicts', () => {
     ]);
   });
 });
+
+describe('successful directions', () => {
+  /** The three modules this stage is made of. */
+  const DIRECTION_PATHS = [
+    join(SRC, 'db', 'retrieval-successful-direction-read.ts'),
+    join(SRC, 'repository', 'retrieval-successful-direction-reader.ts'),
+    join(SRC, 'app', 'retrieval-successful-direction-service.ts'),
+  ];
+
+  async function directionCode(): Promise<string> {
+    const sources = await Promise.all(DIRECTION_PATHS.map((path) => readFile(path, 'utf8')));
+    return sources
+      .map((source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+  }
+
+  it('reads no Event, because no Event can establish this', async () => {
+    const { SUCCESSFUL_DIRECTION_STATEMENT } =
+      await import('../src/db/retrieval-successful-direction-read.js');
+
+    // A `FIX` Event records that a fix was *tried*. Nothing links it to the
+    // Verification that later passed, so a Problem with three fixes and one
+    // successful check does not say which fix the check was about. Reading any
+    // of them here would turn a recorded attempt into a proven success.
+    expect(SUCCESSFUL_DIRECTION_STATEMENT.includes('public.events')).toBe(false);
+    for (const eventish of ['FIX', 'DISCOVERY', 'USER_CORRECTION', 'DEAD_END', 'event_type']) {
+      expect(
+        SUCCESSFUL_DIRECTION_STATEMENT.includes(eventish),
+        `the read reaches ${eventish}`,
+      ).toBe(false);
+    }
+    // The same rule across all three modules, not just the statement: an Event
+    // must not be reachable from any of them, however it is spelled.
+    const code = await directionCode();
+    for (const eventish of [
+      'public.events',
+      'appendEvent',
+      "'FIX'",
+      "'DISCOVERY'",
+      "'USER_CORRECTION'",
+      'event_type',
+      'public.relations',
+    ]) {
+      expect(code.includes(eventish), `the stage reaches ${eventish}`).toBe(false);
+    }
+  });
+
+  it('applies the same evidence gate the generator was held to, again', async () => {
+    const { SUCCESSFUL_DIRECTION_STATEMENT } =
+      await import('../src/db/retrieval-successful-direction-read.js');
+    const code = await readFile(join(SRC, 'db', 'retrieval-successful-direction-read.ts'), 'utf8');
+    const stripped = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Status and a check that passed, read in the same statement as the
+    // artifact — and the rule is imported rather than restated, so it cannot
+    // drift from the one the generation path enforces.
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('pr.status as status');
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('and v.result');
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('v.owner_id = pr.owner_id');
+    expect(stripped).toContain('requiresSuccessfulVerification(row.status)');
+    expect(stripped).toContain('row.has_successful_verification === true');
+
+    // The artifact records what was true when it was written and is not
+    // rewritten when a Problem is reopened, so the generation-time gate is not
+    // trusted for ever.
+    expect(stripped).toContain('byProblem.set(problemId, [])');
+  });
+
+  it('takes the directions from the stored profile and parses them', async () => {
+    const { SUCCESSFUL_DIRECTION_STATEMENT } =
+      await import('../src/db/retrieval-successful-direction-read.js');
+    const code = await readFile(join(SRC, 'db', 'retrieval-successful-direction-read.ts'), 'utf8');
+    const stripped = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('ra.structural_features');
+    // Left-joined: the artifact is derived data, and a Memory without one is
+    // still a Memory.
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('left join public.retrieval_artifacts ra');
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('pr.owner_id = $1');
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('ra.owner_id = pr.owner_id');
+    expect(SUCCESSFUL_DIRECTION_STATEMENT).toContain('unnest($2::uuid[]) with ordinality');
+    // No cap and no de-duplication: the generator chose an order and repeating
+    // itself is its own statement.
+    expect(SUCCESSFUL_DIRECTION_STATEMENT.includes(' limit ')).toBe(false);
+    expect(SUCCESSFUL_DIRECTION_STATEMENT.includes('distinct')).toBe(false);
+
+    // Parsed rather than trusted: the column is `jsonb` and its type here is a
+    // compile-time claim about a row an earlier version wrote.
+    expect(stripped).toContain('parseStructuralFeatures(row.structural_features)');
+    expect((stripped.match(/executor\.query/g) ?? []).length).toBe(1);
+    expect(stripped).toContain('problemIds.length === 0');
+  });
+
+  it('never becomes an Event-shaped claim', async () => {
+    const result = await readFile(join(SRC, 'domain', 'retrieval-result.ts'), 'utf8');
+    const declarations = result.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Plain strings. A summary, a result and a timestamp would dress a
+    // generator's reading up as something somebody recorded at a moment.
+    expect(declarations).toContain('readonly successfulDirections: readonly string[];');
+    for (const shape of ['SuccessfulDirection[]', 'evidenceRef', 'createdAt', 'sourceAi']) {
+      expect(
+        declarations.includes(`successfulDirections: readonly ${shape}`),
+        `the directions carry ${shape}`,
+      ).toBe(false);
+    }
+    // And no module was created to give them one.
+    const modules = await readModules(SRC);
+    expect(
+      modules.some((module) => module.path.includes('domain/retrieval-successful-direction')),
+      'a domain module was created for a string array',
+    ).toBe(false);
+  });
+
+  it('never drops or reorders a Memory for what it says worked', async () => {
+    const service = await readFile(
+      join(SRC, 'app', 'retrieval-successful-direction-service.ts'),
+      'utf8',
+    );
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The only reason a candidate is left out is that the Memory itself has
+    // gone. A Memory whose artifact has not been generated is kept, with an
+    // empty list — derived data does not decide whether experience exists.
+    expect(code).toContain('directions === undefined');
+    for (const weighing of ['.sort(', 'directions.length >', 'penalt', 'demote', 'confidence =']) {
+      expect(code.includes(weighing), `the stage weighs directions with ${weighing}`).toBe(false);
+    }
+
+    expect(code).toContain('candidate.ranking.rankingRank !== index + 1');
+    const checked = code.indexOf('candidate.ranking.rankingRank !== index + 1');
+    expect(checked).toBeLessThan(code.indexOf('reader.readForCandidates('));
+
+    expect(code).toContain('rankingRank: offered.length + 1');
+    expect(code.includes('hybridRank:'), 'the provenance is renumbered').toBe(false);
+    expect(code).toContain('matchedDimensions: [...candidate.ranking.matchedDimensions]');
+    expect(code).toContain('revalidation: candidate.revalidation');
+    expect(code).toContain('deadEndWarnings: candidate.deadEndWarnings');
+  });
+
+  it('leaves the ranking stage free of it', async () => {
+    const modules = await readModules(SRC);
+    const ranking = modules.filter((module) => module.path.includes('retrieval-ranking'));
+    expect(ranking.length).toBeGreaterThan(0);
+
+    for (const module of ranking) {
+      const source = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      for (const later of ['successfulDirection', 'successful_directions', 'SuccessfulDirection']) {
+        expect(source.includes(later), `${module.path} took on ${later}`).toBe(false);
+      }
+    }
+  });
+
+  it('hangs the directions off the envelope, with an exact field set', async () => {
+    const result = await readFile(join(SRC, 'domain', 'retrieval-result.ts'), 'utf8');
+
+    const bodyOf = (name: string): string => {
+      const start = result.indexOf(`export interface ${name}`);
+      expect(start, `${name} is missing`).toBeGreaterThan(-1);
+      const body = result.slice(start);
+      return body.slice(0, body.indexOf('\n}'));
+    };
+    const declared = (body: string): string[] =>
+      [...body.matchAll(/^ {2}readonly (\w+)[?]?:/gm)].map((match) => match[1] ?? '');
+
+    // One stage, one field, each intermediate named for the stage that made it.
+    expect(declared(bodyOf('RevalidatedMemoryCandidate'))).toEqual(['ranking', 'revalidation']);
+    expect(declared(bodyOf('DeadEndAwareMemoryCandidate'))).toEqual(['deadEndWarnings']);
+    expect(declared(bodyOf('SuccessfulDirectionAwareMemoryCandidate'))).toEqual([
+      'successfulDirections',
+    ]);
+    expect(declared(bodyOf('RetrievalMemoryCandidate'))).toEqual(['conflict']);
+    expect(result).toContain('extends SuccessfulDirectionAwareMemoryCandidate');
+
+    // Nothing that turns material into instruction, and no Phase 5 field.
+    const declarations = result.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const later of [
+      'recommendation',
+      'suggestion',
+      'approval',
+      'currentTruth',
+      'retryAllowed',
+      'adopt',
+      'notification',
+    ]) {
+      expect(declarations.includes(later), `the envelope carries ${later}`).toBe(false);
+    }
+  });
+
+  it('writes nothing, calls nobody and reads nothing about the present', async () => {
+    for (const path of DIRECTION_PATHS) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'createUsageLog',
+        'createChangeLog',
+        'for update',
+        'DatabaseTransactionRunner',
+        'cache',
+      ]) {
+        expect(
+          code.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} has ${forbidden}`,
+        ).toBe(false);
+      }
+
+      expect(/\bfetch\s*\(|node:http|node:https|node:fs|undici|axios/.test(code)).toBe(false);
+      for (const ambient of ['process.env', 'process.version', 'process.platform', 'process.cwd']) {
+        expect(code.includes(ambient), `${path} reads ${ambient}`).toBe(false);
+      }
+      for (const specifier of importsOf(source)) {
+        expect(
+          /^(openai|@anthropic|@google|@mistral|cohere|langchain|node:fs|node:child_process)/.test(
+            specifier,
+          ),
+          `${path} imports ${specifier}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('runs on every search, is stored nowhere, and finishes before anything is kept', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // One call, inside the function both a hit and a miss go through, between
+    // the dead ends and the conflicts. A Problem reopened or a check appended
+    // moves nothing the cache key watches, so a remembered answer would keep
+    // offering a direction the record no longer supports.
+    expect((code.match(/successfulDirectionService\.enrich\(/g) ?? []).length).toBe(1);
+    const ranked = code.indexOf('async function rankAndReport(');
+    const enriched = code.indexOf('successfulDirectionService.enrich(');
+    expect(enriched).toBeGreaterThan(ranked);
+    expect(enriched).toBeGreaterThan(code.indexOf('deadEndService.enrich('));
+    expect(enriched).toBeLessThan(code.indexOf('conflictService.enrich('));
+
+    const key = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    for (const enrichment of ['successfulDirection', 'successful_directions']) {
+      expect(key.includes(enrichment), `the cache stores ${enrichment}`).toBe(false);
+    }
+
+    const reported = code.indexOf('await rankAndReport(after.projectId');
+    expect(code.indexOf('cache.set(key, reranked)')).toBeGreaterThan(reported);
+    expect(code).toContain('await recordSurfaced(request.currentProblemId, sourceAi, outcome)');
+  });
+
+  it('adds no schema, no HTTP surface and no dependency', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    for (const file of await readdir(migrations)) {
+      const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      expect(sql.includes('successful_direction'), `${file} was written for directions`).toBe(
+        false,
+      );
+    }
+
+    // Phase 4 ends with the retrieval surface still internal. The
+    // specification lists a cross-project similarity search among the minimum
+    // API, and that transport is Phase 5's to compose alongside the client
+    // that will call it — publishing a route here would ship a contract no
+    // standard server composition can yet answer, because no concrete
+    // generator, embedding provider or reranker is wired into `src/index.ts`.
+    const routes = await readModules(join(SRC, 'http'));
+    for (const module of routes) {
+      for (const exposed of [
+        'successfulDirections',
+        'RetrievalSearchService',
+        'retrieval-search',
+      ]) {
+        expect(module.source.includes(exposed), `${module.path} exposes ${exposed}`).toBe(false);
+      }
+    }
+
+    const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>;
+    };
+    expect(Object.keys(manifest.dependencies).sort()).toEqual([
+      '@fastify/swagger',
+      'fastify',
+      'pg',
+    ]);
+  });
+
+  it('leaves no adapter and no Phase 5 code in production', async () => {
+    const modules = await readModules(SRC);
+    for (const module of modules) {
+      for (const later of [
+        'ClaudeCodeAdapter',
+        'CodexAdapter',
+        'autoSearchTrigger',
+        'ToolGateway',
+        'ApprovalEngine',
+        'ModelRouter',
+      ]) {
+        expect(module.source.includes(later), `${module.path} started ${later}`).toBe(false);
+      }
+    }
+  });
+});

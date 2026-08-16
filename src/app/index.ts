@@ -147,6 +147,15 @@ export {
 } from './retrieval-dead-end-service.js';
 export type { DeadEndWarning } from '../domain/retrieval-dead-end.js';
 
+// The directions a Memory's record supports calling successful. Derived
+// guidance rather than recorded fact, and gated afresh on the Problem's
+// status and checks — see the module for why no Event can supply this.
+export {
+  createRetrievalSuccessfulDirectionService,
+  InvalidSuccessfulDirectionRequestError,
+  type RetrievalSuccessfulDirectionService,
+} from './retrieval-successful-direction-service.js';
+
 // Where another Memory disagrees, and the material for telling which applies
 // now. Comparison material only: no winner, no resolution, no reordering.
 export {
@@ -167,6 +176,7 @@ export type {
   DeadEndAwareMemoryCandidate,
   RetrievalMemoryCandidate,
   RevalidatedMemoryCandidate,
+  SuccessfulDirectionAwareMemoryCandidate,
 } from '../domain/retrieval-result.js';
 
 // The one thing a search records: that each Memory it surfaced was surfaced.

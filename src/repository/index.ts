@@ -113,6 +113,14 @@ export {
   type RetrievalDeadEndReader,
 } from './retrieval-dead-end-reader.js';
 
+// The directions a Memory's record currently supports. Its own reader: the
+// question joins an artifact to a status and a check in one statement, and
+// reads no Event at all.
+export {
+  createRetrievalSuccessfulDirectionReader,
+  type RetrievalSuccessfulDirectionReader,
+} from './retrieval-successful-direction-reader.js';
+
 // What another Memory says against this one, and enough of that Memory to
 // compare the two. Its own reader: only `CONTRADICTS` Relations, both ends
 // re-checked for owner and read control, and one statement — the material is

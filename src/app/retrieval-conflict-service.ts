@@ -31,7 +31,7 @@
 import type { OwnerId } from '../domain/owner.js';
 import { MAX_RANKED_CANDIDATES } from '../domain/retrieval-ranking.js';
 import type {
-  DeadEndAwareMemoryCandidate,
+  SuccessfulDirectionAwareMemoryCandidate,
   RetrievalMemoryCandidate,
 } from '../domain/retrieval-result.js';
 import type { RetrievalConflictReader } from '../repository/index.js';
@@ -59,7 +59,7 @@ export interface RetrievalConflictService {
    * removed and the remaining positions closed up. Writes nothing.
    */
   enrich(
-    candidates: readonly DeadEndAwareMemoryCandidate[],
+    candidates: readonly SuccessfulDirectionAwareMemoryCandidate[],
   ): Promise<readonly RetrievalMemoryCandidate[]>;
 }
 
@@ -80,7 +80,7 @@ export function createRetrievalConflictService(
       }
       // Held under its declared type: `Array.isArray` widens a readonly array
       // to `any[]`, and every field below is read from it.
-      const enriched: readonly DeadEndAwareMemoryCandidate[] = candidates;
+      const enriched: readonly SuccessfulDirectionAwareMemoryCandidate[] = candidates;
 
       if (enriched.length > MAX_RANKED_CANDIDATES) {
         throw new InvalidConflictRequestError(
@@ -139,6 +139,7 @@ export function createRetrievalConflictService(
           },
           revalidation: candidate.revalidation,
           deadEndWarnings: candidate.deadEndWarnings,
+          successfulDirections: candidate.successfulDirections,
           conflict,
         });
       }
