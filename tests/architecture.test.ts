@@ -3747,6 +3747,27 @@ describe('dead ends', () => {
     expect(result).toContain('export interface RetrievalMemoryCandidate extends');
     expect(result).toContain('deadEndWarnings: readonly DeadEndWarning[]');
 
+    // Three fields and no more. Conflict comparison is the next task, and a
+    // field landing here ahead of the stage that fills it would ship a shape
+    // the server cannot honour.
+    const bodyOf = (name: string): string => {
+      const start = result.indexOf(`export interface ${name}`);
+      expect(start, `${name} is missing`).toBeGreaterThan(-1);
+      const body = result.slice(start);
+      return body.slice(0, body.indexOf('\n}'));
+    };
+    const declared = (body: string): string[] =>
+      [...body.matchAll(/^ {2}readonly (\w+)[?]?:/gm)].map((match) => match[1] ?? '');
+
+    // Two fields, then three. Conflict comparison is the next task, and a
+    // field landing here ahead of the stage that fills it would ship a shape
+    // the server cannot honour.
+    expect(declared(bodyOf('RevalidatedMemoryCandidate'))).toEqual(['ranking', 'revalidation']);
+    expect(declared(bodyOf('RetrievalMemoryCandidate'))).toEqual(['deadEndWarnings']);
+    for (const later of ['conflict', 'Conflict', 'CONTRADICTS', 'suggestion', 'approval']) {
+      expect(result.includes(later), `the envelope carries ${later}`).toBe(false);
+    }
+
     const revalidation = await readFile(join(SRC, 'domain', 'retrieval-revalidation.ts'), 'utf8');
     expect(
       revalidation.includes('export interface RetrievalMemoryCandidate'),
@@ -3796,8 +3817,21 @@ describe('dead ends', () => {
       }
 
       // Judging a dead end still current would need the working tree, the
-      // manifest or a vendor's documentation — none of which are here.
+      // manifest or a vendor's documentation — none of which are here. The
+      // ambient process is on that list too: reading `process.env`, a runtime
+      // version or a platform would be the server comparing the recorded
+      // conditions against *its own* surroundings, which are not the ones the
+      // caller is working in and never were.
       expect(/\bfetch\s*\(|node:http|node:https|node:fs|undici|axios/.test(code)).toBe(false);
+      for (const ambient of [
+        'process.env',
+        'process.version',
+        'process.platform',
+        'process.cwd',
+        'os.',
+      ]) {
+        expect(code.includes(ambient), `${path} reads ${ambient}`).toBe(false);
+      }
       for (const specifier of importsOf(source)) {
         expect(
           /^(openai|@anthropic|@google|@mistral|cohere|langchain|node:fs|node:child_process)/.test(

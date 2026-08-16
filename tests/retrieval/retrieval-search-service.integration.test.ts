@@ -1468,8 +1468,10 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const { current } = await seedSearchable(owner);
       const embedding = provider();
       const port = reranker();
+      const reporter = recordingReporter();
       let refuse = true;
       const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port, {
+        reporter,
         deadEndExecutor: {
           query: (text, values) =>
             refuse
@@ -1482,6 +1484,12 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
         'connection terminated unexpectedly',
       );
       expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+
+      // And the failure travels as itself. The usage-log reporter exists for
+      // one thing — a side observation that could not be written — and routing
+      // a failed search through it would file the search's own failure under a
+      // heading that says the search succeeded.
+      expect(reporter.failures).toEqual([]);
 
       refuse = false;
       await searchFor(service, current.problemId);
