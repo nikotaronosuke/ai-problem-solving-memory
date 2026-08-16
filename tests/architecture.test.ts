@@ -4418,9 +4418,9 @@ describe('successful directions', () => {
     expect(stripped).toContain('requiresSuccessfulVerification(row.status)');
     expect(stripped).toContain('row.has_successful_verification === true');
 
-    // The artifact records what was true when it was written and is not
-    // rewritten when a Problem is reopened, so the generation-time gate is not
-    // trusted for ever.
+    // The artifact records what was true when it was written and is never
+    // rewritten when what it describes changes, so the generation-time gate is
+    // not trusted for ever.
     expect(stripped).toContain('byProblem.set(problemId, [])');
   });
 
@@ -4587,7 +4587,7 @@ describe('successful directions', () => {
     const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
     // One call, inside the function both a hit and a miss go through, between
-    // the dead ends and the conflicts. A Problem reopened or a check appended
+    // the dead ends and the conflicts. A status change or a check appended
     // moves nothing the cache key watches, so a remembered answer would keep
     // offering a direction the record no longer supports.
     expect((code.match(/successfulDirectionService\.enrich\(/g) ?? []).length).toBe(1);

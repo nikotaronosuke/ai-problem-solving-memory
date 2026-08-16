@@ -52,8 +52,10 @@ not decide_ below.
    weights, no thresholds and no model.
 6. **Enrichment**, in four passes, each adding one thing.
 
-The result is one to five Memories. Showing about three is a presentation
-decision that belongs to whatever is calling.
+The result is up to five Memories, and none is a perfectly ordinary answer: a
+search that finds nothing worth offering says so with an empty list rather than
+an error. Showing about three of what does come back is a presentation decision
+that belongs to whatever is calling.
 
 ### Why technology alone does not decide the order
 
@@ -95,10 +97,10 @@ is deliberate:
 So these come from the summary generator's reading of the whole canonical
 history, and are offered only while the Problem is verified _and_ has a
 Verification that actually passed — the same gate the generator was held to when
-it wrote them, applied again at read time, because a Problem can be reopened
-without its artifact being rewritten. An empty list means there is nothing that
-may currently be offered as a direction that worked; it does not mean no fix was
-ever tried.
+it wrote them, applied again at read time so that the answer does not depend on
+a rule enforced somewhere else. An artifact is never rewritten when what it
+describes changes. An empty list means there is nothing that may currently be
+offered as a direction that worked; it does not mean no fix was ever tried.
 
 **`conflict`** — the Memory's own semantics, and every `CONTRADICTS` link
 recorded against it, each with the other Memory's symptoms, conditions, trust,
@@ -129,7 +131,7 @@ current, belongs to whatever is asking.
 A repeated search for the same Problem in the same state of understanding reuses
 the reranking result for five minutes, so the two expensive calls do not run
 again. **Only that result is cached.** Every enrichment is read fresh on a reuse:
-a Verification, a dead end, a reopening or a contradiction recorded against a
+a Verification, a dead end, a status change or a contradiction recorded against a
 _candidate_ moves nothing the cache key watches, so a remembered answer would go
 stale with nothing to notice.
 

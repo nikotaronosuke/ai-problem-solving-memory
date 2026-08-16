@@ -73,7 +73,7 @@ API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にありま�
 - 元 Memory と、検索用に再生成可能な RetrievalArtifact の分離
 - canonical Memory から artifact を生成する pipeline（要約・embedding・整合性つき書き込み）
 - 全文検索と vector 検索のハイブリッド候補取得、rank fusion による統合
-- 構造類似による再ランキング（1〜5件へ）
+- 構造類似による再ランキング（最大5件へ。該当なしは0件で返します）
 - suppression / freshness / confidence を反映する決定的な順位付け
 - 各候補が返す判断材料:
   - 記録時の Environment と Verification 履歴、および再確認すべき4項目

@@ -12,9 +12,15 @@
  * What it does read is the stored search profile, which a summary generator
  * wrote after reading the whole canonical history, and which is refused at
  * generation time if it claims a direction the record does not support. That
- * gate is re-applied here against the record **as it is now**, so a Memory that
- * has left `VERIFIED`, or lost its passing check, stops offering directions its
- * artifact still names.
+ * gate is re-applied here against the record **as it is now**, so a record that
+ * does not pass it stops offering directions its artifact still names.
+ *
+ * Two of the states below are not reachable through the supported surface —
+ * `VERIFIED` is terminal, and the status service refuses it without a passing
+ * check. They are written through the storage boundary on purpose: the point is
+ * that this stage holds the gate itself rather than inheriting it from a
+ * lifecycle rule enforced elsewhere, and a rule that can only be tested through
+ * the layer that already enforces it has not been tested at all.
  *
  * Skipped without `DATABASE_URL`.
  */
@@ -344,7 +350,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval successful directions', ()
       expect(enriched[0]?.successfulDirections).toEqual([]);
     });
 
-    it('stops offering them once the Problem is reopened', async () => {
+    it('stops offering them once the stored status no longer passes the gate', async () => {
       const owner = await makeActor();
       const seeded = await seed(owner, { status: 'VERIFIED', verification: true });
       const service = serviceFor(owner);
@@ -353,6 +359,10 @@ describe.skipIf(databaseUrl === undefined)('retrieval successful directions', ()
         DERIVED_DIRECTIONS,
       );
 
+      // Written through the storage boundary, because the supported surface
+      // will not produce this state: `VERIFIED` is terminal. That is exactly
+      // why it is worth writing — the gate has to be this stage's own property,
+      // not something inherited from a lifecycle rule enforced above it.
       const stored = await owner.memory.getProblem(seeded.problemId);
       await owner.memory.updateProblemStatus(
         seeded.problemId,
