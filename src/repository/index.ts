@@ -82,6 +82,16 @@ export {
 } from './retrieval-structural-reader.js';
 export type { StructuralArtifactRow } from '../db/retrieval-structural-read.js';
 
+// The controls a ranking reads: trust, currency, suppression and the current
+// Project's technology label, from one snapshot. Its own reader rather than a
+// wider structural one — the columns, the joins and the question are all
+// different, and every one of these fields can change between two reads.
+export {
+  createRetrievalRankingReader,
+  type RetrievalRankingReader,
+} from './retrieval-ranking-reader.js';
+export type { RankingMetadataRow, RankingMetadataSnapshot } from '../db/retrieval-ranking-read.js';
+
 // Semantic candidate search. Handed a validated embedding by the service
 // above it — the embedding parameter is a storage-boundary input, not an
 // application surface; what an application caller can supply is text.
