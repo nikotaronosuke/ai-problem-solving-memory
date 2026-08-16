@@ -1861,4 +1861,37 @@ describe('vector search', () => {
     expect(inspectAt).toBeLessThan(embedAt);
     expect(code).toContain('SENSITIVE_QUERY_NOT_EMBEDDED');
   });
+
+  it('gives no caller a way to replace the query privacy policy', async () => {
+    const source = await readFile(join(SRC, 'app', 'retrieval-vector-search-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const factory = code.slice(code.indexOf('export function createRetrievalVectorSearchService('));
+    const parameters = factory.slice(factory.indexOf('('), factory.indexOf('): RetrievalVector'));
+
+    // The distinction this fixes: a policy parameter that defaults to the safe
+    // one is still a way to pass an unsafe one, and "safe unless overridden"
+    // is not a boundary. A caller handing in a policy that keeps everything
+    // would turn "a credential is never transmitted to a provider" into a
+    // suggestion. So the parameter list holds the provider and the reader and
+    // nothing that could carry a policy.
+    expect(
+      parameters.includes('Policy'),
+      'the factory accepts something that could be a policy',
+    ).toBe(false);
+    expect(
+      parameters.includes('Detector'),
+      'the factory accepts something that could be a detector',
+    ).toBe(false);
+
+    // And it is built inside, where nobody can reach it.
+    expect(code).toContain('const queryPolicy = createSemanticQueryInspectionPolicy();');
+
+    // Still through the sanitization boundary rather than from a detector:
+    // what a credential looks like is not this module's knowledge to hold.
+    expect(
+      code.includes('createSecretDetector') || code.includes('SecretDetector'),
+      'the service reaches for the detector directly',
+    ).toBe(false);
+  });
 });
