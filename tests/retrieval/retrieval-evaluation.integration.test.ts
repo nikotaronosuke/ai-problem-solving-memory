@@ -32,6 +32,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createRetrievalConflictService,
   createRetrievalDeadEndService,
+  createRetrievalSuccessfulDirectionService,
   createRetrievalHybridSearchService,
   createRetrievalRankingService,
   createRetrievalRevalidationService,
@@ -62,6 +63,7 @@ import {
   createRetrievalArtifactRepository,
   createRetrievalConflictReader,
   createRetrievalDeadEndReader,
+  createRetrievalSuccessfulDirectionReader,
   createRetrievalRankingReader,
   createRetrievalRevalidationReader,
   createRetrievalSearchReader,
@@ -205,6 +207,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval evaluation', () => {
       createRetrievalRankingService(createRetrievalRankingReader(pool, actor.context)),
       createRetrievalRevalidationService(createRetrievalRevalidationReader(pool, actor.context)),
       createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, actor.context)),
+      createRetrievalSuccessfulDirectionService(
+        createRetrievalSuccessfulDirectionReader(pool, actor.context),
+      ),
       createRetrievalConflictService(createRetrievalConflictReader(pool, actor.context)),
       parts.cache ?? createRetrievalSearchCache(),
       createRetrievalUsageLogWriter(requestContextFor(actor)),

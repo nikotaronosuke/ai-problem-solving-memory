@@ -70,6 +70,7 @@ import type { RetrievalMemoryCandidate } from '../domain/retrieval-result.js';
 import type { RetrievalSummarySourceReader } from '../repository/index.js';
 import type { RetrievalConflictService } from './retrieval-conflict-service.js';
 import type { RetrievalDeadEndService } from './retrieval-dead-end-service.js';
+import type { RetrievalSuccessfulDirectionService } from './retrieval-successful-direction-service.js';
 import type { RetrievalRevalidationService } from './retrieval-revalidation-service.js';
 import type { RetrievalSearchCache } from './retrieval-search-cache.js';
 import {
@@ -215,6 +216,7 @@ export function createRetrievalSearchService(
   rankingService: RetrievalRankingService,
   revalidationService: RetrievalRevalidationService,
   deadEndService: RetrievalDeadEndService,
+  successfulDirectionService: RetrievalSuccessfulDirectionService,
   conflictService: RetrievalConflictService,
   cache: RetrievalSearchCache,
   usageLogWriter: RetrievalUsageLogWriter,
@@ -227,6 +229,7 @@ export function createRetrievalSearchService(
     rankingService.ownerId !== ownerId ||
     revalidationService.ownerId !== ownerId ||
     deadEndService.ownerId !== ownerId ||
+    successfulDirectionService.ownerId !== ownerId ||
     conflictService.ownerId !== ownerId ||
     usageLogWriter.ownerId !== ownerId
   ) {
@@ -259,9 +262,14 @@ export function createRetrievalSearchService(
     // nothing to notice.
     const revalidated = await revalidationService.enrich(ranked.candidates);
     const withDeadEnds = await deadEndService.enrich(revalidated);
+    // Directions the record supports come from the stored search profile
+    // rather than from an Event, and are gated again on the Problem's status
+    // and checks as they are now — so a Memory that has left `VERIFIED` stops
+    // offering them even though its artifact still names them.
+    const withDirections = await successfulDirectionService.enrich(withDeadEnds);
     return {
       kind: 'SEARCHED',
-      candidates: await conflictService.enrich(withDeadEnds),
+      candidates: await conflictService.enrich(withDirections),
       semanticStatus,
       structuralStatus: ranked.structuralStatus,
     };

@@ -491,7 +491,7 @@ Definition of Done, mapped:
 
 2576 tests across 86 files. Schema and contracts unchanged since P3-04: API 0.4.0 / 27 operations, export "1", queue "2", migrations 13, tables 11, DOMAINs 8, FKs 12 all RESTRICT, repository 25, runtime dependencies 3.
 
-## PHASE 4 — IN PROGRESS
+## DONE — Implementation Phase 4
 
 ### P4-01 — DONE
 
@@ -703,17 +703,11 @@ Forty-one discrimination mutations each killed by a named test or guard. Six sur
 
 3456 tests across 109 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### OPEN — no contract returns successful-direction detail
+### CLOSED — no contract returns successful-direction detail
 
-The Phase 4 Definition of Done requires that a retrieved Memory let a caller use **both the successful directions and the dead ends**. As of P4-12 only half of that is true of the final response.
+Opened in P4-12, closed in P4-15. The question was whether the derived `successful_directions` reaching the structural comparison satisfied 「成功方向とdead-endの両方を利用できる」, or whether the final response needed historical detail of its own.
 
-Dead ends now come back as `deadEndWarnings`, read from `DEAD_END` Events. There is no equivalent for the successful side: `FIX` and `DISCOVERY` Events are read by the summary generator's source query (D-219) and by nothing on the search path, and the artifact's `successful_directions` is a regenerable paraphrase used for structural comparison — the same thing D-322 declined to use as a source for warnings, and it would be no better as a source here.
-
-So a caller receiving a search result gets the ranking, the historical Environment, the Verification evidence and the dead ends, and must go to the ordinary Event endpoints to learn what actually worked.
-
-This is recorded rather than fixed. It was **not** merged into P4-12, whose scope is dead ends, and it must **not** be quietly absorbed into P4-13, whose scope is conflict comparison. It needs a deliberate decision: whether the successful side belongs in the search response at all, or whether fetching the Problem's Events is the intended second step. Settle it before the Phase 4 Definition of Done is called satisfied.
-
-**Still open after P4-14.** That task observed the derived `successful_directions` reaching the structural comparison and being used, which is evidence about the retrieval half and not about the response contract. It deliberately closed nothing. **P4-15 is where this is settled.**
+**It needed a field, and not the one that looked symmetric.** `FIX` Event detail is not returned, because a recorded fix is not a verified one and nothing links a fix to the Verification that later passed (D-352). What is returned is verification-gated derived guidance from the stored search profile, re-gated at read time (D-353, D-354).
 
 ### P4-13 — DONE
 
@@ -747,9 +741,31 @@ Constant observations are deliberately narrow (D-349): RRF `k = 10` NOT DISPROVE
 
 3551 tests across 111 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3 — and `HYBRID_RRF_K` 10, source depth 20, rerank default and ceiling 5, cache TTL 300000, capacity 100.
 
-### NEXT — P4-15 Phase 4 end-to-end and Definition of Done
+### P4-15 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. A continuity proof rather than a scenario proof: a Memory written through the ordinary path in one Project, then found from another, with the artifact generation path included in what is being proved. The P4-14 corpus data is reusable and was kept free of database imports for exactly that reason — but its direct artifact upsert must **not** be reused, because that is the step P4-15 exists to exercise. This is also where the successful-direction OPEN below must be settled, and where the public README and architecture sync for the whole retrieval surface belong.
+Phase 4 end to end, and the successful-direction contract.
+
+**A recorded fix is not a verified one** (D-352). Returning `FIX` Events as successful directions would have been the symmetric move and the wrong one: a `DEAD_END` Event is already the fact, while a `FIX` Event records only that a fix was tried, and nothing links it to the Verification that later passed. Three fixes and one passing check do not say which fix the check was about. This stage reads no Event at all.
+
+What is returned instead is the summary generator's reading of the whole canonical history — derived guidance, plainly typed as `readonly string[]` so it cannot be mistaken for something recorded at a moment (D-353) — offered only while the record still passes the gate the generator was held to, re-applied at read time because an artifact is not rewritten when a Problem is reopened (D-354). A Memory whose profile has not been generated is kept with an empty list; derived data does not decide whether experience exists (D-355). The stage sits between dead ends and conflicts, on both paths, and enters no cache (D-356).
+
+Phase 4 ends with the retrieval surface still internal (D-357). The specification's minimum API does list a cross-project similarity search and that requirement is handed to P5-02 rather than cancelled — publishing a route now would ship a contract no standard composition can answer, and would settle how an assistant identifies itself by accident.
+
+`tests/e2e/phase4.e2e.test.ts` carries one investigation from Project A to Project B in nineteen ordered steps, with the canonical history written over a real socket and the artifacts generated through the production service — the direct upsert P4-14 relied on is forbidden here (D-358). What P4-14 already proved at corpus level is cited rather than re-proved (D-359).
+
+Fifty mutations, all killed by a named test or guard: thirty on behaviour, twenty injecting a forbidden construct, both sets completed before the commit. Two needed correcting first — a fixture whose dead-end warnings were already empty, and an Event guard that read only the statement. The P4-12, P4-13 and P4-14 sets were re-run and all hold.
+
+3607 tests across 113 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3 — and `HYBRID_RRF_K` 10, source depth 20, rerank default and ceiling 5, cache TTL 300000, capacity 100.
+
+## PHASE 4 — COMPLETE
+
+P4-01 through P4-15 are done. Retrieval is complete end to end: canonical Memory, a regenerable search rendering, hybrid candidate retrieval, structural reranking, deterministic ranking, and four kinds of material on every candidate — what it was true of, where it does not lead, where it did, and what contradicts it.
+
+Not built, deliberately: no concrete embedding, summary or reranking provider; no HTTP route for search; no automatic trigger for generation or for searching. All four belong to Phase 5, and `docs/retrieval.md` says so publicly.
+
+### NEXT — P5-01 Claude Code current official capability audit
+
+**NOT STARTED.** See the private Phase 5 breakdown. A READ-ONLY audit of what Claude Code actually offers at the time the work begins — recorded then, not now, because the answer moves faster than this repository does. P5-02 follows with the adapter boundary, the common Memory API client, and the search transport Phase 4 handed forward.
 
 ## BLOCKED
 

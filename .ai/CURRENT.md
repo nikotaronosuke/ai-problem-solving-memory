@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-14)
+Updated: 2026-08-17 (P4-15)
 
 ## Current phase
 
@@ -10,7 +10,9 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-14 done; P4-15 next)
+Implementation Phase 4 — Retrieval: **COMPLETE** (P4-01 … P4-15)
+
+Implementation Phase 5 — Claude Code Adapter: **NOT STARTED** (P5-01 next)
 
 ## Source of truth
 
@@ -983,6 +985,26 @@ A named corpus of nine scenarios, run against a real database through the whole 
 
 **The derived successful direction is observed** (D-350). The cross-technology scenario requires `successful_directions` among the dimensions the judgement agreed on, which is direct evidence that the generator's derived material is usable for retrieval comparison. It does not create a contract returning `FIX` or `DISCOVERY` detail in a response, and the gap stays a P4-15 decision.
 
+## What exists now — Successful directions, and Phase 4 end to end (P4-15)
+
+The last gap in the retrieval answer is closed, and the whole path is proved as one continuous run. Three new modules, one new intermediate type, one added field, no migration, no dependency, no route.
+
+**A recorded fix is not a verified one** (D-352). The obvious way to close the gap was to return `FIX` Events the way dead ends return `DEAD_END` Events. It would have been wrong: a `DEAD_END` Event *is* the fact, while a `FIX` Event records only that a fix was tried, and **nothing links it to the Verification that later passed**. A Problem with three fixes and one successful check does not say which fix the check was about — returning all three invents three causal claims, taking the latest assumes the last thing written worked, and choosing by proximity in time turns a coincidence of clocks into a rule. So this stage reads **no Event at all**, and the guard scans all three of its modules rather than only the statement.
+
+**The direction is derived guidance, and says so** (D-353). What can honestly be said comes from the summary generator, which reads the whole canonical history and whose claim already carries a mechanical gate. `successfulDirections` is `readonly string[]` — plain on purpose, because a summary, a result and a timestamp would dress a generator's reading up as something somebody recorded at a moment. It is the one derived field on the envelope, and the asymmetry with `deadEndWarnings` is the difference between what storage can and cannot establish.
+
+**The gate is applied again, freshly** (D-354). The artifact is not rewritten when a Problem is reopened, so the status and the existence of a passing check are re-read in the same statement as the artifact — with the rule **imported** from the status model rather than restated, so it cannot drift from the one generation enforces. A test offers the directions, moves the Problem back to `INVESTIGATING`, and gets nothing, while asserting the artifact still names them. An empty list means nothing may currently be offered as a direction that worked; it does not mean no fix was ever tried.
+
+**Derived data does not decide whether a Memory exists** (D-355). The artifact is left-joined: a Memory whose profile has not been generated is kept, with an empty list. Order, count and repeats come from the stored profile unchanged — no sort, no de-duplication, no new cap.
+
+**Five fields, five stages, one added each** (D-356). `ranking`, `revalidation`, `deadEndWarnings`, `successfulDirections`, `conflict`. The new stage runs between dead ends and conflicts on both paths and enters no cache, for the reason three earlier stages give: reopening a Problem moves nothing the cache key watches.
+
+**Phase 4 ends with the retrieval surface still internal** (D-357). The specification's minimum API does list a cross-project similarity search, and that requirement is handed forward rather than cancelled. Publishing a route now would ship a contract no standard composition can answer — no generator, embedding provider or reranker is wired behind the three ports — and would settle how an assistant identifies itself by accident. API 0.4.0 and 27 operations, unchanged.
+
+**Continuity, with nothing seeded in the middle** (D-358). `tests/e2e/phase4.e2e.test.ts` carries one investigation from Project A to Project B in nineteen ordered steps: canonical history over a real socket, artifacts through the production generation service, search through the production composition. The direct artifact upsert P4-14 relied on is forbidden here. Two Memories are seeded and only one has a check that passed, so a single search shows the gate working both ways. Four wordings are kept distinct and each difference asserted: the `FIX` Event's, which never travels as a success; the generator's direction, which does; the `DEAD_END` Event's, which is the warning; and the artifact's paraphrase of it, which is comparison material.
+
+**Fifty mutations, all killed by a named test or guard** — thirty on behaviour and twenty injecting a forbidden construct, both sets finished before the commit. Two needed correcting first: a fixture whose dead-end warnings were already empty, so a mutation dropping them was invisible; and an Event guard that read only the statement, so an Event query injected into the service file survived. The P4-12, P4-13 and P4-14 sets were re-run and all hold.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -1052,15 +1074,17 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-15 — Phase 4 end-to-end and Definition of Done.
+P5-01 — Claude Code's current official capabilities.
 
-**NOT STARTED.** P4-01 through P4-14 are done; nothing of P4-15 has been implemented. See the private Phase 4 breakdown for what it is.
+**NOT STARTED.** Phase 4 is complete; nothing of Phase 5 has been implemented. See the private Phase 5 breakdown for what it is.
 
 Notes for whoever picks this up:
-- The run is a **continuity** proof, not a scenario proof: a Memory saved in one Project through the ordinary write path, then found from another Project, through keyword and semantic candidates, structural reranking, the cut to a handful, and dead-end, conflict and revalidation material in the answer. P4-14 proves each of those behaves; P4-15 has to prove they connect when nobody seeds the middle
-- **Reuse the corpus data, not the seeding shortcut.** `tests/retrieval/fixtures/retrieval-evaluation-corpus.ts` is deliberately data and pure functions with no database import, so its Memories can be written through the real services instead of upserted as finished artifacts. Upserting artifacts directly is exactly what P4-15 must not do — the artifact generation path is part of what it is proving
-- **The successful-direction gap must be decided here.** P4-14 observed that the derived `successful_directions` reaches the structural comparison and is used; it did not add any contract returning `FIX` or `DISCOVERY` detail in a response. Whether the derived profile satisfies "成功方向とdead-endの両方を利用できる" or a historical detail is needed is a P4-15 call. See the OPEN entry in `TODO.md`
-- There is still no HTTP route, and the whole retrieval surface should be published once when it means what it will keep meaning. The public README and architecture sync belong at the end of the phase, which is this task
+- **Audit against the specification as it stands when the work begins.** What Claude Code offers — MCP transports, CLI surfaces, hooks, whatever exists then — changes faster than this repository does, and a capability list recorded here would be stale before it was read. Nothing about the current command catalogue belongs in a durable Decision
+- **The search transport is P5-02's, and it is owed.** The specification lists a cross-project similarity search among the minimum API surface; every other item in that list is already a route. Phase 4 left it internal deliberately (D-357), because no concrete generator, embedding provider or reranker is wired behind the three ports and because how an assistant identifies itself is a Phase 5 question. P5-02 builds the common Memory API client, and the route belongs with it
+- **An adapter must not import the internal service.** The common JSON API is the contract and adapters sit on top of it. A library-direct shortcut would make the Memory dependent on which process happens to host it
+- The three ports are `RetrievalSummaryGenerator`, `EmbeddingProvider` and `StructuralReranker`. Nothing concrete implements any of them, `src/index.ts` wires none of them, and no runtime dependency has been added for one
+- Nothing triggers artifact generation automatically. `createRetrievalArtifactGenerationService` takes a Problem id and does the whole pipeline; when to call it is an open question P5 will have an opinion about
+- `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide. It is the right thing to hand somebody before they design an adapter's presentation
 
 ## Core MVP milestone
 

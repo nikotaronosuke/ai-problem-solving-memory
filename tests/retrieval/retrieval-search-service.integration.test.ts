@@ -35,6 +35,7 @@ import {
   createRetrievalRankingService,
   createRetrievalConflictService,
   createRetrievalDeadEndService,
+  createRetrievalSuccessfulDirectionService,
   createRetrievalRevalidationService,
   createRetrievalSearchCache,
   createRetrievalSearchService,
@@ -80,6 +81,7 @@ import {
   createRetrievalRankingReader,
   createRetrievalConflictReader,
   createRetrievalDeadEndReader,
+  createRetrievalSuccessfulDirectionReader,
   createRetrievalRevalidationReader,
   createRetrievalSearchReader,
   createRetrievalStructuralReader,
@@ -245,6 +247,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       createRetrievalRevalidationService(createRetrievalRevalidationReader(pool, owner.context)),
       createRetrievalDeadEndService(
         createRetrievalDeadEndReader(options.deadEndExecutor ?? pool, owner.context),
+      ),
+      createRetrievalSuccessfulDirectionService(
+        createRetrievalSuccessfulDirectionReader(pool, owner.context),
       ),
       createRetrievalConflictService(
         createRetrievalConflictReader(options.conflictExecutor ?? pool, owner.context),
@@ -464,6 +469,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
+          createRetrievalSuccessfulDirectionService(
+            createRetrievalSuccessfulDirectionReader(pool, stranger.context),
+          ),
           createRetrievalConflictService(createRetrievalConflictReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
@@ -499,6 +507,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalSuccessfulDirectionService(
+            createRetrievalSuccessfulDirectionReader(pool, owner.context),
+          ),
           createRetrievalConflictService(createRetrievalConflictReader(pool, owner.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(owner)),
@@ -534,6 +545,48 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, owner.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
+          createRetrievalSuccessfulDirectionService(
+            createRetrievalSuccessfulDirectionReader(pool, owner.context),
+          ),
+          createRetrievalConflictService(createRetrievalConflictReader(pool, owner.context)),
+          createRetrievalSearchCache(),
+          createRetrievalUsageLogWriter(requestContextFor(owner)),
+          recordingReporter(),
+        ),
+      ).toThrow();
+    });
+
+    it('refuses a successful-direction service belonging to a different owner', async () => {
+      const owner = await makeActor();
+      const stranger = await makeActor();
+
+      // Only the successful-direction service is foreign. Every other stage
+      // checks its own owner, so this is the case that proves this one is
+      // checked too — and it would otherwise recommend a direction on the
+      // strength of a Memory the searcher has never seen, gated against
+      // somebody else's verification history.
+      expect(() =>
+        createRetrievalSearchService(
+          createRetrievalSummarySourceReader(pool, owner.context),
+          createRetrievalHybridSearchService(
+            createRetrievalSearchReader(pool, owner.context),
+            createRetrievalVectorSearchService(
+              provider(),
+              createRetrievalVectorSearchReader(pool, owner.context),
+            ),
+          ),
+          createRetrievalStructuralRerankService(
+            createRetrievalStructuralReader(pool, owner.context),
+            reranker(),
+          ),
+          createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
+          createRetrievalRevalidationService(
+            createRetrievalRevalidationReader(pool, owner.context),
+          ),
+          createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalSuccessfulDirectionService(
+            createRetrievalSuccessfulDirectionReader(pool, stranger.context),
+          ),
           createRetrievalConflictService(createRetrievalConflictReader(pool, owner.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(owner)),
@@ -569,6 +622,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, owner.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalSuccessfulDirectionService(
+            createRetrievalSuccessfulDirectionReader(pool, owner.context),
+          ),
           createRetrievalConflictService(createRetrievalConflictReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(owner)),
@@ -604,6 +660,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, owner.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, owner.context)),
+          createRetrievalSuccessfulDirectionService(
+            createRetrievalSuccessfulDirectionReader(pool, owner.context),
+          ),
           createRetrievalConflictService(createRetrievalConflictReader(pool, owner.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
@@ -635,6 +694,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
             createRetrievalRevalidationReader(pool, stranger.context),
           ),
           createRetrievalDeadEndService(createRetrievalDeadEndReader(pool, stranger.context)),
+          createRetrievalSuccessfulDirectionService(
+            createRetrievalSuccessfulDirectionReader(pool, stranger.context),
+          ),
           createRetrievalConflictService(createRetrievalConflictReader(pool, stranger.context)),
           createRetrievalSearchCache(),
           createRetrievalUsageLogWriter(requestContextFor(stranger)),
