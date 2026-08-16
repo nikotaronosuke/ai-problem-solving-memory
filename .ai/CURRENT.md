@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-13)
+Updated: 2026-08-16 (P4-14)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-13 done; P4-14 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-14 done; P4-15 next)
 
 ## Source of truth
 
@@ -961,6 +961,28 @@ Every Memory a search offers now also carries what was recorded as disagreeing w
 
 **Eighty-one mutations, each killed by a named test or guard** — fifty-two on behaviour and twenty-nine injecting a forbidden construct, both sets finished before the commit rather than after: every relation type read as a disagreement, a similarity or a supersession read as one, only one end of a link found, the far end taken as the stored target or as the candidate itself, either owner filter or either read control dropped, an unreadable counterpart returned hollow, the reason dropped or rewritten, either side's symptoms dropped or swapped for the other's, either side's conditions or checks dropped or swapped, failures filtered out, trust or currency dropped, the link's timestamp stamped at read time, the identifier carried out, the subject removed, the links capped or reversed or merged, the checks reversed, all four request checks disabled, a contested Memory dropped or demoted or reordered, positions unrenumbered or provenance renumbered, the caller's list edited, either earlier enrichment discarded, the stage skipped on a reused search, the cache filled early, a failed read reported as none, a foreign stage composed in — and, injected: a winner, a preferred Memory, a severity score, a notification, a derived marker, a sort by strength, a second graph hop, dead ends or conflicts or the checklist nested in the snapshot, a contradiction count or penalty on ranking, the trust order rearranged, `proposedDirection` or `currentEnvironment` on the request, the ambient process read, the reason sent to be summarised, the filesystem reached, the regenerable profile used as a source, a Relation or Problem write, `EXCLUDED` introduced, the disagreements cached or logged early, the envelope growing an evaluation or a recommendation field, the stored direction exposed, an HTTP surface, a migration. Five behaviour mutations survived a first run: two were unreachable through behaviour because the composite foreign key already makes a cross-owner link unstorable, and were re-aimed at the guard asserting the predicates textually while the predicates stayed; three were real gaps — a fixture whose counterpart confidence was `HIGH`, the value a stage that stopped reading the column would invent; a link timestamp never checked against anything; and an empty-list gate proven at the statement but not the service — and all three tests were strengthened. The P4-11 and P4-12 sets were re-run and all seventy still hold.
 
+## What exists now — Retrieval evaluation corpus (P4-14)
+
+A named corpus of nine scenarios, run against a real database through the whole pipeline, with a deliberate wrong answer in every one. Two new test files, no production source, no migration, no dependency, no route.
+
+**It measures; it changes nothing** (D-342). `git diff -- src` is empty, and so are the diffs against `package.json`, `supabase/` and the README. The rule was decided in advance: a fixture grounded in the specification that failed would have stopped the task as a finding, not licensed an edit to production. Nothing needed it, and the rule is why the result means anything.
+
+**What it proves, and what it cannot** (D-343). Given a working keyword signal, a working semantic signal and a structural judgement, the pipeline retrieves across Projects, fuses, reranks, applies the controls, enriches, bounds and reuses as specified. It proves **nothing** about any real embedding or reranking model — there is no vendor, no network and no credential in it — and must never be cited as if it did.
+
+**The oracle sees structure and nothing else** (D-344). It reads the current profile and each candidate's profile from the reranker input, and nothing more: no identifier, no Project, no earlier rank, no knowledge of which scenario a candidate is in. A test judges the same features twice under different labels and requires the same answer. Judgement is by concept from a closed table where anything absent maps to itself, so the table can only create agreement it was told about.
+
+**The cross-technology pair is paraphrased** (D-345). "configuration captured during build" against "settings frozen before the runtime starts", and the same for the conditions and both directions — not one shared word. An oracle built from string equality scores that pair at zero, which is the measurement that made structural judgement a model port in the first place. A baseline test asserts the paraphrasing is real, so a later "simplification" that copies phrases across fails and says why.
+
+**Each channel is load-bearing for exactly one scenario** (D-346). The same-technology Memory is stored under an embedding model *version the search never queries with* — comparing across models is refused, a production rule — so only keyword search can reach it. The cross-technology Memory shares no vocabulary with the query and only the vector channel can reach it. Emptying either channel drops its scenario and nothing else.
+
+**The controls run against the structure on purpose** (D-347). Seven candidates whose structural strength is the exact reverse of the order they should be offered in: the best structural match is the suppressed one, the weakest survivor is the current and trusted one. A pipeline that stopped consulting suppression, currency or trust would produce close to the reverse of the expected list, so the assertion cannot pass by luck. The two candidates cut are the *best* controls in the group, which makes the five-candidate bound its own fact. No comparison anywhere is decided by an identifier.
+
+**Eighteen mutations, all caught by this suite** (D-348): either channel emptied, the structural stage bypassed or inverted, the profile never reaching the judgement, proximity weighed before structure, currency or trust or suppression not weighed, the bound removed, the keyword channel forgetting whose Memory it is, any of the three enrichments omitted, reuse disabled, and the successful or dead-end direction dropped from the compared dimensions. Two needed correcting first, and both are findings: **the bound that applies to a search naming no limit is the default, not the ceiling** — raising `MAX_STRUCTURAL_RERANK_LIMIT` changed nothing observable; and **self-exclusion is applied twice**, at the hybrid stage and again at the rerank stage, so removing either alone leaves the other holding. The redundancy is deliberate and stays; the mutation removes both, which is what the behaviour actually means.
+
+**What the corpus says about the constants, which is little** (D-349). RRF `k = 10`: NOT DISPROVEN, no alternative simulated — nine hand-written cases cannot separate one `k` from another. Five offered candidates: SUPPORTED as a functional bound, with no claim that five is right. Cache TTL and capacity: INSUFFICIENT DATA and no new measurement — the existing unit tests already drive the boundary with an injected clock. Uncapped histories: INSUFFICIENT DATA; seeding a thousand rows would invent a threshold rather than measure one. No precision, recall, F1 or quality score was computed: nine curated fixtures are named behaviour acceptance, not a benchmark.
+
+**The derived successful direction is observed** (D-350). The cross-technology scenario requires `successful_directions` among the dimensions the judgement agreed on, which is direct evidence that the generator's derived material is usable for retrieval comparison. It does not create a contract returning `FIX` or `DISCOVERY` detail in a response, and the gap stays a P4-15 decision.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -1030,16 +1052,15 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-14 — Retrieval evaluation fixtures.
+P4-15 — Phase 4 end-to-end and Definition of Done.
 
-**NOT STARTED.** P4-01 through P4-13 are done; nothing of P4-14 has been implemented. See the private Phase 4 breakdown for what it is.
+**NOT STARTED.** P4-01 through P4-14 are done; nothing of P4-15 has been implemented. See the private Phase 4 breakdown for what it is.
 
 Notes for whoever picks this up:
-- The fixture set the specification names covers same-technology same-symptom, cross-technology structural similarity, surface-similar but differently caused, stale Memory, dead ends and conflicting Memories. Every one of those is now producible against a real database — the six integration suites under `tests/retrieval/` seed exactly these shapes, and a fixture task should read them before inventing new seeding
-- **This is the first Phase 4 task that measures rather than decides.** Several numbers were fixed by argument and left for measurement: RRF `k = 10` (D-259), the five-candidate rerank ceiling, the 300-second cache TTL and 100-entry capacity (D-289), and the deliberate absence of a cap on Verifications, dead ends and contradictions. Evidence for any of them belongs here
-- The retrieval pipeline is complete end to end: source → hybrid → rerank → ranking → revalidation → dead ends → conflicts, with the final envelope in `src/domain/retrieval-result.ts` carrying `ranking`, `revalidation`, `deadEndWarnings` and `conflict`
-- There is still no HTTP route. The whole retrieval surface should be published once, when it means what it will keep meaning, and that documentation sync belongs at the end of the phase rather than after each task
-- **The successful-direction gap is still open** and is a P4-15 decision, not a P4-14 one. See the OPEN entry in `TODO.md`
+- The run is a **continuity** proof, not a scenario proof: a Memory saved in one Project through the ordinary write path, then found from another Project, through keyword and semantic candidates, structural reranking, the cut to a handful, and dead-end, conflict and revalidation material in the answer. P4-14 proves each of those behaves; P4-15 has to prove they connect when nobody seeds the middle
+- **Reuse the corpus data, not the seeding shortcut.** `tests/retrieval/fixtures/retrieval-evaluation-corpus.ts` is deliberately data and pure functions with no database import, so its Memories can be written through the real services instead of upserted as finished artifacts. Upserting artifacts directly is exactly what P4-15 must not do — the artifact generation path is part of what it is proving
+- **The successful-direction gap must be decided here.** P4-14 observed that the derived `successful_directions` reaches the structural comparison and is used; it did not add any contract returning `FIX` or `DISCOVERY` detail in a response. Whether the derived profile satisfies "成功方向とdead-endの両方を利用できる" or a historical detail is needed is a P4-15 call. See the OPEN entry in `TODO.md`
+- There is still no HTTP route, and the whole retrieval surface should be published once when it means what it will keep meaning. The public README and architecture sync belong at the end of the phase, which is this task
 
 ## Core MVP milestone
 
