@@ -2045,3 +2045,313 @@ describe('hybrid candidate retrieval', () => {
     }
   });
 });
+
+describe('structural reranking', () => {
+  /** The four modules this stage is made of, comments stripped. */
+  async function rerankCode(): Promise<string> {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter((module) => module.path.includes('retrieval-structural'))
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+    expect(code.length).toBeGreaterThan(0);
+    return code;
+  }
+
+  it('gives the reranker port no way to reach storage', async () => {
+    const source = await readFile(join(SRC, 'domain', 'retrieval-structural-rerank.ts'), 'utf8');
+    const port = source.slice(source.indexOf('export interface StructuralReranker {'));
+    const body = port.slice(0, port.indexOf('\n}'));
+
+    // The same posture as the summary generator and the embedding provider: it
+    // is handed a shape and returns a value. A reranker that could reach a
+    // repository or an executor would be able to act on the Memory it is
+    // judging.
+    for (const reachable of ['Repository', 'Reader', 'Executor', 'DatabasePool', 'OwnerContext']) {
+      expect(body.includes(reachable), `the reranker port can reach a ${reachable}`).toBe(false);
+    }
+    expect(body).toContain('StructuralRerankerInput');
+  });
+
+  it('shows the reranker structure and nothing another stage owns', async () => {
+    const source = await readFile(join(SRC, 'domain', 'retrieval-structural-rerank.ts'), 'utf8');
+    const input = source.slice(source.indexOf('export interface StructuralRerankerInput {'));
+    const inputBody = input.slice(0, input.indexOf('\n}'));
+    const candidate = source.slice(
+      source.indexOf('export interface StructuralRerankerCandidate {'),
+    );
+    const candidateBody = candidate.slice(0, candidate.indexOf('\n}'));
+
+    // A model shown which candidates the first stage liked could reproduce its
+    // ordering; one shown the project could prefer the current one. Both are
+    // decisions belonging to a later stage, and neither was asked of this one.
+    for (const withheld of [
+      'projectId',
+      'fusionScore',
+      'lexicalRank',
+      'vectorRank',
+      'hybridRank',
+      'normalizedSummary',
+      'keywords',
+      'embedding',
+      'limit',
+      'threshold',
+      'weight',
+    ]) {
+      expect(
+        `${inputBody}\n${candidateBody}`.includes(withheld),
+        `the reranker is sent ${withheld}`,
+      ).toBe(false);
+    }
+    expect(inputBody).toContain('StructuralFeatures');
+    expect(candidateBody).toContain('StructuralFeatures');
+  });
+
+  it('carries no reranker identity, because nothing here is stored', async () => {
+    const code = await rerankCode();
+
+    // The embedding model's identity is persisted because artifacts must be
+    // regenerable when it changes. This stage writes nothing, so an identity
+    // would be a field with no reader — added when logging or evaluation
+    // actually needs one.
+    for (const premature of ['rerankerId', 'rerankerVersion', 'modelId', 'modelVersion']) {
+      expect(code.includes(premature), `the rerank stage records ${premature}`).toBe(false);
+    }
+  });
+
+  it('gives no caller a way to replace the rerank privacy policy', async () => {
+    const source = await readFile(
+      join(SRC, 'app', 'retrieval-structural-rerank-service.ts'),
+      'utf8',
+    );
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const factory = code.slice(
+      code.indexOf('export function createRetrievalStructuralRerankService('),
+    );
+    const parameters = factory.slice(
+      factory.indexOf('('),
+      factory.indexOf('): RetrievalStructural'),
+    );
+
+    // A policy parameter defaulting to the safe one is still a way to pass an
+    // unsafe one, and "safe unless overridden" is not a boundary.
+    expect(
+      parameters.includes('Policy'),
+      'the factory accepts something that could be a policy',
+    ).toBe(false);
+    expect(
+      parameters.includes('Detector'),
+      'the factory accepts something that could be a detector',
+    ).toBe(false);
+    expect(code).toContain('const inspectionPolicy = createStructuralRerankInspectionPolicy();');
+
+    // And through the sanitization boundary rather than from a detector: what
+    // a credential looks like is not this module's knowledge to hold.
+    expect(
+      code.includes('createSecretDetector') || code.includes('SecretDetector'),
+      'the service reaches for the detector directly',
+    ).toBe(false);
+  });
+
+  it('inspects the whole payload before any reranker could see it', async () => {
+    const source = await readFile(
+      join(SRC, 'app', 'retrieval-structural-rerank-service.ts'),
+      'utf8',
+    );
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Two of the three inputs have been through none of this system's write
+    // checks — a caller's profile, and features read back out of storage — and
+    // this is where they would leave the process.
+    const inspectAt = code.indexOf('sanitizeValue(');
+    const sendAt = code.indexOf('reranker.rerank(');
+    expect(inspectAt).toBeGreaterThan(-1);
+    expect(sendAt).toBeGreaterThan(-1);
+    expect(inspectAt).toBeLessThan(sendAt);
+    expect(code).toContain("'SKIPPED_SENSITIVE_INPUT'");
+  });
+
+  it('validates the request before the database or a model is touched', async () => {
+    const source = await readFile(
+      join(SRC, 'app', 'retrieval-structural-rerank-service.ts'),
+      'utf8',
+    );
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    const checkAt = code.indexOf('resolveStructuralRerankRequest(');
+    const readAt = code.indexOf('reader.readStructural(');
+    const sendAt = code.indexOf('reranker.rerank(');
+    expect(checkAt).toBeGreaterThan(-1);
+    expect(checkAt).toBeLessThan(readAt);
+    expect(checkAt).toBeLessThan(sendAt);
+  });
+
+  it('requires the answer to cover every candidate exactly once', async () => {
+    const source = await readFile(join(SRC, 'domain', 'retrieval-structural-rerank.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Allowing omissions would put a hidden threshold inside the model. This
+    // stage has none on purpose, so a candidate with nothing in common is
+    // ranked last rather than made to disappear.
+    expect(code).toContain('seen.size !== wanted.size');
+    expect(code).toContain("'a candidate appears twice'");
+    expect(code).toContain("'a candidate was not one of the inputs'");
+  });
+
+  it('applies the cut itself and offers no tunable to a caller', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-structural-rerank.ts'), 'utf8');
+    const service = await readFile(
+      join(SRC, 'app', 'retrieval-structural-rerank-service.ts'),
+      'utf8',
+    );
+
+    expect(domain).toContain('export const DEFAULT_STRUCTURAL_RERANK_LIMIT = 5');
+    expect(domain).toContain('export const MIN_STRUCTURAL_RERANK_LIMIT = 1');
+    expect(domain).toContain('export const MAX_STRUCTURAL_RERANK_LIMIT = 5');
+    expect(service).toContain('orderStructuralCandidates(scored, resolved.limit)');
+
+    // A similarity threshold is the one knob this stage must not have: it
+    // would decide that a Memory is not worth offering using less information
+    // than the ranking stage will have.
+    const request = domain.slice(domain.indexOf('export interface StructuralRerankRequest {'));
+    const requestBody = request.slice(0, request.indexOf('\n}'));
+    for (const tunable of ['threshold', 'weight', 'k', 'temperature', 'prompt']) {
+      expect(
+        new RegExp(`\\b${tunable}\\b\\s*[?:]`).test(requestBody),
+        `the request exposes ${tunable}`,
+      ).toBe(false);
+    }
+  });
+
+  it('leaves ranking to the stage that owns it', async () => {
+    const code = await rerankCode();
+
+    // Structural similarity is one input to ranking, not ranking. Weighing how
+    // trustworthy, how current or how close to hand a Memory is here would
+    // settle the ranking stage's questions with none of its information.
+    for (const later of [
+      'confidence',
+      'freshness',
+      'recency',
+      'suppressed',
+      'importance',
+      'trustScore',
+    ]) {
+      expect(code.includes(later), `the rerank stage already weighs ${later}`).toBe(false);
+    }
+  });
+
+  it('proposes nothing and applies nothing', async () => {
+    const code = await rerankCode();
+
+    // Turning a Memory into a suggested action, and applying one, are separate
+    // later tasks with their own approval questions. A stage that quietly
+    // began either would answer those questions by accident.
+    for (const later of [
+      'suggestion',
+      'suggestedFix',
+      'applyFix',
+      'autoApply',
+      'approval',
+      'proposal',
+      'actionPlan',
+    ]) {
+      expect(code.includes(later), `the rerank stage already does ${later}`).toBe(false);
+    }
+  });
+
+  it('reranks without writing, locking or generating', async () => {
+    for (const path of [
+      join(SRC, 'domain', 'retrieval-structural-rerank.ts'),
+      join(SRC, 'db', 'retrieval-structural-read.ts'),
+      join(SRC, 'repository', 'retrieval-structural-reader.ts'),
+      join(SRC, 'app', 'retrieval-structural-rerank-service.ts'),
+    ]) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      // In particular it never regenerates an artifact it failed to find:
+      // that would turn a search into a generation at the moment somebody is
+      // waiting for an answer.
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'createUsageLog',
+        'createChangeLog',
+        'upsertArtifact',
+        'generateArtifact',
+        'RetrievalArtifactGenerationService',
+        'DatabaseTransactionRunner',
+        'lockProblemForArtifactWrite',
+        'for update',
+      ]) {
+        expect(
+          code.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} contains ${forbidden}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('reads the owner and the read control again, in one statement', async () => {
+    const { STRUCTURAL_ARTIFACT_STATEMENT } =
+      await import('../src/db/retrieval-structural-read.js');
+
+    // What was true when the first stage ran is not a filter now. And three
+    // columns only: the summary, the keywords and the embedding are not needed
+    // to compare structure, so this stage never handles them.
+    expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('ra.owner_id = $1');
+    expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('pr.owner_id = ra.owner_id');
+    expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('ra.problem_id = any($2::uuid[])');
+    for (const unused of [
+      'normalized_summary',
+      'keywords',
+      'embedding',
+      'search_document',
+      'source_fingerprint',
+    ]) {
+      expect(
+        STRUCTURAL_ARTIFACT_STATEMENT.includes(unused),
+        `the structural read pulls ${unused}`,
+      ).toBe(false);
+    }
+  });
+
+  it('adds no schema of its own', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    const files = await readdir(migrations);
+
+    // Reranking reads columns that already exist. A migration arriving with it
+    // would mean the stage had decided to store something, which it does not.
+    for (const file of files) {
+      const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      expect(sql.includes('rerank'), `${file} was written for reranking`).toBe(false);
+    }
+  });
+
+  it('ships no HTTP client and no vendor SDK of its own', async () => {
+    const modules = await readModules(SRC);
+    const stage = modules.filter((module) => module.path.includes('retrieval-structural'));
+    expect(stage.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of stage) {
+      const code = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      if (/\bfetch\s*\(|node:http|node:https|undici|axios/.test(code)) {
+        offenders.push(module.path);
+      }
+      for (const specifier of importsOf(module.source)) {
+        if (/^(openai|@anthropic|@google|@mistral|cohere|@huggingface|langchain)/.test(specifier)) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+
+    // The port exists so the model decision can be made later, by whoever has
+    // a reason. Choosing a vendor here would make it for them.
+    expect(offenders).toEqual([]);
+  });
+});

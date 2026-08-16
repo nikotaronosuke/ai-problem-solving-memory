@@ -23,6 +23,7 @@ export {
   createArtifactInspectionPolicy,
   createExportInspectionPolicy,
   createSemanticQueryInspectionPolicy,
+  createStructuralRerankInspectionPolicy,
   createSecretDetectionPolicy,
   createSecretDetector,
   createSecretRedactor,

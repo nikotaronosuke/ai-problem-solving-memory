@@ -82,6 +82,33 @@ export {
   type AppendVerificationCommand,
   type VerificationService,
 } from './verification-service.js';
+// Structural reranking: the second retrieval stage, narrowing stage-one
+// candidates to a handful by whether they are the same kind of problem.
+export {
+  createRetrievalStructuralRerankService,
+  type RetrievalStructuralRerankService,
+} from './retrieval-structural-rerank-service.js';
+export {
+  DEFAULT_STRUCTURAL_RERANK_LIMIT,
+  InvalidStructuralRerankError,
+  InvalidStructuralRerankerOutputError,
+  MAX_STRUCTURAL_RERANK_CANDIDATES,
+  MAX_STRUCTURAL_RERANK_LIMIT,
+  MIN_STRUCTURAL_RERANK_LIMIT,
+  parseStructuralRerankerOutput,
+  resolveStructuralRerankRequest,
+  STRUCTURAL_COMPARISON_DIMENSIONS,
+  type StructuralCandidate,
+  type StructuralComparisonDimension,
+  type StructuralRerankRequest,
+  type StructuralRerankResult,
+  type StructuralRerankStatus,
+  type StructuralReranker,
+  type StructuralRerankerCandidate,
+  type StructuralRerankerInput,
+} from '../domain/retrieval-structural-rerank.js';
+export { parseStructuralFeatures } from '../domain/retrieval-summary.js';
+
 // Hybrid candidate retrieval: both channels as one intent, fused by rank.
 // The first of the two retrieval stages; a reranker narrows what it returns.
 export {

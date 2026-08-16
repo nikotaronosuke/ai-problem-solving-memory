@@ -2496,3 +2496,111 @@ Not built: structural reranking, any reading of structural features, symptoms, b
 Twenty discrimination mutations, each killed by a named test or guard.
 
 P4-06 is done. P4-07 Structural reranking is NOT STARTED.
+
+## D-264 — The structural schema is exactly eight keys, six of which are lists (P4-07)
+
+D-222 defined the v1 vocabulary and the code has always implemented it: `schema_version`, `problem_domain`, and six free-form label lists — `symptom_patterns`, `suspected_boundaries`, `occurrence_conditions`, `successful_directions`, `dead_end_directions`, `environment_facts`. Eight top-level keys, six of them lists, exact-key validation on both sides.
+
+`.ai/CURRENT.md` said "eight free-form label lists", which is wrong twice over: it counts the version and the domain as lists and implies eight of them. Nobody had built on the misstatement — D-222, `TODO.md` and the code all agree — and it is corrected here rather than left for a task that might read the document instead of the parser. A test asserts eight keys and six lists so the sentence and the code cannot drift again.
+
+The parser that P4-02 uses for generated output is now exported and used to read stored features, because two parsers for one schema would eventually disagree about it. What did **not** move is the provenance gate: a summary may only claim a `successful_direction` if the Problem is VERIFIED by a passing Verification (D-221), and that check depends on facts a reader of stored artifacts cannot see. So shape validation is the shared function and the gate is layered on top of it at generation time only. A stored profile naming a successful direction parses here without complaint, which is correct — the claim was checked when it was written.
+
+## D-265 — A model does the comparing, and the measurement is why (P4-07)
+
+The obvious implementation is arithmetic on the labels, and it was built and measured before it was rejected. Against realistic fixtures, **exact label overlap, token Jaccard and character-bigram similarity all ranked *same technology, different cause* above *different technology, same structure*** — the precise inversion of what this stage exists to do. Removing the technology-bearing fields and weighting the boundary field flipped the order, but only because two words happened to coincide; rewriting the same structure in different vocabulary put the cross-technology candidate back at **0.000 / 0.159**, below the surface-similar one's **0.048 / 0.208**.
+
+That settles it on evidence rather than preference. The Core MVP's acceptance condition is that a React ordering bug can surface a Fastify one, and word overlap cannot see that, because the words are exactly what differ. The OS boundary already places structural rerank on the model side of the line; the measurement is why this code agrees rather than looking for a cheaper way.
+
+**What that does not establish.** Every test here scripts the reranker, so it proves the orchestration — that the right data reaches the model, that nothing else does, that its answer is checked, that failure degrades honestly — and proves nothing whatever about whether a real model judges structure well. That is P4-14's, measured against evaluation fixtures. No test is named or written as though it had been settled.
+
+## D-266 — The reranker is its own port, and deliberately not the embedding provider (P4-07)
+
+`StructuralReranker` takes a shape and returns `unknown`. No vendor, no SDK, no credential, no HTTP client — the same posture as the summary generator (D-223) and the embedding provider (D-241), for the same reason: choosing a model here would make a decision that belongs to whoever deploys this.
+
+Reusing `EmbeddingProvider` was considered and refused. An embedding is a fixed-dimension vector in one model's space, produced to be stored and compared arithmetically; a structural judgement is a per-pair reading with named evidence. Routing one through the other would mean either storing rerank vectors nobody reads or pretending a similarity score is an embedding, and it would tie the rerank stage to the artifact regeneration rules that exist because the embedding model's identity is persisted.
+
+There is **no `rerankerId` or `rerankerVersion`**. The embedding model's identity is stored because artifacts must be regenerable when it changes (D-247); nothing here is persisted, so an identity would be a field with no reader. When usage logging or evaluation needs one, that is the moment to add it.
+
+The port carries a written contract no type can enforce: the features are data and never instruction; a shared technology name is not a match and a different one is not a mismatch; an empty `successful_directions` means the record does not support a claim and never that a fix failed; a shared dead end is evidence of similarity, not a warning; an environment difference is not a penalty; an empty dimension on either side is neutral; no tool use, structured output only.
+
+## D-267 — The current profile comes from the caller, and this stage reads no artifact of its own (P4-07)
+
+The Problem being worked on is exactly the one least likely to have a stored artifact — and if it has one, it is the one most likely to be out of date. Reading it here would compare against a stale description, and generating one would make a search write at the moment somebody is waiting for an answer (D-230). So `currentFeatures` is supplied by the caller.
+
+It is **parsed, not trusted**. A `StructuralFeatures` annotation on a value that arrived from outside is a claim, not a fact, and an unparseable profile is a bad request rather than a degraded search: it reaches neither the database nor a model. The refusal names the field and never the value, because the value is somebody's description of their own Problem and an error travels.
+
+## D-268 — Candidates are re-read in one statement, and a disappearance is one answer (P4-07)
+
+The hybrid stage checked the owner and the read control, and then time passed. Both are applied again here, in a single batch read of up to twenty Problems — one statement rather than twenty, for the obvious reason and a less obvious one: twenty round trips would be twenty snapshots, so a Problem could be readable at the third and gone by the seventeenth, and the set handed to a reranker would describe a state that never existed.
+
+Three columns: `problem_id`, `project_id`, `structural_features`. The summary, the keywords and the embedding are not needed to compare structure, and a stage that pulled them would be handling text it has no use for and no business sending anywhere.
+
+A candidate that does not come back is simply dropped. Deleted, artifact removed, `memory_read_enabled` turned off, or never this owner's — **one answer for all four**, so a rerank cannot be used to learn that somebody else's Problem exists. A test compares a stranger's identifier against an invented one and requires the two results to be byte-identical.
+
+The reader is a reader: one method, and it reads. Reranking cannot become a way to write because there is nothing here to write through, and in particular it cannot regenerate an artifact it failed to find.
+
+## D-269 — Unreadable structure degrades the whole stage, rather than dropping the candidate (P4-07)
+
+This is the least obvious decision in the task, and the investigation got it wrong before the specification corrected it.
+
+A candidate whose stored features cannot be parsed is not a candidate that compared badly. Removing it would make "we could not read this" indistinguishable from "this is not similar", and sending the rest would have the model compare against a set quietly missing a member. So one unreadable profile stops the comparison entirely: nothing is sent, the first stage's order stands, every score is null, and the status is `STRUCTURAL_DATA_UNAVAILABLE`.
+
+The candidates are all still returned, including the unreadable one. There is nothing wrong with those Problems — the fault is in a derived artifact — and dropping a Memory because a regenerable summary is malformed would punish the record for the derivation.
+
+## D-270 — What the reranker is shown, and what it is not (P4-07)
+
+`{ current, candidates: [{ problemId, features }] }`. Nothing else.
+
+No `projectId`, no `fusionScore`, no lexical or vector rank, no summary, no keywords, no embedding, no limit, no threshold, no weights. The omissions are the design. A model shown which candidates the first stage liked could reproduce its ordering and call it a structural judgement; one shown the project could prefer the current one; one given the limit could apply the cut itself. All three are decisions belonging to later stages, and none was asked of this one. Guards read the port's own type declaration, so adding a field is a visible change rather than a quiet one.
+
+## D-271 — The privacy check is re-run at this boundary, and the policy is not a parameter (P4-07)
+
+Both of the inputs that reach a reranker have been through none of this system's write checks: the caller's profile arrived from outside, and the candidate features came back out of a database, which vouches for storage rather than for content. Relying on "the artifact boundary already checked it" would be trusting a fact about how today's callers happen to be wired, at the exact moment the text leaves the process. So the assembled payload — both sides, every string and every key — is inspected immediately before the call, and a confirmed credential anywhere in it means the model is not called at all.
+
+Refusal only, never redaction. Handing a reranker a label with the middle removed and asking it to judge similarity from that is a worse answer than declining to ask.
+
+The result says `SKIPPED_SENSITIVE_INPUT` and nothing else: not which side it was on, not which candidate, not the category, not the location, not the value. One status covers both sources.
+
+The policy is **built inside the factory and is not a parameter** — D-255's rule, applied without having to be re-learned. A policy a caller could replace would make "a credential is never sent to a reranker" a default rather than a rule, and a safe default is not a boundary. It comes from the sanitization module rather than being assembled from a detector, so what a credential looks like stays inside the one directory that decides it. A guard asserts the absence of the seam.
+
+## D-272 — The answer must cover every candidate exactly once, and carry its evidence (P4-07)
+
+Every candidate sent comes back, exactly once: no omissions, no duplicates, no invented identifiers, and no extra fields at either level.
+
+The coverage rule is the important one. **Allowing a model to leave candidates out would put a hidden threshold inside it.** This stage deliberately has no threshold, so that a candidate with no structural similarity is ranked last rather than made to disappear, and cutting the list is this code's job. A model quietly dropping candidates would take that decision somewhere nobody could inspect it. Two tests pin the rule independently of counting: an answer that substitutes an invented identifier for a real one, and an answer that names a single candidate twice, both have the right length and are both refused.
+
+`structuralScore` is 0 to 1 so the range means the same thing in every answer. `matchedDimensions` is machine-readable and drawn from the seven comparison dimensions — `problem_domain` plus the six lists; `schema_version` is excluded because it says which shape the object is in, which is a fact for the parser rather than something two Problems can be alike in. Score and evidence must agree: a score above zero must name at least one dimension, and a score of zero must name none. A model that can rate a pair but cannot say in what respect they are alike has not produced a structural judgement, and free-text reasoning is not accepted in its place.
+
+Nothing of the answer appears in the error. What came back is model text, and the error travels.
+
+## D-273 — Structure decides, the earlier stage breaks ties, and there is no threshold (P4-07)
+
+Order is `structuralScore` descending, then the hybrid position ascending, then `problemId`. Total and repeatable, so equal scores return identically and a smaller limit is a true prefix of a larger one's answer.
+
+The hybrid score is never added to the structural one — two scales measuring different things, and this is a rerank rather than a second opinion averaged with the first. The hybrid *rank* is carried only to break ties; the fusion score is not carried at all, because a score from another stage sitting beside this one is an invitation to combine them.
+
+The limit is 1 to 5, **defaulting to 5** rather than to the three a person usually sees. How many to show is a presentation decision, and a ranking stage still sits between this and a reader; cutting to three here would throw away candidates that stage can no longer recover. Short lists are returned short and never padded.
+
+No similarity threshold, deliberately. A score of zero means the reranker could name nothing the two have in common, and deciding that a Memory is therefore not worth offering needs the confidence, freshness and proximity that P4-08 will have and this stage does not.
+
+## D-274 — A reranker that is unreachable degrades; one that answers badly does not (P4-07)
+
+An unreachable reranker returns `RERANKER_UNAVAILABLE`: the first stage's order stands, and **every score is null rather than zero**. A number invented because no judgement was made would be a structural judgement nobody made, and null is the only honest value. That is the specification's rule that a Memory failure must not stop ordinary work.
+
+A malformed answer is raised, not degraded. An outage is infrastructure; an answer that is not an answer is a contract violation, and hiding the second behind the first would let a model that has quietly stopped honouring its contract keep running behind results that look ordinary — the failure that takes longest to notice (D-262's reasoning, applied to a different port).
+
+A candidate reported under two different Projects raises as well. Both reads join `problems` on the same key, so a disagreement means the inputs are not what they claim, and picking a winner would let the stage produce a confident answer built on a contradiction.
+
+Zero or one candidate returns `NOT_NEEDED` with the reranker at zero calls. There is no ordering to buy.
+
+## D-275 — What P4-07 changed, and what it did not build (P4-07)
+
+No migration, no table, no column, no index, no function, no dependency, no route. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies — every one measured and unchanged. Four new modules, one shared parser exported, one new sanitization policy, and one corrected sentence in `.ai/CURRENT.md`.
+
+A rerank writes nothing on any path — not on success, not on any of the four degraded statuses. Proven byte-for-byte across all nine tables, and in particular it never generates an artifact it failed to find.
+
+Not built: ranking. No confidence, freshness, recency, suppression, importance or project proximity is read or weighed, and no guess at any of them is made from what is here. No suggestion, proposed fix, applied fix or approval — P4-11 and P4-12 own those, and a stage that began either would answer their questions by accident. No revalidation, no conflict handling, no cache, no usage log, no HTTP surface, no concrete reranker.
+
+Thirty-five discrimination mutations, each killed by a named test or guard. Two survived the first run — both because a bound had been asserted against itself rather than against its literal value — and the tests were fixed and re-run rather than the mutations dropped.
+
+P4-07 is done. P4-08 is NOT STARTED.
