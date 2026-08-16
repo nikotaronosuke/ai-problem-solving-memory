@@ -156,6 +156,55 @@ describe('the reason a search writes down', () => {
       expect(reason).toContain('structural_status=RERANKER_UNAVAILABLE;');
       expect(reason).toContain('comparison_dimensions=none.');
     });
+
+    it.each([
+      ['RERANKER_UNAVAILABLE'],
+      ['STRUCTURAL_DATA_UNAVAILABLE'],
+      ['SKIPPED_SENSITIVE_INPUT'],
+      ['NOT_NEEDED'],
+    ] as const)('names no dimension on a %s rerank, whatever it is handed', (structuralStatus) => {
+      // The status decides, not the list. The rerank stage produces no
+      // dimensions when it does not run, so these two agree in practice — but
+      // "in practice" means "because the stage upstream happens to be wired
+      // correctly today", and this function is exported. A row saying
+      // `structural_status=RERANKER_UNAVAILABLE; comparison_dimensions=
+      // symptom_patterns` would be permanent evidence of a comparison that
+      // never happened.
+      const reason = composeSearchedReason(
+        candidate({ matchedDimensions: ['symptom_patterns', 'suspected_boundaries'] }),
+        'USED',
+        structuralStatus,
+      );
+      expect(reason).toContain(`structural_status=${structuralStatus};`);
+      expect(reason).toContain(`comparison_dimensions=${NO_COMPARISON_DIMENSIONS}.`);
+      expect(reason.includes('symptom_patterns'), 'a degraded rerank named a dimension').toBe(
+        false,
+      );
+    });
+
+    it('still lists them when the rerank did run', () => {
+      // The other half of the same rule: nothing about the `USED` case changed.
+      expect(
+        composeSearchedReason(
+          candidate({ matchedDimensions: ['symptom_patterns'] }),
+          'USED',
+          'USED',
+        ),
+      ).toContain('comparison_dimensions=symptom_patterns.');
+    });
+
+    it('applies the rule to the rerank only, never to the semantic channel', () => {
+      // A semantic channel that did not run says nothing about whether a
+      // structural comparison happened, so it must not suppress the evidence
+      // of one that did.
+      expect(
+        composeSearchedReason(
+          candidate({ matchedDimensions: ['symptom_patterns'] }),
+          'PROVIDER_UNAVAILABLE',
+          'USED',
+        ),
+      ).toContain('comparison_dimensions=symptom_patterns.');
+    });
   });
 
   describe('what it leaves out', () => {

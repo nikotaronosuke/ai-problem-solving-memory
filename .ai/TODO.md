@@ -665,9 +665,11 @@ The reason is composed by the server in one fixed shape from rank, Project relat
 
 A narrow writer with no field for a query or a profile, writing through the sanitized repository inside one transaction that wraps the rows and nothing else (D-305). Failure is best effort and never silent: a required reporter with no default receives a kind and a count (D-306). The cache is filled before the log, so a lost line cannot discard a reusable result (D-307).
 
-Twenty-three discrimination mutations each killed by a named test or guard. Eight survived a first run — five stale anchors, two defence-in-depth checks each hidden by the other, one mutation that left the original call behind — and each was fixed rather than accepted.
+One rule was corrected by review after the first commit. The reason decided whether to name comparison dimensions by looking at the list rather than at the rerank status — which agree only because the stage upstream happens to be wired correctly, and `composeSearchedReason` is exported. A direct call could produce a permanent row claiming structural evidence from a rerank that never ran, so the status is now load-bearing and the writer refuses the contradiction outright (D-309).
 
-3329 tests across 106 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+Twenty-nine discrimination mutations each killed by a named test or guard. Eight survived a first run — five stale anchors, two defence-in-depth checks each hidden by the other, one mutation that left the original call behind — and each was fixed rather than accepted.
+
+3338 tests across 106 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
 ### NEXT — P4-11 Current-environment revalidation contract
 
