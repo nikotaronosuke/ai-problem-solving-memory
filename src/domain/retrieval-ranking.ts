@@ -363,6 +363,12 @@ export function resolveRetrievalRankingRequest(
  * comparison falls through to proximity and the specification's basic search
  * order surfaces on its own. Substituting a number would be inventing a
  * judgement that was never made.
+ *
+ * And when the status says a rerank *did* run, a missing score is refused
+ * rather than filled in. The two directions are the same rule: nothing here
+ * ever converts "no judgement" into a number. Callers reaching this through
+ * the service cannot produce either case — the request check settles it first
+ * — but this function is exported, so it keeps its own contract.
  */
 export function rankCandidates(
   candidates: readonly RankableCandidate[],
@@ -391,10 +397,24 @@ export function rankCandidates(
       }
 
       if (structureCounts) {
-        // Read only when a judgement exists. There is no `?? 0` anywhere on
-        // this path, and none is reachable: the request check guarantees every
-        // score is a number whenever this branch runs.
-        const structural = (b.structuralScore ?? 0) - (a.structuralScore ?? 0);
+        // Refused rather than defaulted. A `?? 0` here would be the one
+        // conversion this whole stage exists to avoid — it would turn "no
+        // judgement was made" into "judged, and found nothing in common", and
+        // it would do it silently, in the one place where the difference
+        // decides an order. The status says a rerank ran, so a missing score
+        // means the two disagree, and that is a broken input rather than a
+        // candidate to place somewhere.
+        //
+        // The request check already refuses this, so nothing reaching here
+        // through the service can trip it. This function is exported and
+        // callable on its own, and its contract is its own to keep.
+        if (a.structuralScore === null || b.structuralScore === null) {
+          throw new InvalidRetrievalRankingError(
+            'candidates',
+            'a structural score is missing although the rerank was used',
+          );
+        }
+        const structural = b.structuralScore - a.structuralScore;
         if (structural !== 0) {
           return structural;
         }

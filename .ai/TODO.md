@@ -627,9 +627,11 @@ The order is a lexicographic tuple — not suppressed → currency → trust →
 
 No importance, no status boost, no timestamp (D-284). Every ranking input is read from the database in one statement, because all of them are editable and two reads could compare a state that never existed (D-285). Nothing is removed for ranking low, and nothing is written (D-281, D-287).
 
-Forty discrimination mutations each killed by a named test or guard. Eight survived a first run — six fixtures whose expected order coincided with the identifier tie-break, one rule tested only through inputs another rule already constrained, and one stale anchor — and each time the test was strengthened.
+One rule was corrected by review after the first commit. The comparator coalesced a missing structural score to zero — the exact conversion D-283 forbids — under a comment stating it did not. Unreachable through the service, and one direct call to an exported function away, so it now raises instead, and the guard reads the line rather than the prose above it (D-288).
 
-3181 tests across 103 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+Forty-three discrimination mutations each killed by a named test or guard. Eight survived a first run — six fixtures whose expected order coincided with the identifier tie-break, one rule tested only through inputs another rule already constrained, and one stale anchor — and each time the test was strengthened.
+
+3184 tests across 103 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
 ### NEXT — P4-09 Search cache
 
