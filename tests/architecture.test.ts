@@ -2199,6 +2199,55 @@ describe('structural reranking', () => {
     expect(code).toContain("'a candidate was not one of the inputs'");
   });
 
+  it('checks that a claimed dimension had something on both sides', async () => {
+    const source = await readFile(join(SRC, 'domain', 'retrieval-structural-rerank.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Availability, not agreement. A model may not name a dimension that is
+    // empty on one side or the other — an empty `successful_directions` in
+    // particular means the record does not support a claim, so citing it as a
+    // match reports two Problems as alike where at least one says nothing.
+    expect(code).toContain('function comparisonMaterialExists(');
+    expect(code).toContain("'a matched dimension has nothing to compare'");
+
+    // And the check reads what was sent, so it cannot be run against a set
+    // that has drifted from the one the model saw.
+    expect(code).toContain('input: StructuralRerankerInput');
+
+    // What it must not do is decide the match itself. Comparing the text would
+    // be the arithmetic D-265 measured and rejected, arriving as a validation
+    // rule instead.
+    const helper = code.slice(code.indexOf('function comparisonMaterialExists('));
+    const body = helper.slice(0, helper.indexOf('\n}'));
+    for (const overreach of ['toLowerCase', 'includes(', 'some(', 'trim(', '===  ']) {
+      expect(
+        body.includes(overreach),
+        `the availability check compares content with ${overreach}`,
+      ).toBe(false);
+    }
+  });
+
+  it('reports the position the first stage gave a candidate, not an index', async () => {
+    const source = await readFile(
+      join(SRC, 'app', 'retrieval-structural-rerank-service.ts'),
+      'utf8',
+    );
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // `hybridRank` is provenance. Numbering the survivors of the re-read would
+    // rewrite the earlier stage's answer and hide the gap that says a
+    // candidate disappeared between the two stages.
+    expect(code).toContain('const ranks = hybridRanks(request.candidates);');
+    expect(code).toContain('ranks.get(candidate.problemId)');
+    expect(code.includes('hybridRank: index + 1'), 'a rank is taken from a survivor index').toBe(
+      false,
+    );
+    expect(
+      /present\.map\(\(candidate, index\)/.test(code),
+      'the scored list still walks the survivors with an index',
+    ).toBe(false);
+  });
+
   it('applies the cut itself and offers no tunable to a caller', async () => {
     const domain = await readFile(join(SRC, 'domain', 'retrieval-structural-rerank.ts'), 'utf8');
     const service = await readFile(

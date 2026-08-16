@@ -153,6 +153,8 @@ export interface StructuralRerankerInput {
  *     not a penalty.
  *   - A different `problem_domain` does not disqualify a candidate.
  *   - An empty dimension on either side is neutral, not evidence of anything.
+ *     This one is enforced: naming a dimension that is empty on either side is
+ *     refused, because there was nothing there to be alike in.
  *   - No tool use, no external action, structured output only.
  */
 export interface StructuralReranker {
@@ -305,6 +307,35 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Whether a dimension had anything on both sides to compare.
+ *
+ * A machine check on availability, not on agreement. Whether two symptom
+ * descriptions really describe the same symptom is the judgement this stage
+ * asks a model for; re-deciding it here with string comparison would be the
+ * arithmetic that was measured and rejected, arriving through the back door as
+ * a validation rule. So no text is compared and no overlap is required — only
+ * that the dimension was not empty on one side or the other.
+ *
+ * That distinction is worth being precise about because the failure it
+ * prevents is specific. An empty `successful_directions` means the record does
+ * not support a claim, usually because the Problem was never carried to
+ * VERIFIED. A model naming it as evidence of similarity would be reporting
+ * that two Problems are alike in a respect where at least one of them says
+ * nothing at all — and a reader would have no way to tell that from a real
+ * match. The same holds for every other list, and for a null `problem_domain`.
+ */
+function comparisonMaterialExists(
+  dimension: StructuralComparisonDimension,
+  current: StructuralFeatures,
+  candidate: StructuralFeatures,
+): boolean {
+  if (dimension === 'problem_domain') {
+    return current.problem_domain !== null && candidate.problem_domain !== null;
+  }
+  return current[dimension].length > 0 && candidate[dimension].length > 0;
+}
+
+/**
  * Reads a reranker's answer, or refuses it.
  *
  * The coverage rule is the one worth explaining. Every candidate that went in
@@ -320,10 +351,19 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * answer, and a score above zero must name at least one dimension it came
  * from — a model that can rate a pair but not say in what respect they are
  * alike has not produced a structural judgement.
+ *
+ * A named dimension must also have had something on both sides to compare. See
+ * `comparisonMaterialExists`: availability is checked, agreement is not.
+ *
+ * It takes the input that was sent rather than a list of identifiers, so the
+ * answer is checked against exactly what the model was shown — the features
+ * are needed for the availability check, and deriving the expected identifiers
+ * from the same object removes the chance of validating against a set that has
+ * drifted from the one that went out.
  */
 export function parseStructuralRerankerOutput(
   output: unknown,
-  expected: readonly ProblemId[],
+  input: StructuralRerankerInput,
 ): readonly RerankedEntry[] {
   if (!isPlainObject(output)) {
     throw new InvalidStructuralRerankerOutputError('it is not an object');
@@ -339,7 +379,10 @@ export function parseStructuralRerankerOutput(
   // and every element here came from outside the process.
   const raw = output['candidates'] as unknown[];
 
-  const wanted = new Set<string>(expected);
+  const sent = new Map<string, StructuralFeatures>(
+    input.candidates.map((candidate) => [candidate.problemId, candidate.features]),
+  );
+  const wanted = new Set<string>(sent.keys());
   const seen = new Set<string>();
   const entries: RerankedEntry[] = [];
 
@@ -387,6 +430,23 @@ export function parseStructuralRerankerOutput(
       }
       if (named.has(dimension)) {
         throw new InvalidStructuralRerankerOutputError('a matched dimension appears twice');
+      }
+      const features = sent.get(problemId);
+      if (
+        features === undefined ||
+        !comparisonMaterialExists(
+          dimension as StructuralComparisonDimension,
+          input.current,
+          features,
+        )
+      ) {
+        // Empty on one side or the other, so there was nothing there to be
+        // alike in. The dimension is not named: it is this system's own
+        // vocabulary rather than model text, but an error travels and the
+        // shape of somebody's Problem is not something to put in one.
+        throw new InvalidStructuralRerankerOutputError(
+          'a matched dimension has nothing to compare',
+        );
       }
       named.add(dimension);
     }
