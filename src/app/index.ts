@@ -109,6 +109,32 @@ export {
 } from '../domain/retrieval-structural-rerank.js';
 export { parseStructuralFeatures } from '../domain/retrieval-summary.js';
 
+// The whole retrieval path as one call, with a short-lived memory of searches
+// already run. The cache holds the rerank stage's result — the output of the
+// two expensive calls — and ranking runs fresh every time, so an edit to a
+// Memory's trust, currency or suppression is reflected immediately.
+export {
+  createRetrievalSearchService,
+  InvalidRetrievalSearchError,
+  type RetrievalSearchOutcome,
+  type RetrievalSearchRequest,
+  type RetrievalSearchService,
+} from './retrieval-search-service.js';
+export {
+  createRetrievalSearchCache,
+  RETRIEVAL_SEARCH_CACHE_MAX_ENTRIES,
+  RETRIEVAL_SEARCH_CACHE_TTL_MS,
+  type Clock,
+  type RetrievalSearchCache,
+} from './retrieval-search-cache.js';
+export {
+  computeRetrievalSearchCacheKey,
+  copyStructuralRerankResult,
+  RETRIEVAL_SEARCH_CACHE_KEY_PREFIX,
+  type RetrievalSearchCacheEntry,
+  type RetrievalSearchCacheKeyInput,
+} from '../domain/retrieval-search-cache.js';
+
 // Ranking: what order the survivors are offered in. Deterministic — every
 // input is a stored control, so there is no model here and nothing leaves the
 // process.
@@ -132,6 +158,8 @@ export {
 
 // Hybrid candidate retrieval: both channels as one intent, fused by rank.
 // The first of the two retrieval stages; a reranker narrows what it returns.
+export { resolveHybridSearchLimit } from './retrieval-hybrid-search-service.js';
+export { resolveStructuralRerankLimit } from '../domain/retrieval-structural-rerank.js';
 export {
   createRetrievalHybridSearchService,
   type HybridSearchRequest,

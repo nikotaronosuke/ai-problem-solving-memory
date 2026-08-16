@@ -270,18 +270,7 @@ export function resolveStructuralRerankRequest(
     }
   }
 
-  const limit = request.limit;
-  if (limit !== undefined) {
-    if (!Number.isInteger(limit)) {
-      throw new InvalidStructuralRerankError('limit', 'it is not a whole number');
-    }
-    if (limit < MIN_STRUCTURAL_RERANK_LIMIT || limit > MAX_STRUCTURAL_RERANK_LIMIT) {
-      throw new InvalidStructuralRerankError(
-        'limit',
-        `it is outside ${String(MIN_STRUCTURAL_RERANK_LIMIT)} to ${String(MAX_STRUCTURAL_RERANK_LIMIT)}`,
-      );
-    }
-  }
+  const limit = resolveStructuralRerankLimit(request.limit);
 
   // The Problem being worked on is not a memory of a past problem.
   const candidates =
@@ -289,11 +278,31 @@ export function resolveStructuralRerankRequest(
       ? candidateList
       : candidateList.filter((candidate) => candidate.problemId !== request.excludeProblemId);
 
-  return {
-    currentFeatures,
-    candidates,
-    limit: limit ?? DEFAULT_STRUCTURAL_RERANK_LIMIT,
-  };
+  return { currentFeatures, candidates, limit };
+}
+
+/**
+ * The cut this stage will actually apply.
+ *
+ * Exported because a caller composing the stages needs the *effective* value
+ * rather than the one that was typed: asking for five and not asking at all
+ * are the same search. Pure, and unchanged in behaviour from when it was
+ * inlined above.
+ */
+export function resolveStructuralRerankLimit(limit: number | undefined): number {
+  if (limit === undefined) {
+    return DEFAULT_STRUCTURAL_RERANK_LIMIT;
+  }
+  if (!Number.isInteger(limit)) {
+    throw new InvalidStructuralRerankError('limit', 'it is not a whole number');
+  }
+  if (limit < MIN_STRUCTURAL_RERANK_LIMIT || limit > MAX_STRUCTURAL_RERANK_LIMIT) {
+    throw new InvalidStructuralRerankError(
+      'limit',
+      `it is outside ${String(MIN_STRUCTURAL_RERANK_LIMIT)} to ${String(MAX_STRUCTURAL_RERANK_LIMIT)}`,
+    );
+  }
+  return limit;
 }
 
 interface RerankedEntry {
