@@ -40,10 +40,17 @@
  * have not been through this system's write checks — the caller's profile, and
  * features read back out of storage — and this is the boundary where they
  * would leave the process.
+ *
+ * **A hybrid rank is provenance, not an index.** It says where the first stage
+ * put a candidate, so it survives the re-read: if the second of three
+ * candidates has been deleted, the third is still rank 3. Renumbering what
+ * survived would quietly rewrite the earlier stage's answer, and would hide
+ * the gap that says something disappeared between the stages.
  */
 
 import type { ProblemId } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
+import type { HybridCandidate } from '../domain/retrieval-hybrid-search.js';
 import {
   MAX_STRUCTURAL_RERANK_CANDIDATES,
   orderStructuralCandidates,
@@ -55,6 +62,7 @@ import {
   type StructuralRerankStatus,
   type StructuralReranker,
   type StructuralRerankerCandidate,
+  type StructuralRerankerInput,
 } from '../domain/retrieval-structural-rerank.js';
 import { parseStructuralFeatures } from '../domain/retrieval-summary.js';
 import type { RetrievalStructuralReader } from '../repository/index.js';
@@ -89,19 +97,35 @@ const INSPECTION_SITE = [
   { kind: 'argument', index: 0 },
 ] as const;
 
+/**
+ * Where the first stage put each Problem, remembered before anything can
+ * disappear.
+ *
+ * `hybridRank` is provenance: it is the position the hybrid stage gave a
+ * candidate, not this stage's index into whatever survived the re-read. If a
+ * candidate is deleted between the two stages, the ranks of the ones after it
+ * stay where they were — A at 1 and C at 3, with no 2 — because renumbering
+ * would silently rewrite the earlier stage's answer and make a gap, which is a
+ * real event, invisible.
+ */
+function hybridRanks(candidates: readonly HybridCandidate[]): ReadonlyMap<ProblemId, number> {
+  return new Map(candidates.map((candidate, index) => [candidate.problemId, index + 1]));
+}
+
 /** Stage-one order, no scores, no claimed evidence. */
 function degraded(
   candidates: readonly { problemId: ProblemId; projectId: ProjectId }[],
+  ranks: ReadonlyMap<ProblemId, number>,
   limit: number,
   status: StructuralRerankStatus,
 ): StructuralRerankResult {
   return {
     candidates: candidates
-      .map((candidate, index) => ({
+      .map((candidate) => ({
         problemId: candidate.problemId,
         projectId: candidate.projectId,
         structuralScore: null,
-        hybridRank: index + 1,
+        hybridRank: ranks.get(candidate.problemId) ?? 0,
         matchedDimensions: [],
       }))
       .slice(0, limit),
@@ -132,6 +156,10 @@ export function createRetrievalStructuralRerankService(
       // neither the database nor a model.
       const resolved = resolveStructuralRerankRequest(request, parseStructuralFeatures);
 
+      // Taken from the list as it arrived, before the re-read can remove
+      // anything from it. Every rank reported below comes from here.
+      const ranks = hybridRanks(request.candidates);
+
       // One snapshot, owner-scoped, with the read control applied again.
       const rows = await reader.readStructural(
         resolved.candidates.map((candidate) => candidate.problemId),
@@ -155,7 +183,7 @@ export function createRetrievalStructuralRerankService(
       // zero have nothing to compare; either way a model call would buy an
       // ordering that already exists.
       if (present.length <= 1) {
-        return degraded(present, resolved.limit, 'NOT_NEEDED');
+        return degraded(present, ranks, resolved.limit, 'NOT_NEEDED');
       }
 
       let rerankerCandidates: StructuralRerankerCandidate[];
@@ -170,55 +198,54 @@ export function createRetrievalStructuralRerankService(
         // it dissimilar, and sending the rest would compare against a set
         // quietly missing a member. The candidates are all still returned —
         // there is nothing wrong with the Problems — in stage-one order.
-        return degraded(present, resolved.limit, 'STRUCTURAL_DATA_UNAVAILABLE');
+        return degraded(present, ranks, resolved.limit, 'STRUCTURAL_DATA_UNAVAILABLE');
       }
+
+      // Assembled once and used three times: inspected, sent, and validated
+      // against. Rebuilding it for the check would leave room for the thing
+      // checked and the thing sent to drift apart.
+      const rerankerInput: StructuralRerankerInput = {
+        current: resolved.currentFeatures,
+        candidates: rerankerCandidates,
+      };
 
       // The exact payload that would cross the boundary, inspected whole:
       // every string and every key, on both sides. A confirmed credential
       // anywhere in it means the model is not called at all.
       try {
-        sanitizeValue(
-          { current: resolved.currentFeatures, candidates: rerankerCandidates },
-          inspectionPolicy,
-          [...INSPECTION_SITE],
-        );
+        sanitizeValue(rerankerInput, inspectionPolicy, [...INSPECTION_SITE]);
       } catch (error) {
         if (error instanceof SanitizationRejectedError) {
           // Which side, which candidate, which category and which value are
           // all deliberately absent from what comes back.
-          return degraded(present, resolved.limit, 'SKIPPED_SENSITIVE_INPUT');
+          return degraded(present, ranks, resolved.limit, 'SKIPPED_SENSITIVE_INPUT');
         }
         throw error;
       }
 
       let answered: unknown;
       try {
-        answered = await reranker.rerank({
-          current: resolved.currentFeatures,
-          candidates: rerankerCandidates,
-        });
+        answered = await reranker.rerank(rerankerInput);
       } catch {
         // Unreachable is infrastructure, and a Memory failure must not stop
         // ordinary work. Whatever it threw stops here.
-        return degraded(present, resolved.limit, 'RERANKER_UNAVAILABLE');
+        return degraded(present, ranks, resolved.limit, 'RERANKER_UNAVAILABLE');
       }
 
       // Malformed is a contract violation rather than an outage, so it is
-      // raised. Coverage is checked here too: every candidate back exactly
-      // once, so a model cannot apply a threshold this stage does not have.
-      const judged = parseStructuralRerankerOutput(
-        answered,
-        present.map((candidate) => candidate.problemId),
-      );
+      // raised. Checked against what was actually sent: every candidate back
+      // exactly once, so a model cannot apply a threshold this stage does not
+      // have, and every dimension it claims had something on both sides.
+      const judged = parseStructuralRerankerOutput(answered, rerankerInput);
       const scores = new Map(judged.map((entry) => [entry.problemId, entry]));
 
-      const scored: StructuralCandidate[] = present.map((candidate, index) => {
+      const scored: StructuralCandidate[] = present.map((candidate) => {
         const entry = scores.get(candidate.problemId);
         return {
           problemId: candidate.problemId,
           projectId: candidate.projectId,
           structuralScore: entry?.structuralScore ?? 0,
-          hybridRank: index + 1,
+          hybridRank: ranks.get(candidate.problemId) ?? 0,
           matchedDimensions: entry?.matchedDimensions ?? [],
         };
       });

@@ -607,9 +607,11 @@ The current profile is supplied by the caller and parsed rather than trusted; th
 
 The model sees two structural profiles and nothing else — no project, no fusion score, no ranks, no summary, no limit (D-270). Both inputs are re-inspected for credentials immediately before the call, and the policy is built inside the factory with no parameter to override it (D-271). The answer must cover every candidate exactly once, scored 0–1 with named evidence: allowing omissions would put a hidden threshold inside the model, and this stage has none on purpose (D-272). Structure decides, hybrid rank breaks ties, the limit is 1–5 defaulting to 5 (D-273). An unreachable reranker degrades with null scores; a malformed answer raises (D-274).
 
-Thirty-five discrimination mutations each killed by a named test or guard. Two survived the first run — both bounds asserted against themselves rather than their literal values — and the tests were fixed and re-run.
+Two rules were added by review after the first commit. A claimed `matchedDimension` must have had content on both sides — availability, never agreement — so an empty `successful_directions` cannot be cited as evidence that two Problems are alike, which would turn an absence of record into a positive finding (D-276). And `hybridRank` is provenance rather than an index: when a candidate disappears between the stages the survivors keep their original positions, gap and all, because renumbering would rewrite the earlier stage's answer and hide the drop (D-277).
 
-3067 tests across 101 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+Forty-two discrimination mutations each killed by a named test or guard. Three survived a first run — two bounds asserted against themselves rather than their literal values, and an identity check masked by the newer availability check — and each time the test was fixed and re-run.
+
+3081 tests across 101 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
 ### NEXT — P4-08
 

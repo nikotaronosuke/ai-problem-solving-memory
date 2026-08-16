@@ -33,6 +33,7 @@ import {
   STRUCTURAL_COMPARISON_DIMENSIONS,
   type StructuralCandidate,
   type StructuralRerankRequest,
+  type StructuralRerankerInput,
 } from '../../src/domain/retrieval-structural-rerank.js';
 import {
   parseStructuralFeatures,
@@ -259,7 +260,14 @@ describe('resolving a rerank request', () => {
 });
 
 describe('reading a reranker’s answer', () => {
-  const expected = [problem('a'), problem('b')];
+  // Everything filled in on both sides, so the availability rule is out of the
+  // way of the tests that are not about it. The rule has its own section.
+  const complete = features({ successful_directions: ['read the host at run time'] });
+  const sent = (names: readonly string[] = ['a', 'b']): StructuralRerankerInput => ({
+    current: complete,
+    candidates: names.map((name) => ({ problemId: problem(name), features: complete })),
+  });
+  const expected = sent();
   const answer = (candidates: unknown): unknown => ({ candidates });
   const entry = (name: string, score: unknown, dimensions: readonly string[]): unknown => ({
     problemId: problem(name),
@@ -353,10 +361,13 @@ describe('reading a reranker’s answer', () => {
 
     it('refuses an invented candidate even when the count comes out right', () => {
       // Substitution, not addition: two answers for two candidates, one of
-      // which was never asked about. Counting alone would let this through.
+      // which was never asked about. Counting alone would let this through —
+      // and so would the availability rule, which never sees an entry that
+      // claims nothing. The identity check is the only thing standing here,
+      // and without it an invented Problem would take a real one's place.
       expect(() =>
         parseStructuralRerankerOutput(
-          answer([entry('a', 0.5, ['symptom_patterns']), entry('z', 0.9, ['symptom_patterns'])]),
+          answer([entry('a', 0.5, ['symptom_patterns']), entry('z', 0, [])]),
           expected,
         ),
       ).toThrow(InvalidStructuralRerankerOutputError);
@@ -378,9 +389,120 @@ describe('reading a reranker’s answer', () => {
       expect(() =>
         parseStructuralRerankerOutput(
           answer([entry('a', 0.5, ['symptom_patterns']), entry('a', 0.2, ['symptom_patterns'])]),
-          [problem('a')],
+          sent(['a']),
         ),
       ).toThrow(InvalidStructuralRerankerOutputError);
+    });
+  });
+
+  describe('evidence that was there to find', () => {
+    // A machine check on availability, never on agreement. Whether two symptom
+    // descriptions really describe the same symptom is what the model is for;
+    // re-deciding it here by comparing strings would be the arithmetic that was
+    // measured and rejected, arriving as a validation rule instead.
+    const claim = (name: string, dimension: string): unknown =>
+      answer(
+        ['a', 'b'].map((each) =>
+          each === name ? entry(each, 0.6, [dimension]) : entry(each, 0, []),
+        ),
+      );
+
+    const oneSided = (
+      side: 'current' | 'candidate',
+      overrides: Record<string, unknown>,
+    ): StructuralRerankerInput => ({
+      current: side === 'current' ? features(overrides) : complete,
+      candidates: [
+        {
+          problemId: problem('a'),
+          features: side === 'candidate' ? features(overrides) : complete,
+        },
+        { problemId: problem('b'), features: complete },
+      ],
+    });
+
+    it('refuses a claim on a list the current Problem left empty', () => {
+      expect(() =>
+        parseStructuralRerankerOutput(
+          claim('a', 'dead_end_directions'),
+          oneSided('current', { dead_end_directions: [] }),
+        ),
+      ).toThrow(InvalidStructuralRerankerOutputError);
+    });
+
+    it('refuses a claim on a list the candidate left empty', () => {
+      expect(() =>
+        parseStructuralRerankerOutput(
+          claim('a', 'dead_end_directions'),
+          oneSided('candidate', { dead_end_directions: [] }),
+        ),
+      ).toThrow(InvalidStructuralRerankerOutputError);
+    });
+
+    it.each([['current'], ['candidate']] as const)(
+      'refuses a problem domain claim when the %s side has none',
+      (side) => {
+        expect(() =>
+          parseStructuralRerankerOutput(
+            claim('a', 'problem_domain'),
+            oneSided(side, { problem_domain: null }),
+          ),
+        ).toThrow(InvalidStructuralRerankerOutputError);
+      },
+    );
+
+    it('refuses successful directions as evidence when neither side has any', () => {
+      // The case this rule exists for. An empty `successful_directions` means
+      // the record does not support a claim — usually because the Problem was
+      // never carried to VERIFIED — so naming it as a match would report two
+      // Problems as alike in a respect where both of them say nothing.
+      const neither: StructuralRerankerInput = {
+        current: features(),
+        candidates: [
+          { problemId: problem('a'), features: features() },
+          { problemId: problem('b'), features: features() },
+        ],
+      };
+      expect(features().successful_directions).toEqual([]);
+      expect(() =>
+        parseStructuralRerankerOutput(claim('a', 'successful_directions'), neither),
+      ).toThrow(InvalidStructuralRerankerOutputError);
+    });
+
+    it('accepts a claim whenever both sides have something, however unalike', () => {
+      // No text comparison and no overlap requirement: two entirely different
+      // sentences are a judgement the model is entitled to make, and this code
+      // is not entitled to overrule it.
+      const bothFilled: StructuralRerankerInput = {
+        current: features({ dead_end_directions: ['raising the timeout'] }),
+        candidates: [
+          {
+            problemId: problem('a'),
+            features: features({ dead_end_directions: ['rewriting the reducer'] }),
+          },
+          { problemId: problem('b'), features: complete },
+        ],
+      };
+      const parsed = parseStructuralRerankerOutput(claim('a', 'dead_end_directions'), bothFilled);
+      expect(parsed[0]?.matchedDimensions).toEqual(['dead_end_directions']);
+    });
+
+    it('judges availability per candidate, not across the set', () => {
+      // The candidate with material may claim; the one without may not, and
+      // one of them being fine does not license the other.
+      const mixed: StructuralRerankerInput = {
+        current: complete,
+        candidates: [
+          { problemId: problem('a'), features: complete },
+          { problemId: problem('b'), features: features({ environment_facts: [] }) },
+        ],
+      };
+      expect(() =>
+        parseStructuralRerankerOutput(claim('a', 'environment_facts'), mixed),
+      ).not.toThrow();
+      expect(() => parseStructuralRerankerOutput(claim('b', 'environment_facts'), mixed)).toThrow(
+        InvalidStructuralRerankerOutputError,
+      );
     });
   });
 

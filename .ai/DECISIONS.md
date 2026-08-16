@@ -2604,3 +2604,27 @@ Not built: ranking. No confidence, freshness, recency, suppression, importance o
 Thirty-five discrimination mutations, each killed by a named test or guard. Two survived the first run — both because a bound had been asserted against itself rather than against its literal value — and the tests were fixed and re-run rather than the mutations dropped.
 
 P4-07 is done. P4-08 is NOT STARTED.
+
+## D-276 — A claimed dimension must have had something on both sides (P4-07, after review)
+
+D-272 checked that a named dimension is one of the seven, is not repeated, and agrees with the score. It did not check that the dimension had **anything in it** on either side. A reranker could therefore report two Problems as alike in their `successful_directions` when both lists were empty, and a reader would have no way to tell that from a real match.
+
+`successful_directions` is the case that makes this concrete, and it is the one the whole design has been careful about elsewhere. An empty list means the record does not support a claim — usually because the Problem was never carried to VERIFIED (D-221) — and never that a fix failed. Letting it be cited as evidence of similarity turns an absence of record into a positive finding, which is the specific misreading this system exists to avoid.
+
+So: for the six lists, both the current profile's list and that candidate's list must be non-empty; for `problem_domain`, neither side may be null. Otherwise `InvalidStructuralRerankerOutputError`. Judged per candidate, not across the set — one candidate having material does not license another that has none.
+
+**Availability, never agreement.** No text is compared, no overlap is required, and two entirely different sentences in the same dimension are an acceptable claim. Deciding whether they *really* match by comparing strings would be exactly the arithmetic D-265 measured and rejected, arriving through the back door as a validation rule; it would also overrule the model on the one question it was asked. A guard reads the helper's body and fails if it grows a comparison.
+
+The parser now takes the input that was sent rather than a list of identifiers. The features are needed for the check, and deriving the expected identifiers from the same object removes any chance of validating against a set that has drifted from the one that went out.
+
+One consequence found by mutation testing rather than by reading: with the availability check in place, an invented identifier that *claims* a dimension is caught by the new rule instead of the identity rule, which made the identity rule look untested. An invented identifier that claims nothing is caught by neither unless the identity check is there, so that is the case the test now uses. The hole was in the test, and the mutation is what showed it.
+
+## D-277 — A hybrid rank is provenance, so it survives a candidate disappearing (P4-07, after review)
+
+`hybridRank` was being taken from the position in the surviving list after the re-read. That is an index, and this field is not an index — it is where the hybrid stage put the candidate.
+
+The two only differ when something disappears between the stages, which is exactly when the difference matters. Given A, B, C and a B that has been deleted, renumbering yields A=1, C=2: the earlier stage's answer quietly rewritten, and no sign that anything was lost. Preserving the position yields A=1, C=3, and the gap is the one visible trace that a candidate was dropped by the owner, read control, deletion or a missing artifact.
+
+The ranks are taken from the candidate list as it arrived, before the batch read runs, and every path reports from that map — `USED` and all four degraded statuses alike. Relative ordering is unchanged: the rank is still an ascending tie-break under the structural score, and gaps do not disturb it.
+
+Seven further mutations, each killed by a named test or guard: the availability check removed, each side of it removed in turn, `successful_directions` exempted, and the ranks renumbered on the judged path, on the degraded path, and by being read after the re-read instead of before.
