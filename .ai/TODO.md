@@ -651,9 +651,27 @@ Thirty-seven discrimination mutations each killed by a named test or guard. Four
 
 3272 tests across 105 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-10 Search usage logging
+### P4-10 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. `RetrievalSearchService.search` is the one entry point a log would be written from, and nothing on the retrieval path writes anything today. A query must never reach a log (D-238, D-298).
+Search usage logging: a completed search records that each Memory it surfaced was surfaced.
+
+**One action, because a search observes one** (D-299). `SEARCHED` and nothing else. A candidate dropped by the hybrid or rerank stage is not `EXCLUDED` — that means considered and set aside, not narrowed out of a window — and returning a result is not `REFERENCED`. The four other actions stay with the explicit path an adapter uses when it actually sees them.
+
+Rows are the final candidates only, one each; a search that surfaced nothing writes nothing, because a row needs a Memory to point at and inventing one would record a use that never happened (D-300). A degraded search that still surfaced Memories is recorded — cache eligibility and log eligibility are different questions (D-301). A reused search writes fresh rows from the ranking produced now, never from the cached rerank, so a Memory since deleted is not resurrected into an audit trail (D-302).
+
+Who searched arrives as invocation context rather than in the request, and is deliberately **not** part of what makes a search the same search — so one assistant's result serves another while each is recorded under its own name (D-303).
+
+The reason is composed by the server in one fixed shape from rank, Project relation, both channel statuses and comparison dimensions. No score, no trust controls, no identifiers, no technology label; `comparison_dimensions` is worded neutrally because the rerank guarantees content on both sides, not agreement (D-304). `result` is null.
+
+A narrow writer with no field for a query or a profile, writing through the sanitized repository inside one transaction that wraps the rows and nothing else (D-305). Failure is best effort and never silent: a required reporter with no default receives a kind and a count (D-306). The cache is filled before the log, so a lost line cannot discard a reusable result (D-307).
+
+Twenty-three discrimination mutations each killed by a named test or guard. Eight survived a first run — five stale anchors, two defence-in-depth checks each hidden by the other, one mutation that left the original call behind — and each was fixed rather than accepted.
+
+3329 tests across 106 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-11 Current-environment revalidation contract
+
+**NOT STARTED.** See the private Phase 4 breakdown. Search results carry identifiers and provenance and no Memory content; `freshness` is ranked on and reported but says nothing about what to re-check (D-284, D-308).
 
 ## BLOCKED
 

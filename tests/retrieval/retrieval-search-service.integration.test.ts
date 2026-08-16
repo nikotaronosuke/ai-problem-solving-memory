@@ -36,16 +36,23 @@ import {
   createRetrievalSearchCache,
   createRetrievalSearchService,
   createRetrievalStructuralRerankService,
+  createRetrievalUsageLogWriter,
   createRetrievalVectorSearchService,
   InvalidRetrievalSearchError,
+  type AuthenticatedRequestContext,
   type RetrievalSearchCache,
   type RetrievalSearchOutcome,
   type RetrievalSearchService,
+  type RetrievalUsageLogFailure,
+  type RetrievalUsageLogFailureReporter,
+  type RetrievalUsageLogWriter,
 } from '../../src/app/index.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
 import { resolveDatabaseConfig } from '../../src/db/config.js';
 import { insertOwnerIfAbsent } from '../../src/db/owners.js';
 import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
+import { createTransactionRunner } from '../../src/db/transaction.js';
+import type { ClientId } from '../../src/domain/client.js';
 import type { ClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerContext, type OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
@@ -164,11 +171,50 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
     };
   }
 
+  /**
+   * The request context a writer is built from, assembled exactly as the
+   * server assembles it — same sanitized repository, same transaction runner.
+   */
+  function requestContextFor(owner: Actor): AuthenticatedRequestContext {
+    const runner = createTransactionRunner(pool);
+    return {
+      clientId: 'fixture-client' as ClientId,
+      repository: owner.memory,
+      retrievalArtifacts: owner.artifacts,
+      runInTransaction: (work) =>
+        runner.run((transactional) =>
+          work(
+            withSanitization(
+              createMemoryRepository(transactional, owner.context),
+              createSecretDetectionPolicy(),
+            ),
+          ),
+        ),
+    };
+  }
+
+  /** A reporter that keeps what it was told, so silence can be asserted. */
+  function recordingReporter(): RetrievalUsageLogFailureReporter & {
+    failures: RetrievalUsageLogFailure[];
+  } {
+    const failures: RetrievalUsageLogFailure[] = [];
+    return {
+      failures,
+      report(failure) {
+        failures.push(failure);
+      },
+    };
+  }
+
   function serviceFor(
     owner: Actor,
     cache: RetrievalSearchCache,
     embedding: EmbeddingProvider,
     rerankerPort: StructuralReranker,
+    options: {
+      readonly writer?: RetrievalUsageLogWriter;
+      readonly reporter?: RetrievalUsageLogFailureReporter;
+    } = {},
   ): RetrievalSearchService {
     return createRetrievalSearchService(
       createRetrievalSummarySourceReader(pool, owner.context),
@@ -185,7 +231,37 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       ),
       createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
       cache,
+      options.writer ?? createRetrievalUsageLogWriter(requestContextFor(owner)),
+      options.reporter ?? recordingReporter(),
     );
+  }
+
+  /** Every usage log this owner has, oldest first, across all Problems. */
+  async function usageLogsOf(ownerId: OwnerId): Promise<
+    {
+      problem_id: string;
+      memory_id: string;
+      action: string;
+      source_ai: string;
+      reason: string;
+      result: string | null;
+    }[]
+  > {
+    const rows = await pool.query<{
+      problem_id: string;
+      memory_id: string;
+      action: string;
+      source_ai: string;
+      reason: string;
+      result: string | null;
+    }>(
+      `select problem_id, memory_id, action, source_ai, reason, result
+         from public.usage_logs
+        where owner_id = $1
+        order by created_at asc, usage_log_id asc`,
+      [ownerId],
+    );
+    return rows.rows;
   }
 
   /** A Problem, and optionally an artifact making it findable. */
@@ -264,19 +340,32 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
     return { current, candidate, other };
   }
 
+  const SOURCE_AI = 'fixture-assistant';
+
   const searchFor = async (
     service: RetrievalSearchService,
     currentProblemId: ProblemId,
     overrides: Record<string, unknown> = {},
+    sourceAi: string = SOURCE_AI,
   ): Promise<RetrievalSearchOutcome> =>
-    service.search({
-      currentProblemId,
-      lexicalText: 'deployment',
-      semanticText: 'the app works locally but fails once deployed',
-      currentFeatures: features(),
-      ...overrides,
-    });
+    service.search(
+      {
+        currentProblemId,
+        lexicalText: 'deployment',
+        semanticText: 'the app works locally but fails once deployed',
+        currentFeatures: features(),
+        ...overrides,
+      },
+      { sourceAi },
+    );
 
+  /**
+   * Everything a search must leave untouched.
+   *
+   * `usage_logs` is deliberately absent: recording that a Memory surfaced is
+   * this stage's one write, and it has its own assertions. Every other table
+   * has to come back byte-identical.
+   */
   async function everythingStored(ownerId: OwnerId): Promise<string> {
     const dumps: string[] = [];
     for (const table of [
@@ -286,7 +375,6 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       'events',
       'verifications',
       'relations',
-      'usage_logs',
       'change_logs',
       'retrieval_artifacts',
     ]) {
@@ -354,6 +442,38 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
           ),
           createRetrievalRankingService(createRetrievalRankingReader(pool, stranger.context)),
           createRetrievalSearchCache(),
+          createRetrievalUsageLogWriter(requestContextFor(stranger)),
+          recordingReporter(),
+        ),
+      ).toThrow();
+    });
+
+    it('refuses a writer belonging to a different owner', async () => {
+      const owner = await makeActor();
+      const stranger = await makeActor();
+
+      // Only the writer is foreign here. Every other stage checks its own
+      // owner, so this is the case that proves the writer is checked too —
+      // and a row recorded against the wrong owner is a false statement about
+      // who searched what.
+      expect(() =>
+        createRetrievalSearchService(
+          createRetrievalSummarySourceReader(pool, owner.context),
+          createRetrievalHybridSearchService(
+            createRetrievalSearchReader(pool, owner.context),
+            createRetrievalVectorSearchService(
+              provider(),
+              createRetrievalVectorSearchReader(pool, owner.context),
+            ),
+          ),
+          createRetrievalStructuralRerankService(
+            createRetrievalStructuralReader(pool, owner.context),
+            reranker(),
+          ),
+          createRetrievalRankingService(createRetrievalRankingReader(pool, owner.context)),
+          createRetrievalSearchCache(),
+          createRetrievalUsageLogWriter(requestContextFor(stranger)),
+          recordingReporter(),
         ),
       ).toThrow();
     });
@@ -378,6 +498,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
           ),
           createRetrievalRankingService(createRetrievalRankingReader(pool, stranger.context)),
           createRetrievalSearchCache(),
+          createRetrievalUsageLogWriter(requestContextFor(stranger)),
+          recordingReporter(),
         );
       } catch (error) {
         raised = error;
@@ -961,11 +1083,484 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
     });
   });
 
-  describe('what it stores', () => {
-    it('writes nothing, on any outcome', async () => {
+  describe('recording what was surfaced', () => {
+    it('writes one SEARCHED row per Memory the search offered', async () => {
       const owner = await makeActor();
-      const current = await seed(owner);
+      const { current, candidate, other } = await seedSearchable(owner);
+      const reporter = recordingReporter();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker(), {
+        reporter,
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+
+      const logs = await usageLogsOf(owner.ownerId);
+      expect(logs).toHaveLength(2);
+      for (const log of logs) {
+        expect(log.action).toBe('SEARCHED');
+        // The Problem being worked on, and the Memory that surfaced for it.
+        expect(log.problem_id).toBe(current.problemId);
+        expect(log.source_ai).toBe(SOURCE_AI);
+        // A Memory just found has no outcome yet, and the search's own
+        // success is not the Memory's.
+        expect(log.result).toBeNull();
+        expect(log.reason.trim()).not.toBe('');
+      }
+      expect(logs.map((log) => log.memory_id).sort()).toEqual(
+        [candidate.problemId, other.problemId].sort(),
+      );
+      expect(reporter.failures).toEqual([]);
+    });
+
+    it('records the position and origin the search actually reported', async () => {
+      const owner = await makeActor();
+      const current = await seed(owner, { platform: 'react' });
+      const elsewhere = await seed(owner, { platform: 'react' });
       await seed(owner, { projectId: current.projectId });
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+
+      const logs = await usageLogsOf(owner.ownerId);
+      for (const surfaced of outcome.candidates) {
+        const log = logs.find((entry) => entry.memory_id === surfaced.problemId);
+        expect(log?.reason).toContain(`ranking_rank=${String(surfaced.rankingRank)};`);
+        expect(log?.reason).toContain(`project_relation=${surfaced.projectRelation};`);
+      }
+      // The relation really is the one ranking decided, not a constant.
+      const stranger = logs.find((entry) => entry.memory_id === elsewhere.problemId);
+      expect(stranger?.reason).toContain('project_relation=SAME_TECH_OTHER_PROJECT;');
+    });
+
+    it('keeps every part of the search out of what it writes', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      // Distinctive markers in each thing a caller supplied. A query may
+      // legitimately contain credential-shaped text, and it stays safe only
+      // while it is used and discarded.
+      const marker = {
+        lexical: 'lexicalmarkerqqq',
+        semantic: 'semanticmarkerwww',
+        profile: 'profilemarkereee',
+        secret: 'API_KEY=fake-Zz8Tv4M-0123456789abcdef',
+      };
+      await searchFor(service, current.problemId, {
+        lexicalText: `deployment ${marker.lexical}`,
+        semanticText: `deployed ${marker.semantic} ${marker.secret}`,
+        currentFeatures: features({ environment_facts: [marker.profile] }),
+      });
+
+      const written = JSON.stringify(await usageLogsOf(owner.ownerId));
+      for (const absent of Object.values(marker)) {
+        expect(written.includes(absent), `a usage log carried ${absent}`).toBe(false);
+      }
+      expect(written.includes('fixture-platform'), 'a usage log carried a platform label').toBe(
+        false,
+      );
+    });
+
+    it('records nothing but SEARCHED', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      await searchFor(service, current.problemId);
+
+      // Whether anybody read a Memory, took its direction, set it aside, or
+      // changed course because of it happens somewhere a search cannot see.
+      const actions = new Set((await usageLogsOf(owner.ownerId)).map((log) => log.action));
+      expect([...actions]).toEqual(['SEARCHED']);
+    });
+
+    it('attributes the search to whoever ran it', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      await searchFor(service, current.problemId, {}, '  codex-cli  ');
+
+      // Trimmed by the same rule the usage log itself applies.
+      expect((await usageLogsOf(owner.ownerId))[0]?.source_ai).toBe('codex-cli');
+    });
+
+    it('refuses a search that could never be attributed, before anything runs', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port);
+
+      await expect(searchFor(service, current.problemId, {}, '   ')).rejects.toBeInstanceOf(
+        InvalidRetrievalSearchError,
+      );
+      expect(embedding.calls).toBe(0);
+      expect(port.calls).toBe(0);
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
+    const silentOutcomes: [string, (owner: Actor) => Promise<ProblemId>][] = [
+      [
+        'the Problem being worked on cannot be read',
+        () => Promise.resolve(randomUUID() as ProblemId),
+      ],
+    ];
+
+    it.each(silentOutcomes)('records nothing when %s', async (_label, problemFor) => {
+      const owner = await makeActor();
+      await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      await searchFor(service, await problemFor(owner));
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
+    it('records nothing when reading is switched off for the Problem', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const problem = await owner.memory.getProblem(current.problemId);
+      await owner.memory.updateProblem(current.problemId, problem?.version ?? 0, {
+        memoryReadEnabled: false,
+      });
+
+      expect(await searchFor(service, current.problemId)).toEqual({ kind: 'MEMORY_READ_DISABLED' });
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
+    it('records nothing when the Problem changed while the search ran', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const port = reranker(async (input) => {
+        await owner.memory.appendEvent({
+          problemId: current.problemId,
+          eventType: 'DISCOVERY',
+          summary: 'found while the search was running',
+          clientEventId: randomUUID() as ClientEventId,
+        });
+        return {
+          candidates: input.candidates.map((entry) => ({
+            problemId: entry.problemId,
+            structuralScore: 0.5,
+            matchedDimensions: ['symptom_patterns'],
+          })),
+        };
+      });
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), port);
+
+      expect(await searchFor(service, current.problemId)).toEqual({
+        kind: 'CURRENT_SOURCE_CHANGED',
+      });
+      // No candidates were returned, so nothing was surfaced to record.
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
+    it('records nothing when the search itself failed', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const port = reranker(() => ({ candidates: 'not an answer' }));
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), port);
+
+      await expect(searchFor(service, current.problemId)).rejects.toThrow();
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
+    it('records nothing when the search surfaced nothing', async () => {
+      const owner = await makeActor();
+      const current = await seed(owner, { withArtifact: false });
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+      if (outcome.kind === 'SEARCHED') {
+        expect(outcome.candidates).toHaveLength(0);
+      }
+      // A row needs a Memory to point at, and there is none. That a search ran
+      // at all is a different question from this table's.
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
+    it('does not ask the writer to record a search that surfaced nothing', async () => {
+      const owner = await makeActor();
+      const current = await seed(owner, { withArtifact: false });
+      const real = createRetrievalUsageLogWriter(requestContextFor(owner));
+      let calls = 0;
+      const counting: RetrievalUsageLogWriter = {
+        ownerId: real.ownerId,
+        recordSearched: (input) => {
+          calls += 1;
+          return real.recordSearched(input);
+        },
+      };
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker(), {
+        writer: counting,
+      });
+
+      await searchFor(service, current.problemId);
+
+      // The search decides there is nothing to record rather than handing an
+      // empty list on and relying on the writer to notice.
+      expect(calls).toBe(0);
+    });
+
+    it('writes nothing for an empty list, asked directly', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const writer = createRetrievalUsageLogWriter(requestContextFor(owner));
+
+      // Straight at the writer, past the search's own check. The two
+      // guarantees are separate on purpose: the writer is exported and
+      // callable, and a row pointing at the Problem being worked on — the only
+      // identifier to hand — would record a use that never happened.
+      await writer.recordSearched({
+        currentProblemId: current.problemId,
+        sourceAi: SOURCE_AI,
+        candidates: [],
+        semanticStatus: 'USED',
+        structuralStatus: 'USED',
+      });
+
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
+    it('records a degraded search that still surfaced something', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const failing = provider(() => {
+        throw new EmbeddingGenerationFailedError();
+      });
+      const service = serviceFor(owner, createRetrievalSearchCache(), failing, reranker());
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+      expect(outcome.semanticStatus).toBe('PROVIDER_UNAVAILABLE');
+
+      // Not worth caching, and still true: those Memories were offered.
+      const logs = await usageLogsOf(owner.ownerId);
+      expect(logs.length).toBe(outcome.candidates.length);
+      expect(logs.length).toBeGreaterThan(0);
+      expect(logs[0]?.reason).toContain('semantic_status=PROVIDER_UNAVAILABLE;');
+    });
+
+    it('records a search whose reranker was unreachable, claiming nothing structural', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const port = reranker(() => {
+        throw new Error('the reranker is unreachable');
+      });
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), port);
+
+      const outcome = await searchFor(service, current.problemId);
+      if (outcome.kind !== 'SEARCHED') {
+        return;
+      }
+      expect(outcome.structuralStatus).toBe('RERANKER_UNAVAILABLE');
+
+      const logs = await usageLogsOf(owner.ownerId);
+      expect(logs.length).toBe(outcome.candidates.length);
+      expect(logs[0]?.reason).toContain('structural_status=RERANKER_UNAVAILABLE;');
+      expect(logs[0]?.reason).toContain('comparison_dimensions=none.');
+    });
+
+    it('records a second observation when a search is reused', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const embedding = provider();
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), embedding, port);
+
+      await searchFor(service, current.problemId);
+      const afterFirst = await usageLogsOf(owner.ownerId);
+
+      await searchFor(service, current.problemId);
+      const afterSecond = await usageLogsOf(owner.ownerId);
+
+      // Nothing expensive re-ran, and the same Memories were offered again to
+      // whoever asked — which is a second observation, not a repeat of one.
+      expect(embedding.calls).toBe(1);
+      expect(port.calls).toBe(1);
+      expect(afterSecond).toHaveLength(afterFirst.length * 2);
+    });
+
+    it('attributes a reused search to whoever reused it', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), port);
+
+      await searchFor(service, current.problemId, {}, 'assistant-one');
+      await searchFor(service, current.problemId, {}, 'assistant-two');
+
+      // Who is searching is not part of what makes a search the same search,
+      // so one assistant's result serves another — and each is recorded under
+      // its own name.
+      expect(port.calls).toBe(1);
+      const sources = new Set((await usageLogsOf(owner.ownerId)).map((log) => log.source_ai));
+      expect([...sources].sort()).toEqual(['assistant-one', 'assistant-two']);
+    });
+
+    it('records the Memories offered now, not the ones the cache remembers', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), port);
+
+      await searchFor(service, current.problemId);
+      const problem = await owner.memory.getProblem(candidate.problemId);
+      await owner.memory.deleteProblem(candidate.problemId, problem?.version ?? 0);
+
+      // Deleting the Problem removed its earlier rows too, so what is left is
+      // only what the second, reused search offered.
+      await searchFor(service, current.problemId);
+      const logs = await usageLogsOf(owner.ownerId);
+
+      expect(port.calls).toBe(1);
+      expect(logs.map((log) => log.memory_id)).not.toContain(candidate.problemId);
+      expect(logs.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('when the record cannot be written', () => {
+    /** A writer that fails, without touching the database. */
+    function failingWriter(owner: Actor): RetrievalUsageLogWriter {
+      return {
+        ownerId: owner.ownerId,
+        recordSearched: () => Promise.reject(new Error('the usage log could not be written')),
+      };
+    }
+
+    it('still answers the search', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const reporter = recordingReporter();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker(), {
+        writer: failingWriter(owner),
+        reporter,
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+
+      // A Memory failure must not stop ordinary work, and the caller is
+      // holding an answer that cost two network calls.
+      expect(outcome.kind).toBe('SEARCHED');
+      if (outcome.kind === 'SEARCHED') {
+        expect(outcome.candidates.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('says so, exactly once, in terms that carry nothing', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const reporter = recordingReporter();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker(), {
+        writer: failingWriter(owner),
+        reporter,
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+      const surfaced = outcome.kind === 'SEARCHED' ? outcome.candidates.length : 0;
+
+      expect(reporter.failures).toEqual([
+        { kind: 'SEARCH_USAGE_LOG_WRITE_FAILED', attemptedRows: surfaced },
+      ]);
+      // Two keys, and both are values this code chose. Not the driver's
+      // message, not who was searching, not which Problem or Memory.
+      expect(Object.keys(reporter.failures[0] ?? {}).sort()).toEqual(['attemptedRows', 'kind']);
+      const reported = JSON.stringify(reporter.failures);
+      for (const absent of [owner.ownerId, current.problemId, SOURCE_AI, 'could not be written']) {
+        expect(reported.includes(absent), `the report carried ${absent}`).toBe(false);
+      }
+    });
+
+    it('is silent when the record was written', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const reporter = recordingReporter();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker(), {
+        reporter,
+      });
+
+      await searchFor(service, current.problemId);
+      expect(reporter.failures).toEqual([]);
+    });
+
+    it('leaves the reused search reusable', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const port = reranker();
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), port, {
+        writer: failingWriter(owner),
+        reporter: recordingReporter(),
+      });
+
+      await searchFor(service, current.problemId);
+      await searchFor(service, current.problemId);
+
+      // Reuse is a performance question and the log is an observation. A lost
+      // log line must not discard a result worth reusing.
+      expect(port.calls).toBe(1);
+    });
+
+    it('writes all of one search’s rows or none of them', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      const reporter = recordingReporter();
+      const context = requestContextFor(owner);
+
+      // Fails partway: the first row is written inside the transaction, the
+      // second raises. Two of five rows would record a search that offered
+      // fewer Memories than it did.
+      let calls = 0;
+      const halfFailing: RetrievalUsageLogWriter = {
+        ownerId: owner.ownerId,
+        recordSearched: (input) =>
+          context.runInTransaction(async (repository) => {
+            for (const surfaced of input.candidates) {
+              calls += 1;
+              if (calls === 2) {
+                throw new Error('the second row failed');
+              }
+              await repository.createUsageLog({
+                problemId: input.currentProblemId,
+                sourceAi: input.sourceAi,
+                action: 'SEARCHED',
+                memoryId: surfaced.problemId,
+                reason: 'fixture',
+                result: null,
+              });
+            }
+          }),
+      };
+
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker(), {
+        writer: halfFailing,
+        reporter,
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+      expect(outcome.kind).toBe('SEARCHED');
+      expect(calls).toBeGreaterThan(1);
+      expect(candidate.problemId).toBeDefined();
+      // Rolled back whole.
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+      expect(reporter.failures).toHaveLength(1);
+    });
+  });
+
+  describe('what it stores', () => {
+    it('changes no Memory, on any outcome', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
       const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
 
       const before = await everythingStored(owner.ownerId);
@@ -975,9 +1570,13 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       await searchFor(service, randomUUID() as ProblemId);
       await searchFor(service, current.problemId, { semanticText: SECRET_QUERY });
 
-      // A search is a read, at every stage, hit or miss. No usage log, no
-      // record of the order, nothing.
+      // The usage log grows — that is this stage's one write, and it is an
+      // observation about the search rather than a change to anything it
+      // found. Everything else is byte-identical: no Problem moved, no
+      // artifact was regenerated, no ChangeLog, no Relation, nothing cached
+      // into a table.
       expect(await everythingStored(owner.ownerId)).toBe(before);
+      expect((await usageLogsOf(owner.ownerId)).length).toBeGreaterThan(0);
     });
   });
 });
