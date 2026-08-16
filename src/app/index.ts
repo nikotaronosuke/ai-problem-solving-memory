@@ -109,6 +109,27 @@ export {
 } from '../domain/retrieval-structural-rerank.js';
 export { parseStructuralFeatures } from '../domain/retrieval-summary.js';
 
+// Ranking: what order the survivors are offered in. Deterministic — every
+// input is a stored control, so there is no model here and nothing leaves the
+// process.
+export {
+  createRetrievalRankingService,
+  type RetrievalRankingService,
+} from './retrieval-ranking-service.js';
+export {
+  classifyProjectRelation,
+  InvalidRetrievalRankingError,
+  MAX_RANKED_CANDIDATES,
+  PROJECT_RELATIONS,
+  rankCandidates,
+  resolveRetrievalRankingRequest,
+  type ProjectRelation,
+  type RankableCandidate,
+  type RankedMemoryCandidate,
+  type RetrievalRankingRequest,
+  type RetrievalRankingResult,
+} from '../domain/retrieval-ranking.js';
+
 // Hybrid candidate retrieval: both channels as one intent, fused by rank.
 // The first of the two retrieval stages; a reranker narrows what it returns.
 export {

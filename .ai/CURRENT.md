@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-16 (P4-07)
+Updated: 2026-08-16 (P4-08)
 
 ## Current phase
 
@@ -10,7 +10,7 @@ Implementation Phase 2 — Core Memory API: **COMPLETE** (P2-01 … P2-14)
 
 Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01 … P3-12)
 
-Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-07 done; P4-08 next)
+Implementation Phase 4 — Retrieval: **IN PROGRESS** (P4-01 … P4-08 done; P4-09 next)
 
 ## Source of truth
 
@@ -811,6 +811,30 @@ The second of the specification's two retrieval stages: ten-to-twenty candidates
 
 **Forty-two discrimination mutations, each killed by a named test or guard**: the schema version as a dimension, the default cut, both bounds, an unparsed caller profile, a refusal quoting the profile, duplicate candidates, unchecked fusion scores and ranks, self-exclusion removed, extra keys at both levels, omitted / invented / repeated candidates, an out-of-range score, an unknown or repeated dimension, evidence-free scoring, the tie-break and the null-score ordering, a threshold introduced, the read control and the owner filter dropped, the summary pulled into the batch read, an injectable policy, inspection removed, a credential no longer stopping the call, a candidate quietly dropped, the cross-Project invariant, a one-candidate model call, an invented degraded score, the availability check and each of its two sides, `successful_directions` exempted from it, and the ranks renumbered on the judged path, on the degraded path and by being read after the re-read. Three survived a first run — two bounds asserted against themselves rather than against their literal values, and an identity check masked by the newer availability check — and in each case the test was fixed rather than the mutation dropped.
 
+## What exists now — Ranking policy (P4-08)
+
+The last retrieval stage: what order a handful of Memories are offered in. A pure ordering function, a one-statement read, a reader and a service. No migration, no dependency, no route.
+
+**Arithmetic, not a model** (D-278). Every input is a stored control, an identifier or a number that already exists, so the boundary that puts semantic judgement behind a model and routine work in code falls exactly between P4-07 and this. No port, no network, no vendor, no privacy inspection — nothing crosses a process boundary — and therefore no degraded status of its own.
+
+**`Project.platform` is what "same technology" means, folded for case only** (D-279). The one field claiming to name a Project's technology; `repo`, `problem_domain` and `Environment.snapshot` are none of them a technology identity, and building one for a tie-break was refused. `React` matches `react`; **`Node.js` does not match `node`** and `React` does not match `React Native`, recorded as known limits. A missed match costs a tie-break, an invented one asserts a shared stack nobody claimed. Null on either side is unknown, never different.
+
+**Four exclusive relations** (D-280): current Project, same technology elsewhere, other technology, unknown technology. Exclusive by construction so proximity is never credited twice. The last two rank alike and are named apart. The raw label is read to classify and never returned.
+
+**A lexicographic tuple with no weights and no threshold** (D-281): not suppressed → currency → trust → structural score (only when the rerank ran) → proximity → hybrid position → identifier. A weighted sum was simulated and rejected: the weights are invented, and measured, a same-technology bonus of 0.86 reverses an order that 0.5 leaves alone. Nothing is removed — suppressed, invalid, conflicted and structurally-unlike candidates all come back, last.
+
+**Structure outranks proximity, and that is the specification** (D-282). Every proximity-first arrangement let a same-technology candidate scoring 0.05 beat a cross-technology one scoring 0.95 — the system's acceptance condition failing. The search order is the order the search *widens*, so it decides between equally trusted and equally similar candidates and comes to the front whenever the rerank did not run. Consequence, pinned by a fixture: 0.7 current / 0.8 same-tech / 0.95 cross-tech come back in reverse. Trust and currency still sit above structure.
+
+**A missing score is skipped, never zeroed** (D-283). `USED` means every score exists; the four degraded outcomes mean none does, and a mixture is refused rather than repaired. Mutation testing found that coercion survived every test routed through the invariant, so `rankCandidates` is now pinned directly.
+
+**No importance, no status, no clock** (D-284). Importance has no ranking rule in the specification and is a boolean; boosting `VERIFIED` would count verification twice, since confidence already reflects it; a timestamp would contradict the field that exists to say how current something is. Guards fail on all three.
+
+**Every input read from the database, in one statement** (D-285). Trust, currency, suppression and the label are never taken from the caller — they are editable, so suppressing a Problem must take effect on the next search. Owner and `memory_read_enabled` re-applied; a foreign current Project fails exactly as one that never existed; zero candidates touches the database not at all.
+
+**Two positions kept apart** (D-286): `hybridRank` keeps its gaps, `rankingRank` is this stage's contiguous final position. `matchedDimensions` and the structural status are carried unchanged and never weighed.
+
+**Forty discrimination mutations, each killed by a named test or guard**: the owner filter and read control dropped, an unscoped Project join, a timestamp pulled into the read, suppression removed / made exclusion, currency and trust dropped or reordered, invalid ranked as merely untrusted, conflicted above weak evidence, structure dropped or placed after proximity, a missing score read as zero, both tie-breaks dropped, the two positions conflated, matched dimensions counted, a magic weight, a threshold, unknown technology called same or different, case folding dropped, a substring match, the current Project double-counted, each request check disabled, caller metadata believed, a foreign Project accepted, the cross-Project invariant skipped, a vanished candidate raising, an empty ranking querying, the label returned, and the outcome dropped. Eight survived a first run — six fixtures whose expected order matched the identifier tie-break, one rule tested only through inputs another rule constrained, one stale anchor — and every one was fixed in the tests.
+
 ## What is deliberately absent
 
 Do not assume these exist, and do not add them outside the phase that owns them.
@@ -820,7 +844,11 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No delete except a Problem's. P3-05 added exactly one destructive operation; there is still no Project, Environment, Event, Verification, Relation or UsageLog delete, no Environment update, no MCP, no AI adapter, no UI
 - No concrete summary generator and no concrete embedding provider. Both are ports (D-223, D-241); no vendor SDK or HTTP client is a dependency, and no provider credential exists anywhere. A deployed server therefore still cannot generate artifacts by itself — the orchestration path exists and is proven with scripted ports (D-249)
 - No caller of the generation pipeline. Nothing invokes `generateArtifact` in production: no route, no scheduler, no backfill worker, no adapter. Who calls it, and when, is a later wiring decision (D-249)
-- No ranking policy and no search cache. Structural reranking exists and deliberately stops at structural comparison: it reads and weighs no confidence, freshness, recency, suppression, importance or project proximity, and guesses at none of them (D-263, D-275)
+- No search cache. Ranking exists and stops at ordering: it stores nothing, remembers no previous search and reuses no result (D-287). Structural reranking still weighs none of the ranking signals itself (D-263, D-275)
+- No importance, status or timestamp anywhere in ranking. Importance has no ranking rule in the specification and is a boolean; `VERIFIED` is already reflected in confidence; currency is the `freshness` field and not a clock (D-284)
+- No technology identity beyond a Project's free-form `platform` label, compared case-insensitively and exactly. No manifest parsing, framework detection, synonym table or fuzzy match — `Node.js` and `node` are different technologies to this system (D-279)
+- No ranking threshold and no ranking-time removal. Suppressed, invalid, conflicted and structurally-unlike candidates are all returned, last (D-281)
+- No presentation cut. One to five candidates come back; showing about three is an adapter's decision (D-287)
 - No concrete reranker, and no reranker identity recorded. `StructuralReranker` is a port like the other two; nothing here is persisted, so a `rerankerId` would be a field with no reader (D-266)
 - No claim that structural comparison works well. Every test scripts the reranker and proves only the orchestration around it; semantic quality is P4-14's, measured against fixtures (D-265)
 - No similarity threshold in reranking. A zero score keeps a candidate at the bottom rather than removing it, because deciding a Memory is not worth offering needs P4-08's information (D-273)
@@ -864,18 +892,17 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 
 ## Immediate objective
 
-P4-08.
+P4-09 — Search cache.
 
-**NOT STARTED.** P4-01 through P4-07 are done; nothing of P4-08 has been implemented. See the private Phase 4 breakdown for what it is.
+**NOT STARTED.** P4-01 through P4-08 are done; nothing of P4-09 has been implemented. See the private Phase 4 breakdown for what it is.
 
 Notes for whoever picks this up:
-- What arrives from P4-07 is one to five candidates with `problemId`, `projectId`, a `structuralScore` (null on every degraded path), the hybrid position and the matched dimensions. A null score means no judgement was made — never that a judgement came out low (D-274)
-- `hybridRank` is where the *first* stage put the candidate, so the sequence can have gaps: 1 and 3 with no 2 means something disappeared between the stages. It is not a position in the list being handed over (D-277)
-- A `matchedDimension` is guaranteed to have had content on both sides, and guaranteed not to have been checked for actual agreement. It says where the model looked, not that this code verified it (D-276)
-- Confidence, freshness, recency, suppression, importance and project proximity are all still absent, deliberately, and no earlier stage guesses at any of them (D-275). A ranking stage is the first place they may appear
-- The rerank status matters to ranking: `USED` means the scores are real, and the four degraded statuses mean the order is the hybrid stage's and the scores are null (D-269, D-274)
-- `successful_directions` is only ever non-empty on a Problem carried to VERIFIED by a passing Verification (D-221). Treating a Problem without them as "the fix did not work" would misread a gate as evidence
-- The v1 structural vocabulary is eight top-level keys, six of them free-form label lists (D-222, D-264)
+- The retrieval pipeline is now complete end to end and writes nothing at any stage. A cache is the first thing on this path that stores something, so what invalidates it, and who may read it back, are the questions to settle before any storage is chosen (D-230, D-240, D-287)
+- What comes out of P4-08 is zero to five `RankedMemoryCandidate`s and the structural status. A cached result would be a snapshot of controls that are all editable — trust, currency, suppression, a Project's technology label — so a cache that outlives an edit would return an order the current state does not support (D-285)
+- The specification's rule is "do not repeat the same search for the same Problem in the same understanding state", and it says re-search when the understanding changes. What counts as a changed understanding is the whole of the design question
+- No stage before this logs a search. `SEARCHED / REFERENCED / ADOPTED / EXCLUDED` exist in storage and nothing writes them; usage logging is P4-10, and a cache must not start it by accident
+- `hybridRank` keeps its gaps and `rankingRank` is contiguous — two facts, and a cache that stored one in place of the other would lose whichever it replaced (D-286)
+- A null `structuralScore` means no judgement was made, never a low one (D-283)
 
 ## Core MVP milestone
 

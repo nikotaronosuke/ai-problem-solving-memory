@@ -2404,3 +2404,286 @@ describe('structural reranking', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe('retrieval ranking', () => {
+  /** The four modules this stage is made of, comments stripped. */
+  async function rankingCode(): Promise<string> {
+    const modules = await readModules(SRC);
+    const code = modules
+      .filter((module) => module.path.includes('retrieval-ranking'))
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+    expect(code.length).toBeGreaterThan(0);
+    return code;
+  }
+
+  it('decides the order with no model, no network and nothing to send', async () => {
+    const modules = await readModules(SRC);
+    const stage = modules.filter((module) => module.path.includes('retrieval-ranking'));
+    expect(stage.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of stage) {
+      const code = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      if (/\bfetch\s*\(|node:http|node:https|undici|axios/.test(code)) {
+        offenders.push(module.path);
+      }
+      for (const specifier of importsOf(module.source)) {
+        if (/^(openai|@anthropic|@google|@mistral|cohere|@huggingface|langchain)/.test(specifier)) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // Every input is an enum, a boolean or a number that already exists, so
+    // this stage is arithmetic. That is why it has no port to be unavailable
+    // and — the reason the guard also names the policies — nothing crossing a
+    // boundary that would need inspecting.
+    const code = await rankingCode();
+    for (const absent of [
+      'Reranker',
+      'EmbeddingProvider',
+      'SummaryGenerator',
+      'sanitizeValue',
+      'InspectionPolicy',
+      'SecretDetector',
+    ]) {
+      expect(code.includes(absent), `the ranking stage reaches for ${absent}`).toBe(false);
+    }
+  });
+
+  it('reads the controls, and nothing an earlier stage owns', async () => {
+    const { RANKING_METADATA_STATEMENT } = await import('../src/db/retrieval-ranking-read.js');
+
+    // The owner and the read control are applied again: they were true when
+    // the earlier stages ran, and that is a fact about then. The join to
+    // `projects` is owner-scoped too, so a candidate cannot pick up somebody
+    // else's technology label.
+    expect(RANKING_METADATA_STATEMENT).toContain('pr.owner_id = $1');
+    expect(RANKING_METADATA_STATEMENT).toContain('cp.owner_id = $1');
+    expect(RANKING_METADATA_STATEMENT).toContain('pj.owner_id = pr.owner_id');
+    expect(RANKING_METADATA_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(RANKING_METADATA_STATEMENT).toContain('pr.problem_id = any($3::uuid[])');
+
+    // What it must not pull. Timestamps especially: currency is what
+    // `freshness` says it is, and a clock implying otherwise would be a second
+    // opinion nobody asked for.
+    for (const unused of [
+      'importance',
+      'pr.status',
+      'fix_kind',
+      'created_at',
+      'updated_at',
+      'generated_at',
+      'environment_id',
+      'retrieval_artifacts',
+      'verifications',
+      'events',
+      'relations',
+      'normalized_summary',
+      'structural_features',
+      'embedding',
+    ]) {
+      expect(RANKING_METADATA_STATEMENT.includes(unused), `the ranking read pulls ${unused}`).toBe(
+        false,
+      );
+    }
+  });
+
+  it('takes the current Project and the candidates from one snapshot', async () => {
+    const { RANKING_METADATA_STATEMENT } = await import('../src/db/retrieval-ranking-read.js');
+    const service = await readFile(join(SRC, 'app', 'retrieval-ranking-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Every field the policy reads is editable. Two statements could compare a
+    // Project's label against candidate rows that never coexisted with it.
+    expect(RANKING_METADATA_STATEMENT).toContain('union all');
+    expect((code.match(/reader\.read/g) ?? []).length).toBe(1);
+  });
+
+  it('weighs no importance, no status and no clock', async () => {
+    const code = await rankingCode();
+
+    // Importance is a separate axis the specification gives no ranking rule
+    // for; status is already reflected in confidence, and boosting VERIFIED
+    // again would count one piece of evidence twice. A timestamp would be a
+    // "newer is better" policy nobody wrote down.
+    for (const absent of [
+      'importance',
+      'VERIFIED',
+      'fixKind',
+      'createdAt',
+      'updatedAt',
+      'generatedAt',
+      'Date.now',
+      'new Date(',
+    ]) {
+      expect(code.includes(absent), `the ranking stage reads ${absent}`).toBe(false);
+    }
+  });
+
+  it('adds no score and applies no threshold', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-ranking.ts'), 'utf8');
+    const code = domain.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // A weighted sum needs an exchange rate between "verified twice" and "0.3
+    // more structurally similar", and there isn't one — so the ordering is a
+    // tuple, and the guard is that no comparison invents a number.
+    const comparator = code.slice(code.indexOf('export function rankCandidates('));
+    expect(comparator.length).toBeGreaterThan(0);
+    for (const weighting of ['weight', 'score +', '+ 0.', '* 0.', 'threshold', 'Math.']) {
+      expect(comparator.includes(weighting), `the comparator uses ${weighting}`).toBe(false);
+    }
+
+    // And the ordinals are the specification's own value sets, in its order.
+    expect(code).toContain("['HIGH', 'MEDIUM', 'LOW', 'CONFLICTED']");
+    expect(code).toContain("['CURRENT', 'STALE_UNKNOWN', 'SUPERSEDED', 'INVALID']");
+  });
+
+  it('never turns a missing structural judgement into a score', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-ranking.ts'), 'utf8');
+    const code = domain.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // The comparison step is skipped, not defaulted. A `?? 0` reachable when
+    // no rerank ran would make "nobody judged this" indistinguishable from
+    // "judged, and found nothing in common".
+    expect(code).toContain("const structureCounts = structuralStatus === 'USED'");
+    expect(code).toContain('if (structureCounts) {');
+    const comparator = code.slice(code.indexOf('export function rankCandidates('));
+    expect(
+      comparator.includes('Number(') || comparator.includes('structuralScore || '),
+      'a missing score is coerced',
+    ).toBe(false);
+  });
+
+  it('keeps the two positions apart', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-ranking.ts'), 'utf8');
+    const code = domain.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // `hybridRank` is where the first retrieval stage put a candidate and
+    // keeps its gaps; `rankingRank` is this stage's final position and is
+    // contiguous. Two facts, two fields.
+    expect(code).toContain('rankingRank: index + 1');
+    expect(code.includes('hybridRank: index'), 'the hybrid position is renumbered').toBe(false);
+  });
+
+  it('does not re-judge what the reranker judged', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-ranking.ts'), 'utf8');
+    const comparator = domain.slice(domain.indexOf('export function rankCandidates('));
+    const body = comparator.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Carried as provenance, never weighed. Counting matched dimensions would
+    // be this stage answering a semantic question it was not asked.
+    expect(body.includes('matchedDimensions'), 'the comparator reads matched dimensions').toBe(
+      false,
+    );
+  });
+
+  it('matches a technology label exactly, or not at all', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-ranking.ts'), 'utf8');
+    const helper = domain.slice(domain.indexOf('export function classifyProjectRelation('));
+    const body = helper
+      .slice(0, helper.indexOf('\n}'))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    // Case folding and nothing else. Substring, token overlap or a synonym
+    // table would be a technology-identity model invented inside a ranking
+    // function, asserting a shared stack nobody claimed.
+    expect(body).toContain('toLowerCase()');
+    for (const stretch of ['includes(', 'startsWith', 'endsWith', 'replace(', 'split(', 'match(']) {
+      expect(body.includes(stretch), `the technology match stretches with ${stretch}`).toBe(false);
+    }
+  });
+
+  it('ranks without writing, caching or logging', async () => {
+    for (const path of [
+      join(SRC, 'domain', 'retrieval-ranking.ts'),
+      join(SRC, 'db', 'retrieval-ranking-read.ts'),
+      join(SRC, 'repository', 'retrieval-ranking-reader.ts'),
+      join(SRC, 'app', 'retrieval-ranking-service.ts'),
+    ]) {
+      const source = await readFile(path, 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'createUsageLog',
+        'createChangeLog',
+        'upsertArtifact',
+        'DatabaseTransactionRunner',
+        'for update',
+        'cache',
+      ]) {
+        expect(
+          code.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} contains ${forbidden}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('leaves the later stages their own questions', async () => {
+    const code = await rankingCode();
+
+    // Currency is ranked on and reported; what to re-check about the current
+    // environment belongs to the revalidation contract. Dead ends and
+    // conflicts each have their own task, and a stage that started either
+    // would answer their questions by accident.
+    for (const later of [
+      'mustRevalidate',
+      'currentEnvironment',
+      'historicalEnvironment',
+      'deadEnd',
+      'dead_end',
+      'CONTRADICTS',
+      'conflict',
+      'suggestion',
+      'applyFix',
+      'approval',
+    ]) {
+      expect(code.includes(later), `the ranking stage already does ${later}`).toBe(false);
+    }
+  });
+
+  it('fixes the owner at construction and takes no ranking input from a caller', async () => {
+    const reader = await readFile(join(SRC, 'repository', 'retrieval-ranking-reader.ts'), 'utf8');
+    const readerCode = reader.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(readerCode).toContain('ownerId: context.ownerId');
+
+    const service = await readFile(join(SRC, 'app', 'retrieval-ranking-service.ts'), 'utf8');
+    const factory = service.slice(
+      service.indexOf('export function createRetrievalRankingService('),
+    );
+    const parameters = factory.slice(factory.indexOf('('), factory.indexOf('): RetrievalRanking'));
+    expect(parameters.includes('ownerId'), 'the factory accepts an owner id').toBe(false);
+
+    // The request carries identifiers and the structural result. Letting a
+    // caller supply trust, currency or suppression would make the ranking
+    // something a caller could arrange — and would miss a change made since
+    // the previous stage ran.
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-ranking.ts'), 'utf8');
+    const request = domain.slice(domain.indexOf('export interface RetrievalRankingRequest {'));
+    const requestBody = request.slice(0, request.indexOf('\n}'));
+    for (const supplied of ['confidence', 'freshness', 'suppressed', 'platform', 'ownerId']) {
+      expect(
+        new RegExp(`\\b${supplied}\\b`).test(requestBody),
+        `the request carries ${supplied}`,
+      ).toBe(false);
+    }
+  });
+
+  it('adds no schema of its own', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    const files = await readdir(migrations);
+
+    // Ranking reads columns that already exist.
+    for (const file of files) {
+      const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      expect(sql.includes('ranking'), `${file} was written for ranking`).toBe(false);
+    }
+  });
+});

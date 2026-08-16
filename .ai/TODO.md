@@ -613,9 +613,27 @@ Forty-two discrimination mutations each killed by a named test or guard. Three s
 
 3081 tests across 101 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-08
+### P4-08 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. What arrives from P4-07 is one to five candidates carrying a structural score that is null on every degraded path, the hybrid position and the matched dimensions; confidence, freshness, suppression, importance and project proximity are all still absent and no earlier stage guesses at any of them (D-273, D-275).
+Ranking policy: what order the surviving one-to-five candidates are offered in.
+
+Deterministic code, no model. Every input is a stored control or a number that already exists, so the boundary putting semantic judgement behind a model and routine work in code falls between P4-07 and this — no port, no network, no vendor, and nothing crossing a process boundary to inspect (D-278).
+
+"Same technology" is `Project.platform`, the one field claiming to name a Project's technology, compared case-insensitively and exactly. `React` matches `react`; `Node.js` does not match `node`. A missed match costs a tie-break; an invented one asserts a shared stack nobody claimed, and building a technology-identity model for a tie-break was refused (D-279). Null on either side is unknown, never different, and the four project relations are exclusive so proximity is never credited twice (D-280).
+
+The order is a lexicographic tuple — not suppressed → currency → trust → structural score → proximity → hybrid position → identifier — with no weights and no threshold. A weighted sum was simulated first: the weights are invented, and a same-technology bonus of 0.86 reverses an order that 0.5 leaves alone (D-281).
+
+**Structure outranks proximity, and the fixtures are why.** Every proximity-first arrangement let a same-technology candidate scoring 0.05 beat a cross-technology one scoring 0.95 — the acceptance condition for the whole system failing. The specification's search order is read as the order the search widens: it decides between equally trusted and equally similar candidates, and comes to the front whenever the rerank did not run (D-282). A missing structural score is skipped, never zeroed (D-283).
+
+No importance, no status boost, no timestamp (D-284). Every ranking input is read from the database in one statement, because all of them are editable and two reads could compare a state that never existed (D-285). Nothing is removed for ranking low, and nothing is written (D-281, D-287).
+
+Forty discrimination mutations each killed by a named test or guard. Eight survived a first run — six fixtures whose expected order coincided with the identifier tie-break, one rule tested only through inputs another rule already constrained, and one stale anchor — and each time the test was strengthened.
+
+3181 tests across 103 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
+
+### NEXT — P4-09 Search cache
+
+**NOT STARTED.** See the private Phase 4 breakdown. The retrieval pipeline is complete end to end and writes nothing; a cache is the first thing on this path that would store something, and every control a cached result depends on is editable (D-285, D-287).
 
 ## BLOCKED
 
