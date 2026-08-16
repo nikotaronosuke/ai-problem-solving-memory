@@ -3290,6 +3290,233 @@ describe('search caching', () => {
     expect(item.includes("'recordSearched'"), 'the queue replays searches').toBe(false);
   });
 
+  it('never decides whether a Memory is still true', async () => {
+    const modules = await readModules(SRC);
+    const stage = modules.filter((module) => module.path.includes('retrieval-revalidation'));
+    expect(stage.length).toBeGreaterThan(0);
+
+    const offenders: string[] = [];
+    for (const module of stage) {
+      const code = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      // The things that would settle the question — a working tree, a package
+      // manifest, a running process, a vendor's documentation — live where the
+      // work is happening. Reaching for any of them here would move a
+      // judgement to the one place that cannot make it.
+      if (/\bfetch\s*\(|node:http|node:https|node:fs|undici|axios/.test(code)) {
+        offenders.push(module.path);
+      }
+      for (const specifier of importsOf(module.source)) {
+        if (
+          /^(openai|@anthropic|@google|@mistral|cohere|langchain|node:fs|node:child_process)/.test(
+            specifier,
+          )
+        ) {
+          offenders.push(`${module.path} -> ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    const code = stage
+      .map((module) => module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''))
+      .join('\n');
+    for (const absent of [
+      'EmbeddingProvider',
+      'StructuralReranker',
+      'isStale',
+      'needsUpdate',
+      'isSafe',
+      'currentEnough',
+    ]) {
+      expect(code.includes(absent), `the revalidation stage produces ${absent}`).toBe(false);
+    }
+  });
+
+  it('takes nothing from a caller about the present', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const request = service.slice(service.indexOf('export interface RetrievalSearchRequest {'));
+    const body = request.slice(0, request.indexOf('\n}'));
+
+    // Asking a caller for the current environment would put the comparison
+    // here, where the answer cannot be checked — and the Problem's own stored
+    // snapshot is not "now" either, it is another point in the past.
+    for (const present of [
+      'currentEnvironment',
+      'currentCode',
+      'currentVersion',
+      'currentCommit',
+      'currentSpec',
+      'officialSpec',
+      'currentDocumentation',
+    ]) {
+      expect(body.includes(present), `the request accepts ${present}`).toBe(false);
+    }
+  });
+
+  it('keeps the checklist fixed and out of reach', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-revalidation.ts'), 'utf8');
+    const code = domain.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Frozen because `readonly` is gone at run time and one array is shared by
+    // every candidate of every search in the process.
+    expect(code).toContain('export const REVALIDATION_CHECKS = Object.freeze([');
+    expect(code).toContain("'CURRENT_CODE'");
+    expect(code).toContain("'CURRENT_ENVIRONMENT'");
+    expect(code).toContain("'RELEVANT_VERSION'");
+    expect(code).toContain("'OFFICIAL_SPEC'");
+
+    // And attached unconditionally. A checklist that shrank for a Memory the
+    // record calls current would turn "always re-check" into "re-check when
+    // the server is unsure", which is a much weaker promise.
+    const service = await readFile(join(SRC, 'app', 'retrieval-revalidation-service.ts'), 'utf8');
+    const serviceCode = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(serviceCode).toContain('requiredChecks: REVALIDATION_CHECKS');
+    for (const condition of ['freshness', 'confidence', 'suppressed', 'projectRelation']) {
+      expect(serviceCode.includes(condition), `the checklist depends on ${condition}`).toBe(false);
+    }
+  });
+
+  it('returns the stored snapshot without interpreting it', async () => {
+    const domain = await readFile(join(SRC, 'domain', 'retrieval-revalidation.ts'), 'utf8');
+    const context = domain.slice(domain.indexOf('export interface RevalidationContext {'));
+    const body = context.slice(0, context.indexOf('\n}'));
+
+    // Which keys a snapshot carries is not fixed, so picking values out of it
+    // would mean guessing at a schema that does not exist.
+    expect(body).toContain('historicalEnvironment: EnvironmentSnapshot');
+    for (const invented of [
+      'os:',
+      'runtime:',
+      'framework:',
+      'versions:',
+      'browser:',
+      'freshness',
+    ]) {
+      expect(body.includes(invented), `the context invents ${invented}`).toBe(false);
+    }
+  });
+
+  it('reads the checks and nothing a later task owns', async () => {
+    const { REVALIDATION_STATEMENT } = await import('../src/db/retrieval-revalidation-read.js');
+
+    // Owner and read control re-applied — what was true when ranking ran is
+    // not a filter now. The owner predicate sits in the join because a `where`
+    // on a left-joined table turns it back into an inner join.
+    expect(REVALIDATION_STATEMENT).toContain('pr.owner_id = $1');
+    expect(REVALIDATION_STATEMENT).toContain('pr.memory_read_enabled');
+    expect(REVALIDATION_STATEMENT).toContain('e.owner_id = pr.owner_id');
+    expect(REVALIDATION_STATEMENT).toContain('v.owner_id = pr.owner_id');
+    expect(REVALIDATION_STATEMENT).toContain('unnest($2::uuid[]) with ordinality');
+    expect(REVALIDATION_STATEMENT).toContain('order by requested.position asc');
+    expect(REVALIDATION_STATEMENT).toContain('v.created_at asc, v.verification_id asc');
+
+    // Left joins, so a Problem that is gone and one whose Environment is
+    // missing are distinguishable. An inner join would report the second as
+    // the first.
+    expect((REVALIDATION_STATEMENT.match(/left join/g) ?? []).length).toBe(3);
+
+    // Dead ends and conflicts each have their own task.
+    for (const later of ['public.events', 'public.relations', 'DEAD_END', 'CONTRADICTS']) {
+      expect(REVALIDATION_STATEMENT.includes(later), `the read reaches ${later}`).toBe(false);
+    }
+  });
+
+  it('raises rather than dropping a Problem with no conditions', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-revalidation-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Short results are ordinary here, so a broken database must not be able
+    // to hide inside one.
+    expect(code).toContain('found.historicalEnvironment === undefined');
+    expect(code).toContain('throw new MissingHistoricalEnvironmentError()');
+
+    const gone = code.indexOf('found === undefined');
+    const missing = code.indexOf('found.historicalEnvironment === undefined');
+    expect(gone).toBeGreaterThan(-1);
+    expect(missing).toBeGreaterThan(gone);
+  });
+
+  it('renumbers the offered positions and leaves the provenance alone', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-revalidation-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // `rankingRank` is the position in the list actually offered, so it closes
+    // up when something drops. `hybridRank` records where the first retrieval
+    // stage put it and keeps its gaps.
+    expect(code).toContain('rankingRank: offered.length + 1');
+    expect(code.includes('hybridRank:'), 'the provenance is renumbered').toBe(false);
+    // Rebuilt rather than edited, so the caller's array is not changed.
+    expect(code).toContain('...candidate,');
+    expect(code).toContain('matchedDimensions: [...candidate.matchedDimensions]');
+  });
+
+  it('enriches on every search and stores none of it', async () => {
+    const service = await readFile(join(SRC, 'app', 'retrieval-search-service.ts'), 'utf8');
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // One call inside the function both a hit and a miss go through, so a
+    // reused search gets context as fresh as a new one. A Verification on a
+    // candidate does not move the current Problem's fingerprint, so a cached
+    // enrichment would go stale without anything noticing.
+    expect((code.match(/revalidationService\.enrich\(/g) ?? []).length).toBe(1);
+    const ranked = code.indexOf('async function rankAndReport(');
+    const enriched = code.indexOf('revalidationService.enrich(');
+    expect(enriched).toBeGreaterThan(ranked);
+
+    // The cache still holds the rerank result and nothing else.
+    const key = await readFile(join(SRC, 'domain', 'retrieval-search-cache.ts'), 'utf8');
+    for (const enrichment of ['historicalEnvironment', 'evidence', 'requiredChecks']) {
+      expect(key.includes(enrichment), `the cache stores ${enrichment}`).toBe(false);
+    }
+
+    // And nothing is stored anywhere else either.
+    for (const path of [
+      join(SRC, 'domain', 'retrieval-revalidation.ts'),
+      join(SRC, 'db', 'retrieval-revalidation-read.ts'),
+      join(SRC, 'repository', 'retrieval-revalidation-reader.ts'),
+      join(SRC, 'app', 'retrieval-revalidation-service.ts'),
+    ]) {
+      const source = await readFile(path, 'utf8');
+      const stripped = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      for (const forbidden of [
+        'insert into',
+        'update public.',
+        'delete from',
+        'createUsageLog',
+        'createChangeLog',
+        'appendVerification',
+      ]) {
+        expect(
+          stripped.toLowerCase().includes(forbidden.toLowerCase()),
+          `${path} contains ${forbidden}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('leaves the ranking stage responsible for ranking only', async () => {
+    const modules = await readModules(SRC);
+    const ranking = modules.filter((module) => module.path.includes('retrieval-ranking'));
+    expect(ranking.length).toBeGreaterThan(0);
+
+    // The revalidation context hangs beside the ranking view rather than
+    // inside it, so a stage's own type does not widen every time a later task
+    // has something to add.
+    for (const module of ranking) {
+      for (const later of ['Environment', 'Verification', 'requiredChecks', 'revalidation']) {
+        expect(module.source.includes(later), `${module.path} took on ${later}`).toBe(false);
+      }
+    }
+  });
+
+  it('adds no schema for what it reads', async () => {
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    for (const file of await readdir(migrations)) {
+      const sql = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      expect(sql.includes('revalidation'), `${file} was written for revalidation`).toBe(false);
+    }
+  });
+
   it('puts no invalidation hook into the write paths', async () => {
     const modules = await readModules(SRC);
     const writers = modules.filter(
