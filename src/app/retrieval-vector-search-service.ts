@@ -42,6 +42,7 @@
  * is waiting for an answer.
  */
 
+import type { OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
 import {
@@ -82,6 +83,18 @@ export type VectorSearchOutcome =
   | { readonly kind: 'SENSITIVE_QUERY_NOT_EMBEDDED' };
 
 export interface RetrievalVectorSearchService {
+  /**
+   * The owner every search through this service is scoped to.
+   *
+   * Taken from the reader rather than accepted as an argument, so it reports
+   * the scope that actually applies instead of one somebody asserted. It is
+   * here so a composition that puts this service beside another owner's
+   * reader can be refused at construction: each channel is safe alone, and
+   * only comparing them catches a pairing that would mix two owners' Memory
+   * into one result.
+   */
+  readonly ownerId: OwnerId;
+
   /** Semantic candidates for the query, nearest first. Writes nothing. */
   search(request: VectorSearchRequest): Promise<VectorSearchOutcome>;
 }
@@ -127,6 +140,10 @@ export function createRetrievalVectorSearchService(
   const queryPolicy = createSemanticQueryInspectionPolicy();
 
   return {
+    // Derived, never a parameter: a caller able to name the owner could name
+    // the wrong one, and the reader already knows the only correct answer.
+    ownerId: reader.ownerId,
+
     async search(request): Promise<VectorSearchOutcome> {
       const query = resolveVectorSearchQuery(request);
 
