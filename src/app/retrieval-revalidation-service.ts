@@ -103,11 +103,32 @@ export function createRetrievalRevalidationService(
       }
 
       const seen = new Set<string>();
-      for (const candidate of ranked) {
+      for (const [index, candidate] of ranked.entries()) {
         if (seen.has(candidate.problemId)) {
           throw new InvalidRevalidationRequestError('candidates', 'one Problem appears twice');
         }
         seen.add(candidate.problemId);
+
+        // The array's order and each candidate's stated position have to be
+        // the same fact. Below, a candidate that drops out is renumbered from
+        // its place in the array — which is only correct if the array *was*
+        // the order, and the ranking stage produces exactly that: 1, 2, 3,
+        // with no gaps. Reordered or gapped input would be silently
+        // renumbered into something that agreed with neither, and the result
+        // would look perfectly ordinary.
+        //
+        // One comparison does all of it. The right-hand side is an integer, so
+        // anything fractional, infinite or `NaN` fails the equality on its own
+        // — a separate `Number.isInteger` could never be the reason a value
+        // was rejected, and a condition that cannot fail is one more thing to
+        // keep true for no benefit. The type is not relied on either: it is a
+        // claim about a value this function did not produce.
+        if (candidate.rankingRank !== index + 1) {
+          throw new InvalidRevalidationRequestError(
+            'candidates',
+            'their ranking positions are inconsistent',
+          );
+        }
       }
 
       if (ranked.length === 0) {
