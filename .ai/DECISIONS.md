@@ -2969,6 +2969,18 @@ Twenty-eight discrimination mutations, each killed by a named test or guard. Fou
 
 P4-11 is done. P4-12 is NOT STARTED.
 
+## D-320 — The positions given must be the order given (P4-11, after review)
+
+`enrich` checked that its input was a list, that there were at most five, and that no Problem appeared twice. It did not check that each candidate's `rankingRank` matched its place in the array — and then renumbered survivors from that place.
+
+Those two only agree because the ranking stage emits 1, 2, 3 with no gaps. That is a fact about how the stage upstream is wired today, and `enrich` is exported: called directly with `[rank 2, rank 1]` or `[rank 1, rank 3]`, it would silently renumber to 1, 2 and return something agreeing with neither the order asked for nor the positions stated. The result would look entirely ordinary, which is what makes it worth refusing.
+
+So a candidate at index *i* must state position *i + 1*, checked before the reader is called — an unusable list costs no round trip. The existing `InvalidRevalidationRequestError` carries it, with a fixed reason and no position, identifier or content echoed. Renumbering after a race drop is unchanged: 1, 2, 3 with the second Memory gone still returns 1, 2, because that rule is about the input rather than the output.
+
+**One comparison does all of it, and the redundant guard was removed rather than kept.** The first attempt also called `Number.isInteger`, and a mutation showed it could never be the reason a value was rejected: the right-hand side is an integer, so a fractional, infinite or `NaN` position already fails the equality. A condition that cannot fail is one more thing to keep true for no benefit, and a guard asserting its presence would be asserting noise. The fixture was strengthened in the same pass — 1.5 rounds to 2 and so fails any comparison, while 1.4 rounds to 1 and distinguishes "exactly the second item" from "near enough to round to it". A position is an index into a list; there is no approximately.
+
+Five further mutations, each killed by a named test or guard: the check removed, compared against a zero-based index, applied only to the first candidate, softened to rounding, and moved after the database read.
+
 ## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
 
 D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced
