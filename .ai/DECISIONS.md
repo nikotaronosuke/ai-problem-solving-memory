@@ -3194,6 +3194,87 @@ Eighty-one mutations, all killed by a named test or guard — fifty-two on behav
 
 P4-13 is done. P4-14 is NOT STARTED.
 
+## D-342 — P4-14 measures the pipeline; it changes nothing (P4-14)
+
+Thirteen tasks built the retrieval path by argument. This one runs a fixed corpus through it and records what happens, and that is the whole of its remit: `git diff -- src` is empty, and so is the diff against `package.json`, `supabase/` and the public README. No constant was retuned, no ranking rule adjusted, no provider added.
+
+The rule that made that possible was decided in advance: if a fixture grounded in the specification had failed, the answer was to stop and report it, not to edit production until the fixture went green. Nothing needed it — every scenario passed against the pipeline as committed at `726f57a` — but the rule is the reason the result means anything. A suite that may modify the thing it measures measures nothing.
+
+## D-343 — What the corpus proves, and what it cannot (P4-14)
+
+**Proves.** Given a working keyword signal, a working semantic signal and a structural judgement, the pipeline retrieves across Projects, fuses two channels, reranks on structure, applies the ranking controls, enriches with conditions, warnings and disagreements, bounds the result and reuses a repeated search — exactly as the specification describes.
+
+**Does not prove.** Anything about a real embedding model or a real reranking model. There is no vendor, no network and no credential anywhere in it. The judgement is a fixture instrument standing where a model will stand.
+
+That boundary is not a hedge, it is the honest reading of what a stand-in can establish. A green run says the pipeline carries structure correctly from an artifact to a judgement to an order. It says nothing about whether any particular model judges structure well, and P4-14 must never be cited as if it did.
+
+## D-344 — The oracle sees structure and nothing else (P4-14)
+
+A test double can always be told the answer. A reranker scoring by problem identifier would make every scenario pass while proving nothing, because no structural feature would ever have had to travel anywhere.
+
+So `FixtureStructuralOracle` is handed `StructuralRerankerInput` and reads two things from it: the current profile and each candidate's. Not the identifier, not the Project, not the rank an earlier stage assigned, and not which scenario a candidate belongs to. The identifier is echoed because the output contract is keyed by it, and is never on the path that decides a score. A test judges the same features twice under different labels and requires the same answer.
+
+Judgement is by concept, from a closed table that maps a phrase to a name. Anything absent from the table maps to itself, so the table can only ever create agreement it was told about and never invent it. The score is the number of the seven specified dimensions that agree, over seven. Empty dimensions are neutral; an environment difference is not a penalty; a differing `problem_domain` does not disqualify — the same semantics the production port documents.
+
+## D-345 — The cross-technology pair is paraphrased, and that is the point (P4-14)
+
+"configuration captured during build" and "settings frozen before the runtime starts" describe one structure with no word in common. So do the conditions, the direction that worked and the direction that did not.
+
+This is what stops the corpus being self-fulfilling. An oracle built from string equality or set intersection scores that pair at zero — which is exactly the measurement that made structural judgement a model port rather than a set operation (D-265). A baseline test asserts the paraphrasing is real: nothing shared on the four dimensions that carry the argument, and the `problem_domain` labels differ too. If somebody later "simplifies" the fixture by copying phrases across, that test fails and says why.
+
+## D-346 — Each channel is made load-bearing for exactly one scenario (P4-14)
+
+A corpus where every candidate is reachable both ways cannot show that either channel matters.
+
+The same-technology Memory is written in the query's own words and its artifact is stored under an embedding model **version the search never queries with**. Comparing across models is refused — a production rule, not a fixture one — so the semantic channel cannot see it at all, and it survives only through keyword search. The cross-technology Memory shares no vocabulary with the query and is reachable only through the vector channel. Emptying either channel drops its scenario and nothing else, which is what makes the two mutations informative rather than merely red.
+
+## D-347 — The controls run against the structure on purpose (P4-14)
+
+Seven candidates, one Project, one subject, and structural strength that runs the **opposite way** to the order they should be offered in. The strongest structural match is the one somebody suppressed. The weakest of the five survivors is the one the record calls current and trusted. Offered order is the exact reverse of structural order.
+
+That inversion is the design. A pipeline that quietly stopped consulting suppression, currency or trust would produce close to the reverse of the expected list rather than something subtly different, so the assertion cannot pass by luck. The two candidates cut from the group are current, trusted and unsuppressed — the *best* controls in it — which makes the five-candidate bound observable as its own fact rather than a side effect of ranking.
+
+No tie anywhere: every comparison is decided by a control or by a distinct structural score, never by an identifier. The lesson from P4-12's coin-flip fixture is applied at design time here.
+
+## D-348 — Eighteen mutations, and one defence-in-depth pair (P4-14)
+
+Each mutation breaks one cross-stage behaviour and requires a named scenario to fail: either channel emptied, the structural stage bypassed or inverted, the profile never reaching the judgement, proximity weighed before structure, currency or trust or suppression not weighed, the bound removed, the keyword channel forgetting whose Memory it is, any of the three enrichments omitted, reuse disabled, and the successful or dead-end direction dropped from the compared dimensions. All eighteen were caught by this suite.
+
+Two needed correcting first, and both corrections are findings rather than bookkeeping.
+
+**The bound that applies is the default, not the ceiling.** Raising `MAX_STRUCTURAL_RERANK_LIMIT` from five to twenty changed nothing observable, because a search that names no limit is bounded by `DEFAULT_STRUCTURAL_RERANK_LIMIT`. The ceiling only refuses a caller who asks for more. Mutating the default is caught immediately.
+
+**Self-exclusion is applied twice.** The Problem being worked on is excluded at the hybrid stage and again at the rerank stage, so removing either one leaves the other holding and the scenario still passes. Rather than convert that into a textual guard — this task evaluates behaviour and should not quietly become a string-matching task — the mutation removes both, which is what "self-exclusion removed" means as a behaviour. The redundancy is deliberate in the production code and stays.
+
+## D-349 — What the corpus says about the constants, which is little (P4-14)
+
+Each of these was fixed by argument and left for measurement. Nine curated scenarios are not a statistical benchmark, and the honest report is narrow:
+
+- **RRF `k = 10`** — NOT DISPROVEN. Every scenario's intended candidates were fused into the window at `k = 10`. No alternative was simulated, because nine hand-written cases cannot separate one `k` from another.
+- **Five offered candidates** — SUPPORTED as a functional bound: seven eligible in, five out, and the two cut are cut by the rerank stage. Nothing here says five is the right number.
+- **Cache TTL 300s and capacity 100** — INSUFFICIENT DATA, and no new measurement was taken. The existing unit tests already drive the TTL boundary with an injected clock, waiting on a wall clock is not something a test should do, and there is no usage distribution to retune against.
+- **Uncapped Verifications, dead ends and contradictions** — INSUFFICIENT DATA. The corpus carries several of each and they all arrive. Seeding a thousand rows would invent a threshold rather than measure one.
+
+No `precision`, `recall`, `F1`, `retrievalAccuracy` or pass-threshold was computed. Nine curated fixtures with deliberate wrong answers in them are named behaviour acceptance, and calling the result a quality score would dress a small designed sample as a measurement.
+
+## D-350 — The derived successful direction is observed; the response gap stays open (P4-14)
+
+The cross-technology scenario requires `successful_directions` to appear among the dimensions the judgement agreed on. It does, which is direct evidence that the derived material the summary generator produces is genuinely usable as retrieval comparison material — one half of what the Core MVP asks for.
+
+The other half is untouched. There is still no contract returning `FIX` or `DISCOVERY` detail in a search response, and this observation does not create one. Whether the derived profile satisfies the Definition of Done or a historical successful-direction detail is needed remains a **P4-15 decision**, and the TODO entry stays open.
+
+## D-351 — What P4-14 changed, and what it did not build (P4-14)
+
+Two new test files and three `.ai` files. No production source, no migration, no dependency, no route, no README. Migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, no enums, triggers or views, one user-defined function, 13 artifact columns, no vector index, `MemoryRepository` 25, API 0.4.0 / 27 operations, export `"1"`, queue `"2"`, three runtime dependencies, `HYBRID_RRF_K` 10, source depth 20, rerank default and ceiling 5, cache TTL 300000 and capacity 100 — every one measured and unchanged.
+
+The corpus module is data and pure functions: it opens no connection, imports no repository and writes nothing. Seeding belongs to the integration suite. The separation is deliberate — a later end-to-end task can reuse these Memories without inheriting a shortcut that seeds a finished state directly, which is precisely the shortcut that would hollow out an end-to-end proof.
+
+No architecture guard was added. This task changes no production boundary, and the existing guards were all green.
+
+Not built: the Phase 4 end-to-end run (P4-15). No benchmark artifact was committed either — a generated result file goes stale and would compete with the fixtures for being the source of truth.
+
+P4-14 is done. P4-15 is NOT STARTED.
+
 ## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
 
 D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced

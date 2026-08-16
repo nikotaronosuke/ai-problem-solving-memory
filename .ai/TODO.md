@@ -713,6 +713,8 @@ So a caller receiving a search result gets the ranking, the historical Environme
 
 This is recorded rather than fixed. It was **not** merged into P4-12, whose scope is dead ends, and it must **not** be quietly absorbed into P4-13, whose scope is conflict comparison. It needs a deliberate decision: whether the successful side belongs in the search response at all, or whether fetching the Problem's Events is the intended second step. Settle it before the Phase 4 Definition of Done is called satisfied.
 
+**Still open after P4-14.** That task observed the derived `successful_directions` reaching the structural comparison and being used, which is evidence about the retrieval half and not about the response contract. It deliberately closed nothing. **P4-15 is where this is settled.**
+
 ### P4-13 — DONE
 
 Conflict handling: every Memory a search offers now also carries what was recorded as disagreeing with it, and the material for working out which applies here.
@@ -729,9 +731,25 @@ Eighty-one mutations each killed by a named test or guard — fifty-two on behav
 
 3526 tests across 110 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3.
 
-### NEXT — P4-14 Retrieval evaluation fixtures
+### P4-14 — DONE
 
-**NOT STARTED.** See the private Phase 4 breakdown. Every fixture shape it names — same technology and symptom, cross-technology structural similarity, surface-similar but differently caused, stale Memory, dead ends, conflicting Memories — is now producible against a real database, and the six retrieval integration suites already seed them. This is the first Phase 4 task that measures rather than decides, and several numbers fixed by argument are waiting for evidence: RRF `k = 10`, the five-candidate ceiling, the cache TTL and capacity, and the deliberate absence of caps on evidence, dead ends and contradictions.
+Retrieval evaluation fixtures: a named corpus of nine scenarios, run against a real database through the whole pipeline, with a deliberate wrong answer in every one.
+
+**It measures and changes nothing** (D-342). `git diff -- src` is empty, and so are the diffs against `package.json`, `supabase/` and the README. The rule was fixed in advance: a specification-grounded fixture that failed would have stopped the task as a finding rather than licensed an edit to production. Nothing needed it, and that rule is why the result means anything.
+
+It proves that, given a working keyword signal, a working semantic signal and a structural judgement, the pipeline retrieves across Projects, fuses, reranks on structure, applies the ranking controls, enriches and bounds and reuses as specified. It proves **nothing** about a real embedding or reranking model, because there is no vendor, no network and no credential in it (D-343).
+
+The fixture oracle reads the current and candidate structural profiles and nothing else — no identifier, no Project, no earlier rank (D-344). The cross-technology pair is paraphrased rather than copied, so a string-equality oracle would score it at zero, and a baseline test asserts that paraphrasing is real (D-345). Each channel is made load-bearing for exactly one scenario: the same-technology Memory is stored under an embedding model version the search never queries with, so only keyword search reaches it; the cross-technology Memory shares no vocabulary, so only the vector channel does (D-346). The seven controls candidates have structural strength running the exact reverse of their expected order, so no assertion can pass by luck, and the two cut by the ceiling are the best-controlled of the group (D-347).
+
+Eighteen mutations, all caught by this suite. Two needed correcting first and both are findings (D-348): **the bound that applies to a search naming no limit is the default, not the ceiling**, and **self-exclusion is applied twice**, at the hybrid stage and again at the rerank stage, so removing either alone leaves the other holding. Both redundancies are deliberate and stay.
+
+Constant observations are deliberately narrow (D-349): RRF `k = 10` NOT DISPROVEN with no alternative simulated; five offered candidates SUPPORTED as a functional bound with no claim of optimality; cache TTL and capacity INSUFFICIENT DATA with no new measurement taken; uncapped histories INSUFFICIENT DATA. No precision, recall, F1 or quality score — nine curated fixtures are named behaviour acceptance, not a benchmark, and no generated result file was committed.
+
+3551 tests across 111 files. Every count unchanged: migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, enums/triggers/views 0, user-defined functions 1, artifact columns 13, vector indexes 0, `MemoryRepository` 25, API 0.4.0 / 27 operations, export "1", queue "2", runtime dependencies 3 — and `HYBRID_RRF_K` 10, source depth 20, rerank default and ceiling 5, cache TTL 300000, capacity 100.
+
+### NEXT — P4-15 Phase 4 end-to-end and Definition of Done
+
+**NOT STARTED.** See the private Phase 4 breakdown. A continuity proof rather than a scenario proof: a Memory written through the ordinary path in one Project, then found from another, with the artifact generation path included in what is being proved. The P4-14 corpus data is reusable and was kept free of database imports for exactly that reason — but its direct artifact upsert must **not** be reused, because that is the step P4-15 exists to exercise. This is also where the successful-direction OPEN below must be settled, and where the public README and architecture sync for the whole retrieval surface belong.
 
 ## BLOCKED
 
