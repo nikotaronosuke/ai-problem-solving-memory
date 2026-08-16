@@ -2875,6 +2875,22 @@ Twenty-three discrimination mutations, each killed by a named test or guard. Eig
 
 P4-10 is done. P4-11 is NOT STARTED.
 
+## D-309 — A degraded rerank names no dimension, and the status is what says so (P4-10, after review)
+
+D-304 established that a degraded rerank must make no structural claim, and the code then decided the point by looking at the list rather than at the status: `matchedDimensions.length === 0 ? none : join(...)`. The two agree in practice, because P4-07 produces no dimensions when it does not run. "In practice" is the problem. `composeSearchedReason` is exported, and a direct call with `RERANKER_UNAVAILABLE` and a non-empty list produced
+
+`structural_status=RERANKER_UNAVAILABLE; comparison_dimensions=symptom_patterns`
+
+— a permanent row asserting evidence from a comparison that never happened. The rule was real and the guarantee was a fact about how the stage upstream happens to be wired today.
+
+So the status is now load-bearing: anything other than `USED` yields `none`, whatever list arrives. The `USED` case is untouched, and the rule applies to the rerank alone — a semantic channel that did not run says nothing about whether a structural comparison happened, so it must not suppress the evidence of one that did.
+
+The writer refuses the contradiction outright rather than only neutralising it. That distinction is worth stating: the reason would say `none` either way, so refusing is not what keeps the written row honest — it is what stops a caller being told a search was recorded while half of what they passed was silently dropped. The refusal names no Problem, no Memory, no dimension and no source.
+
+A refused observation is a lost observation like any other: the search still returns its result, and the failure reporter is told once, with a kind and a count. The best-effort path (D-306) already covers it and needed no change.
+
+Six further mutations, each killed by a named test or guard: the status gate removed, degraded treated as used, the neutral fallback dropped, the rule widened to the semantic channel, the writer's refusal removed, and the refusal made to name what it refused. The guard was strengthened at the same time to read the condition rather than the fixture — passing an empty list to a degraded case proves nothing about which of the two decided the answer.
+
 ## D-288 — A missing structural score is refused, not defaulted (P4-08, after review)
 
 D-283 established that a null score is never read as a zero, and the comparator then did exactly that: `(b.structuralScore ?? 0) - (a.structuralScore ?? 0)`. The comment directly above it said "there is no `?? 0` anywhere on this path". The comment was the intent and the line was the code.

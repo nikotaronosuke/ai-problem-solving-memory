@@ -38,6 +38,7 @@ import {
   createRetrievalStructuralRerankService,
   createRetrievalUsageLogWriter,
   createRetrievalVectorSearchService,
+  ContradictorySearchObservationError,
   InvalidRetrievalSearchError,
   type AuthenticatedRequestContext,
   type RetrievalSearchCache,
@@ -1310,6 +1311,54 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       expect(calls).toBe(0);
     });
 
+    it('refuses an observation that contradicts itself, asked directly', async () => {
+      const owner = await makeActor();
+      const { current, candidate } = await seedSearchable(owner);
+      const writer = createRetrievalUsageLogWriter(requestContextFor(owner));
+
+      // A rerank that did not run cannot have named dimensions. The reason
+      // would say `none` either way, so this is not what keeps the row honest
+      // — it is what stops the contradiction being accepted and half the input
+      // silently discarded.
+      let raised: unknown;
+      try {
+        await writer.recordSearched({
+          currentProblemId: current.problemId,
+          sourceAi: SOURCE_AI,
+          candidates: [
+            {
+              problemId: candidate.problemId,
+              projectId: candidate.projectId,
+              rankingRank: 1,
+              projectRelation: 'CURRENT_PROJECT',
+              confidence: 'HIGH',
+              freshness: 'CURRENT',
+              suppressed: false,
+              structuralScore: null,
+              hybridRank: 1,
+              matchedDimensions: ['symptom_patterns'],
+            },
+          ],
+          semanticStatus: 'USED',
+          structuralStatus: 'RERANKER_UNAVAILABLE',
+        });
+      } catch (error) {
+        raised = error;
+      }
+
+      expect(raised).toBeInstanceOf(ContradictorySearchObservationError);
+      const message = (raised as Error).message;
+      for (const absent of [
+        current.problemId,
+        candidate.problemId,
+        SOURCE_AI,
+        'symptom_patterns',
+      ]) {
+        expect(message.includes(absent), `the refusal named ${absent}`).toBe(false);
+      }
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
+    });
+
     it('writes nothing for an empty list, asked directly', async () => {
       const owner = await makeActor();
       const { current } = await seedSearchable(owner);
@@ -1492,6 +1541,48 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
 
       await searchFor(service, current.problemId);
       expect(reporter.failures).toEqual([]);
+    });
+
+    it('treats a refused contradiction like any other lost record', async () => {
+      const owner = await makeActor();
+      const { current } = await seedSearchable(owner);
+      const reporter = recordingReporter();
+      const real = createRetrievalUsageLogWriter(requestContextFor(owner));
+
+      // A writer that turns every observation into a contradictory one. The
+      // search itself is unaffected — a refused record is still a lost record,
+      // and the caller is holding an answer that cost two network calls.
+      const contradicting: RetrievalUsageLogWriter = {
+        ownerId: real.ownerId,
+        recordSearched: (input) =>
+          real.recordSearched({
+            ...input,
+            structuralStatus: 'RERANKER_UNAVAILABLE',
+            candidates: input.candidates.map((entry) => ({
+              ...entry,
+              matchedDimensions: ['symptom_patterns'],
+            })),
+          }),
+      };
+
+      const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker(), {
+        writer: contradicting,
+        reporter,
+      });
+
+      const outcome = await searchFor(service, current.problemId);
+      const surfaced = outcome.kind === 'SEARCHED' ? outcome.candidates.length : 0;
+
+      expect(outcome.kind).toBe('SEARCHED');
+      expect(surfaced).toBeGreaterThan(0);
+      expect(reporter.failures).toEqual([
+        { kind: 'SEARCH_USAGE_LOG_WRITE_FAILED', attemptedRows: surfaced },
+      ]);
+      const reported = JSON.stringify(reporter.failures);
+      for (const absent of [current.problemId, SOURCE_AI, 'symptom_patterns', 'contradicts']) {
+        expect(reported.includes(absent), `the report carried ${absent}`).toBe(false);
+      }
+      expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);
     });
 
     it('leaves the reused search reusable', async () => {

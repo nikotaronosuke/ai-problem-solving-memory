@@ -86,6 +86,26 @@ export interface RetrievalUsageLogFailure {
 }
 
 /**
+ * Raised when what is being recorded contradicts itself.
+ *
+ * A rerank that did not run cannot have named dimensions. The reason built
+ * below would safely say `none` either way, so this is not what keeps the
+ * written row honest — it is what stops the contradiction being *accepted*.
+ * Recording a search whose parts disagree, silently discarding half of what
+ * was passed in, would leave a caller believing something was written that
+ * was not.
+ *
+ * Carries no identifier, no dimension name and no source: an error travels,
+ * and everything it could name belongs to somebody's Memory.
+ */
+export class ContradictorySearchObservationError extends Error {
+  constructor() {
+    super('A search observation contradicts itself.');
+    this.name = 'ContradictorySearchObservationError';
+  }
+}
+
+/**
  * Where a lost observation is reported.
  *
  * Required, with no default. A default that printed would choose an output
@@ -132,8 +152,15 @@ export function composeSearchedReason(
   semanticStatus: SemanticChannelStatus,
   structuralStatus: StructuralRerankStatus,
 ): string {
+  // The status decides, not just the list. A rerank that did not run produces
+  // no dimensions, so the two agree in practice — but "in practice" here means
+  // "because the stage upstream happens to be wired correctly today", and this
+  // function is exported. Printing `structural_status=RERANKER_UNAVAILABLE`
+  // beside a list of dimensions would be a permanent row asserting evidence
+  // from a comparison that never happened, which is exactly the overclaim the
+  // neutral wording below exists to avoid.
   const dimensions =
-    candidate.matchedDimensions.length === 0
+    structuralStatus !== 'USED' || candidate.matchedDimensions.length === 0
       ? NO_COMPARISON_DIMENSIONS
       : candidate.matchedDimensions.join(',');
 
@@ -168,6 +195,20 @@ export function createRetrievalUsageLogWriter(
     async recordSearched(input): Promise<void> {
       if (input.candidates.length === 0) {
         return;
+      }
+
+      // Refused rather than quietly corrected. The reason built below would
+      // say `none` regardless, so nothing dishonest could reach the row — but
+      // accepting the call would mean recording a search while discarding part
+      // of what the caller passed, and leaving them to believe otherwise.
+      // Nothing reaching here through the search service can trip it; this
+      // writer is exported and callable, and keeps its own contract.
+      if (input.structuralStatus !== 'USED') {
+        for (const candidate of input.candidates) {
+          if (candidate.matchedDimensions.length > 0) {
+            throw new ContradictorySearchObservationError();
+          }
+        }
       }
 
       // Validated before anything is opened, and with the rule the rest of the

@@ -3107,6 +3107,35 @@ describe('search caching', () => {
     // nobody performed.
     expect(body).toContain('comparison_dimensions=');
     expect(body.includes('matched_dimensions='), 'the reason claims a match').toBe(false);
+
+    // And the status is what decides whether any are named, not the list on
+    // its own. A rerank that did not run produces no dimensions today, so the
+    // two agree — but that agreement is a fact about how the stage upstream
+    // happens to be wired, and this function is exported.
+    expect(body).toContain("structuralStatus !== 'USED'");
+    const gate = body.indexOf("structuralStatus !== 'USED'");
+    const fallback = body.indexOf('NO_COMPARISON_DIMENSIONS');
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(fallback);
+  });
+
+  it('refuses an observation whose parts disagree', async () => {
+    const writer = await readFile(join(SRC, 'app', 'retrieval-usage-log-writer.ts'), 'utf8');
+    const code = writer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Safe on its own — the reason would say `none` regardless — so this is
+    // not what keeps the row honest. It is what stops the contradiction being
+    // accepted and half the caller's input silently dropped.
+    expect(code).toContain("if (input.structuralStatus !== 'USED') {");
+    expect(code).toContain('throw new ContradictorySearchObservationError()');
+
+    // The refusal names nothing. Everything it could name belongs to
+    // somebody's Memory, and an error travels.
+    const error = writer.slice(writer.indexOf('export class ContradictorySearchObservationError'));
+    const constructorBody = error.slice(0, error.indexOf('\n}'));
+    for (const leak of ['problemId', 'projectId', 'sourceAi', 'matchedDimensions', '${']) {
+      expect(constructorBody.includes(leak), `the refusal names ${leak}`).toBe(false);
+    }
   });
 
   it('writes one search’s rows together, and wraps nothing else', async () => {
