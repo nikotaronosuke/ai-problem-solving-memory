@@ -131,7 +131,7 @@ describe('reading the environment', () => {
     // returns the client it built, so a method the client gains arrives here for
     // free. What the adapter must *not* have gained is policy about when to
     // search or what to call itself, which a guard in the server's suite checks.
-    expect(Object.keys(client)).toEqual(['getProblem', 'search']);
+    expect(Object.keys(client)).toEqual(['getProblem', 'listProjects', 'search']);
     expect(JSON.stringify(client).includes(TOKEN)).toBe(false);
   });
 

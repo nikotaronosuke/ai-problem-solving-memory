@@ -3,8 +3,8 @@
  *
  * One export list, so what this package promises is readable in one place. It
  * grows a method at a time, when a task needs one: the API has twenty-eight
- * operations and this client has two, because a client method that no caller has
- * is a guess about how it will be called.
+ * operations and this client has three, because a client method that no caller
+ * has is a guess about how it will be called.
  *
  * What is exported from the search module is the contract: the request and
  * outcome types, the closed sets a caller may branch on, the bounds a caller
@@ -85,6 +85,13 @@ export {
   type MemorySearchStructuralStatus,
   type MemorySearchVerificationType,
 } from './search.js';
+
+export {
+  isProjectListBody,
+  isProjectResource,
+  PROJECT_RESOURCE_FIELDS,
+  type ProjectResource,
+} from './project.js';
 
 export {
   isProblemResource,

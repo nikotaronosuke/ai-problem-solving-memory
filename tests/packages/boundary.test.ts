@@ -288,7 +288,15 @@ describe('the common client', () => {
     // no caller has is a guess about how it will be called, and it grows one
     // task at a time.
     expect(code).toContain('getProblem(problemId: string)');
+    expect(code).toContain('listProjects(): Promise<readonly ProjectResource[]>');
     expect(code).toContain('search(problemId: string, request: MemorySearchRequest)');
+
+    // Three, and no fourth by accident. `createProject` in particular is absent
+    // on purpose: P5-03 resolves Projects and creates none, and a method nobody
+    // calls is a guess about how it will be called.
+    for (const absent of ['createProject', 'getProject', 'updateProject']) {
+      expect(`${absent}:${code.includes(absent)}`).toBe(`${absent}:false`);
+    }
 
     // And no escape hatch. A public `request(path, init)` would be one line and
     // would end this package's usefulness: every caller reaching for it would be
@@ -337,6 +345,33 @@ describe('the common client', () => {
     // skipped.
     expect(code).toContain('AbortSignal.timeout(');
     expect(`unbounded:${code.includes('Infinity')}`).toBe('unbounded:false');
+  });
+
+  it('never reaches the machine it is running on', async () => {
+    const shipped = (await sourcesOf('memory-api-client')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // Reading a repository, a path or an environment is host-specific work, and
+    // this package is what a second assistant reuses. P5-03 put all of it in the
+    // adapter for exactly that reason.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of [
+        'child_process',
+        'execFile',
+        'spawn',
+        'node:fs',
+        'node:path',
+        'node:os',
+        'process.env',
+        'git',
+      ]) {
+        expect(`${path} reaches ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} reaches ${forbidden}:false`,
+        );
+      }
+    }
   });
 
   it('holds no privacy policy of its own', async () => {
@@ -495,6 +530,115 @@ describe('the Claude adapter, still', () => {
           `${path} does ${forbidden}:false`,
         );
       }
+    }
+  });
+
+  it('has no protocol code, no hook and no Skill', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // P5-03 needed none of them: the project root arrives as an argument, and
+    // reading it from the environment is the composition's job in a later task.
+    // Adding an SDK now would pin a version against code that does not exist.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of [
+        'modelcontextprotocol',
+        'McpServer',
+        'StdioServerTransport',
+        'SKILL.md',
+        'hooks',
+        'CLAUDE_PROJECT_DIR',
+      ]) {
+        expect(`${path} has ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} has ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
+  it('anchors a Project on the root it was given, never on the working directory', async () => {
+    const detector = (await sourcesOf('claude-code-adapter')).find(
+      (file) => file.path === 'src/project-signals.ts',
+    );
+    expect(detector).toBeDefined();
+    const code = codeOnly(detector?.source ?? '');
+
+    // The root arrives as an argument and every git invocation runs against it.
+    // `process.cwd()` would make a `cd` change which Project a session belongs to
+    // — and the Problem being worked on would follow it.
+    expect(code).toContain('input.projectDir');
+    for (const forbidden of ['process.cwd', 'process.env', "cwd: '.'"]) {
+      expect(`detector uses ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `detector uses ${forbidden}:false`,
+      );
+    }
+    // No shell anywhere on this path: arguments are an array, and a project root
+    // is a value from the environment.
+    expect(code).toContain('shell: false');
+    expect(`detector builds a command line:${code.includes('exec(')}`).toBe(
+      'detector builds a command line:false',
+    );
+  });
+
+  it('keeps a raw remote inside the one function that converts it', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // A remote URL may carry a credential and `git remote get-url` returns it
+    // verbatim, so the canonical form is where that value dies. Only the module
+    // that performs the conversion may name `get-url`, and nothing anywhere may
+    // read git's stderr, which carries remote URLs in its own messages.
+    const readers = shipped
+      .filter((file) => codeOnly(file.source).includes('get-url'))
+      .map((file) => file.path);
+    expect(readers).toEqual(['src/project-signals.ts']);
+
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      expect(`${path} reads stderr:${code.includes('stderr')}`).toBe(`${path} reads stderr:false`);
+    }
+  });
+
+  it('creates no Project and asks nobody anything', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // P5-03 resolves and reports. Creating a Project is a long-lived record and
+    // asking a question interrupts somebody; both belong to whatever consumes
+    // these outcomes, and neither is settled here by accident.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of ['createProject', 'prompt', 'readline', 'confirm(']) {
+        expect(`${path} does ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} does ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
+  it('never resolves a Project from a secondary remote or a name alone', async () => {
+    const resolver = (await sourcesOf('claude-code-adapter')).find(
+      (file) => file.path === 'src/project-resolution.ts',
+    );
+    const code = codeOnly(resolver?.source ?? '');
+
+    // Both are the silent-false-merge cases: a fork whose upstream is recorded,
+    // and two unrelated directories with the same name. Each must reach
+    // `AMBIGUOUS`, and the ordering that makes that true is read positionally.
+    const secondaryAt = code.indexOf('secondaryRemotes');
+    const nameAt = code.indexOf('project_name === signals.projectNameHint');
+    expect(secondaryAt).toBeGreaterThan(-1);
+    expect(nameAt).toBeGreaterThan(-1);
+    expect(code.slice(secondaryAt).includes("'ONLY_SECONDARY_REMOTE_MATCHED'")).toBe(true);
+    expect(code.slice(nameAt).includes("'NAME_ONLY_MATCH'")).toBe(true);
+
+    // And nothing sorts or slices a candidate list into a single answer.
+    for (const forbidden of ['.sort(', 'created_at >', 'candidates[0]', 'at(0)']) {
+      expect(`${forbidden}:${code.includes(forbidden)}`).toBe(`${forbidden}:false`);
     }
   });
 });
