@@ -31,6 +31,10 @@ import {
 } from './errors.js';
 import { describeProblemChanges } from './problem-changes.js';
 import type { AuthenticatedRequestContext } from './request-context.js';
+import {
+  requestGenerationQuietly,
+  type RetrievalArtifactMaintenance,
+} from './retrieval-artifact-maintenance.js';
 import { generateClientEventId, type ClientEventId } from '../domain/client-event-id.js';
 import type { EventType, FixKind, ProblemStatus } from '../domain/enums.js';
 import { toProblemId, type ProblemId } from '../domain/problem.js';
@@ -114,9 +118,11 @@ function asProblemId(value: string): ProblemId {
   }
 }
 
-export function createProblemCloseService(): ProblemCloseService {
+export function createProblemCloseService(
+  retrievalMaintenance?: RetrievalArtifactMaintenance,
+): ProblemCloseService {
   return {
-    closeProblem(context, problemId, command) {
+    async closeProblem(context, problemId, command) {
       const target = asProblemId(problemId);
 
       if (!isConclusionProblemStatus(command.targetStatus)) {
@@ -136,7 +142,7 @@ export function createProblemCloseService(): ProblemCloseService {
           : [];
       });
 
-      return context.runInTransaction(async (repository) => {
+      const concluded = await context.runInTransaction(async (repository) => {
         const current = await repository.getProblem(target);
         if (current === undefined) {
           // Unknown and another owner's are one answer, and it comes first: a
@@ -199,6 +205,13 @@ export function createProblemCloseService(): ProblemCloseService {
 
         return updated;
       });
+
+      // After the conclusion has committed. Status, fix kind and the review
+      // Events are all canonical source, and their transaction took the old
+      // artifact with it; a refused or conflicted close threw before here.
+      requestGenerationQuietly(retrievalMaintenance, context, target);
+
+      return concluded;
     },
   };
 }

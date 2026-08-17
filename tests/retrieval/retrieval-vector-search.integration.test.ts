@@ -343,6 +343,26 @@ describe.skipIf(databaseUrl === undefined)('semantic search over retrieval artif
       expect(await foundIds(serviceFor(other, [1, 0, 0]), 'anything')).toEqual([theirs.problemId]);
     });
 
+    it('never sees an artifact fingerprinted under another source schema', async () => {
+      const owner = await makeActor();
+      const seeded = await seed(owner, [1, 0, 0], { tag: 'schema-gate' });
+      const service = serviceFor(owner, [1, 0, 0]);
+      expect(await foundIds(service, 'anything')).toContain(seeded.problemId);
+
+      // A lower-layer write plants what a future deployment would leave
+      // behind. The reader's gate keeps it out of the vector channel until
+      // regeneration replaces it — model compatibility alone would not, since
+      // the embedding is still the configured model's.
+      await pool.query(
+        `update public.retrieval_artifacts
+            set source_fingerprint = 'retrieval-source-v0:legacy'
+          where owner_id = $1 and problem_id = $2`,
+        [owner.ownerId, seeded.problemId],
+      );
+
+      expect(await foundIds(service, 'anything')).not.toContain(seeded.problemId);
+    });
+
     it('excludes a read-disabled Problem while its artifact stays', async () => {
       const owner = await makeActor();
       const seeded = await seed(owner, [1, 0, 0], { tag: 'read-off' });

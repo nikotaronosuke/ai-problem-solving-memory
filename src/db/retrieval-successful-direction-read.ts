@@ -47,7 +47,10 @@ import { requiresSuccessfulVerification } from '../domain/problem-status.js';
 import type { OwnerContext } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 import type { ProblemStatus } from '../domain/enums.js';
-import { parseStructuralFeatures } from '../domain/retrieval-summary.js';
+import {
+  parseStructuralFeatures,
+  RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
+} from '../domain/retrieval-summary.js';
 import type { DatabaseExecutor } from './executor.js';
 
 interface Row {
@@ -90,6 +93,7 @@ export const SUCCESSFUL_DIRECTION_STATEMENT = `
     left join public.retrieval_artifacts ra
       on ra.owner_id = pr.owner_id
      and ra.problem_id = pr.problem_id
+     and starts_with(ra.source_fingerprint, $3)
    order by requested.position asc`;
 
 /**
@@ -116,6 +120,10 @@ export async function readSuccessfulDirections(
   const result = await executor.query<Row>(SUCCESSFUL_DIRECTION_STATEMENT, [
     context.ownerId,
     [...problemIds],
+    // Source-schema gate, in the join condition rather than the where clause:
+    // an incompatible artifact answers as no artifact — an empty list — while
+    // the Problem row itself stays visible.
+    RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
   ]);
 
   const byProblem = new Map<ProblemId, readonly string[]>();

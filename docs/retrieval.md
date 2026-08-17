@@ -25,6 +25,15 @@ The separation is deliberate and load-bearing:
   the artifact — all in one short transaction. What the commit guarantees is
   exactly that at the moment the artifact was written, its fingerprint described
   the source.
+- A searchable artifact **describes the current record, or it does not exist**.
+  Every write that changes what a summary is generated from — an Event, a
+  Verification, a canonical Problem field, a status — removes the stored
+  artifact in the same transaction that records the change. A stale rendering
+  is never offered with a warning or a lower rank; the Problem is simply absent
+  from artifact-backed results until a new rendering is generated. Renderings
+  from an older source schema are likewise never read. Artifact staleness is a
+  property of the derived rendering and is not the Memory's `freshness`, which
+  is a judgement about the world that ranking reads live.
 
 ## The search, stage by stage
 

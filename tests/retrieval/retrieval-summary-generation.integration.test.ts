@@ -727,7 +727,16 @@ describe.skipIf(databaseUrl === undefined)('generating a retrieval summary', () 
           scriptedGenerator(() => outputWith({ normalizedSummary: SECRET.inSummary })),
         ).generateSummary(problemId),
       ).rejects.toBeInstanceOf(SanitizationRejectedError);
-      // A race.
+      // Neither a successful generation nor a refused one moved the stored
+      // artifact by a byte: the summary service has no repository to write
+      // through, so "generating a summary changed the store" cannot be
+      // written.
+      expect(await actor.artifacts.getArtifact(problemId)).toEqual(before);
+
+      // A race. The append is a canonical write, and canonical writes take
+      // the stored artifact with them in their own statement — so after this,
+      // absence is the append's doing, on the append's atomicity, while the
+      // summary service still wrote and removed nothing of its own.
       const racing = barrierGenerator(() => outputWith());
       const running = serviceFor(actor, racing).generateSummary(problemId);
       await racing.entered;
@@ -741,10 +750,7 @@ describe.skipIf(databaseUrl === undefined)('generating a retrieval summary', () 
       outcomes.push(await running);
 
       expect(outcomes.map((outcome) => outcome.kind)).toEqual(['GENERATED', 'SOURCE_CHANGED']);
-      // Not replaced by a success, not removed by a failure. Deciding whether
-      // a stale artifact should still be offered is a retrieval question, and
-      // a generation that could not finish is not an answer to it.
-      expect(await actor.artifacts.getArtifact(problemId)).toEqual(before);
+      expect(await actor.artifacts.getArtifact(problemId)).toBeUndefined();
     });
   });
 });

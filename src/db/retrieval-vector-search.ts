@@ -54,6 +54,7 @@ import type { ProblemId } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
 import { formatEmbedding, type Embedding } from '../domain/retrieval-artifact.js';
 import type { ResolvedVectorSearchQuery, VectorCandidate } from '../domain/retrieval-search.js';
+import { RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX } from '../domain/retrieval-summary.js';
 import type { DatabaseExecutor } from './executor.js';
 
 /** What the reader passes down: a validated vector and the space it lives in. */
@@ -87,6 +88,7 @@ export const VECTOR_SEARCH_STATEMENT = `
      and pr.problem_id = ra.problem_id
    where ra.owner_id = $1
      and pr.memory_read_enabled
+     and starts_with(ra.source_fingerprint, $9)
      and ra.embedding_model = $3
      and ra.embedding_model_version = $4
      and vector_dims(ra.embedding) = $5
@@ -117,6 +119,8 @@ export async function searchArtifactsByVector(
     query.projectId,
     query.excludeProblemId,
     query.limit,
+    // Source-schema gate, the same one every artifact-backed read applies.
+    RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
   ]);
 
   return result.rows.map((row) => {

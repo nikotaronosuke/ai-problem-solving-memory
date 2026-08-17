@@ -196,6 +196,20 @@ describe.skipIf(databaseUrl === undefined)('retrieval successful directions', ()
       });
     }
 
+    if (options.status !== undefined && options.status !== 'INVESTIGATING') {
+      // Status moves through its own path, not `updateProblem` — the two are
+      // deliberately separate so a status change cannot ride along with an
+      // ordinary edit.
+      for (const step of TRANSITIONS[options.status] ?? []) {
+        const stored = await actor.memory.getProblem(problem.problemId);
+        await actor.memory.updateProblemStatus(problem.problemId, stored?.version ?? 0, step);
+      }
+    }
+
+    // Last, after every canonical write above: a status transition or an
+    // append takes the stored artifact with it in its own statement, which is
+    // the lifecycle rule rather than an inconvenience of this fixture. The
+    // artifact a test reads through is the one a current record would have.
     const directions = options.directions ?? DERIVED_DIRECTIONS;
     if (directions !== 'no-artifact') {
       await actor.artifacts.upsertArtifact({
@@ -211,16 +225,6 @@ describe.skipIf(databaseUrl === undefined)('retrieval successful directions', ()
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-16T14:00:00.000Z'),
       });
-    }
-
-    if (options.status !== undefined && options.status !== 'INVESTIGATING') {
-      // Status moves through its own path, not `updateProblem` — the two are
-      // deliberately separate so a status change cannot ride along with an
-      // ordinary edit.
-      for (const step of TRANSITIONS[options.status] ?? []) {
-        const stored = await actor.memory.getProblem(problem.problemId);
-        await actor.memory.updateProblemStatus(problem.problemId, stored?.version ?? 0, step);
-      }
     }
 
     return { problemId: problem.problemId, projectId };
@@ -359,15 +363,17 @@ describe.skipIf(databaseUrl === undefined)('retrieval successful directions', ()
         DERIVED_DIRECTIONS,
       );
 
-      // Written through the storage boundary, because the supported surface
-      // will not produce this state: `VERIFIED` is terminal. That is exactly
-      // why it is worth writing — the gate has to be this stage's own property,
-      // not something inherited from a lifecycle rule enforced above it.
-      const stored = await owner.memory.getProblem(seeded.problemId);
-      await owner.memory.updateProblemStatus(
-        seeded.problemId,
-        stored?.version ?? 0,
-        'INVESTIGATING',
+      // Written below the storage boundary, because no supported surface
+      // produces this state: `VERIFIED` is terminal, and since the lifecycle
+      // work even the repository's own status write would take the artifact
+      // with it. A raw SQL update is exactly the "write through a lower
+      // layer" the read-time gate exists for — a persisted state the
+      // generation-time rule no longer holds for, with an artifact still
+      // naming directions.
+      await pool.query(
+        `update public.problems set status = 'INVESTIGATING'
+          where owner_id = $1 and problem_id = $2`,
+        [owner.ownerId, seeded.problemId],
       );
 
       // The artifact still names them — nothing rewrote it. The gate is asked
@@ -376,6 +382,31 @@ describe.skipIf(databaseUrl === undefined)('retrieval successful directions', ()
       const artifact = await owner.artifacts.getArtifact(seeded.problemId);
       expect(artifact?.structuralFeatures.successful_directions).toEqual(DERIVED_DIRECTIONS);
       expect((await service.enrich([candidate(seeded, 1)]))[0]?.successfulDirections).toEqual([]);
+    });
+
+    it('offers nothing from an artifact fingerprinted under another source schema', async () => {
+      const owner = await makeActor();
+      const seeded = await seed(owner, { status: 'VERIFIED', verification: true });
+      const service = serviceFor(owner);
+      expect((await service.enrich([candidate(seeded, 1)]))[0]?.successfulDirections).toEqual(
+        DERIVED_DIRECTIONS,
+      );
+
+      // A lower-layer write plants what a future deployment would leave
+      // behind: a rendering under a schema the readers no longer accept. It
+      // answers as no artifact — an empty list — while the Memory itself
+      // stays offered; a stale schema must not surface directions and must
+      // not cost the candidate its place either.
+      await pool.query(
+        `update public.retrieval_artifacts
+            set source_fingerprint = 'retrieval-source-v0:legacy'
+          where owner_id = $1 and problem_id = $2`,
+        [owner.ownerId, seeded.problemId],
+      );
+
+      const enriched = await service.enrich([candidate(seeded, 1)]);
+      expect(enriched).toHaveLength(1);
+      expect(enriched[0]?.successfulDirections).toEqual([]);
     });
   });
 

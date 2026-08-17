@@ -803,17 +803,29 @@ Twenty-eight mutations, all killed: twenty-two on behaviour, six injecting a for
 
 3675 tests across 117 files. Unchanged: API 0.4.0 / 27 operations, migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, `MemoryRepository` 25, server runtime dependencies 3. New: client dependencies 0, adapter external dependencies 0, MCP dependencies 0.
 
-#### NEXT — P5-02b, read-only, NOT STARTED
+#### P5-02b — investigation and design freeze DONE
 
-Production retrieval providers, and the artifact generation and freshness lifecycle. Ends in a design freeze rather than in code.
+Production retrieval providers, and the artifact generation and freshness lifecycle. Read-only; the freeze decided the invalidation strategy, the scheduling shape, the provider path and the split into two implementation steps.
 
-It has to name owners for: the concrete summary generator, embedding provider and structural reranker; where provider selection and configuration live; what triggers artifact generation and regeneration; what happens to an artifact when the record it describes changes, including after a close; stale artifacts; provider failure isolation; and whether background work is needed (D-380).
+#### P5-02b-impl-1 — DONE
 
-P5-09 was the obvious sole owner and is the wrong one: a Memory must be searchable before P5-05 turns on automatic search, which is long before anything closes, and a canonical record keeps changing afterwards.
+RetrievalArtifact lifecycle correctness.
+
+**The invariant, enforced and measured** (D-393): a searchable artifact describes the current canonical source, or it does not exist. Every canonical write — Event, Verification, canonical PATCH fields, status transition, conclusion — deletes the stored artifact inside its own transaction, as a **second statement rather than a CTE**: the CTE design was built first and failed the Case-A race on a real database, because a statement's snapshot cannot see an artifact committed while the write waited on the generation gate's lock (D-395). The Verification append moved to `on conflict do nothing`, exactly as the standing note prescribed for the day it ran inside a transaction (D-396).
+
+Replays, version conflicts and refused moves invalidate nothing (D-397). The read control gates who may read, never what is current (D-398). Every artifact-backed reader — lexical, vector, structural, successful directions — refuses fingerprints from another source schema; provider-stack mismatches stay searchable until regeneration replaces them (D-394).
+
+**The maintenance layer, vendor-neutral and deliberately unwired**: a generation profile, one bounded reconciliation read (absence is the only dirty state — no migration, no flag, no job table, D-399), a single-flight coalescing coordinator with a bounded pool (D-401), and an optional post-commit doorbell on the write services that cannot fail a write (D-402). Correctness never waits for liveness (D-400).
+
+3726 tests across 121 files. Twenty-eight mutations killed — three first survived and were real test gaps (the close test's review Events masked the conclusion's own delete; the vector and successful-direction gates had no test). All counts unchanged: API 0.4.0 / 27, migrations 16, tables 12, triggers 0, deps 3/0/0, MCP 0.
+
+#### NEXT — P5-02b-impl-2, NOT STARTED
+
+The production providers and the runtime wiring: three concrete provider implementations and their configuration and credential; the per-owner composition of coordinator and reconciliation; startup and interval sweeps; the dispatcher behind the maintenance doorbell; unconfigured startup behaviour (CRUD runs, generation off). See the handoff in D-403.
 
 #### P5-02c — NOT STARTED
 
-The Search JSON API, the owner-scoped retrieval composition behind it, the client's search method, and the contract version that comes with them. After P5-02b, not before.
+The Search JSON API, the owner-scoped retrieval composition behind it, the client's search method, and the contract version that comes with them. After P5-02b-impl-2, not before.
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
 
@@ -827,15 +839,11 @@ Docker publishes the local Supabase ports on all interfaces, not only loopback. 
 
 Decided: not a blocker. The Docker daemon configuration is left unchanged, and the operating rule is to stop the local stack when it is not in use (`npm run supabase:stop`). Revisit only if the stack ever needs to run on an untrusted network.
 
-## STANDING NOTE — the Verification insert is not transaction-safe
+## RESOLVED NOTE — the Verification insert is transaction-safe now
 
-`appendEvent` deduplicates with `on conflict (owner_id, client_event_id) do nothing` and then re-reads. `appendVerification` lets the unique violation raise and catches it.
+A standing note recorded that `appendVerification` let the unique violation raise, that a violation aborts the surrounding transaction (measured during P3-08, `25P02`), and that the form had to change the day the append ran inside an explicit transaction.
 
-Measured during P3-08: a unique violation aborts the surrounding transaction, so every statement after it fails with `25P02` until the transaction ends. The Event form avoids that and has to, because the close path appends Events inside a transaction. The Verification form would break the same way.
-
-Nothing calls `appendVerification` inside an explicit transaction today, and a queued replay is an ordinary HTTP append, so this is currently harmless and was deliberately not changed inside an idempotency task (D-168).
-
-**If `appendVerification` is ever called inside an explicit transaction, change it to the `on conflict do nothing` form first.**
+That day was P5-02b-impl-1: both appends now run inside `runInTransaction` so their artifact invalidation is atomic with them, and `appendVerification` uses the same `on conflict (owner_id, client_event_id) do nothing` and read-back shape as the Event append (D-396). First write still wins, replays still return the original. Nothing remains to trip over; kept as a record of a tripwire that worked.
 
 ## STANDING RULE — a replay respects the Problem as it is now
 
