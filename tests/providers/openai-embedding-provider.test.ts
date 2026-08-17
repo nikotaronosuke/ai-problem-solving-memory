@@ -135,6 +135,19 @@ describe('the OpenAI embedding provider', () => {
     await expect(provider.embed({ text: SUMMARY })).rejects.toBeInstanceOf(OpenAiRequestError);
   });
 
+  it('refuses a different identifier that merely starts with the configured one', async () => {
+    // A prefix check would wave this through, and it is not this model: an
+    // identifier is equal or it is another identifier. Implicit compatibility
+    // is exactly the invented version information the honest-identity rule
+    // refuses — if the upstream ever changes what it echoes, the contract
+    // changes deliberately, against fresh official docs.
+    const { provider } = harness(() =>
+      embeddingsBody({ model: `${OPENAI_EMBEDDING_MODEL}-something-else` }),
+    );
+
+    await expect(provider.embed({ text: SUMMARY })).rejects.toBeInstanceOf(OpenAiRequestError);
+  });
+
   it('makes exactly one request per embedding', async () => {
     const { requests, provider } = harness(() => embeddingsBody());
 
