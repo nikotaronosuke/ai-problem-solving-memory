@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02c-impl-1, after formal-review correction)
+Updated: 2026-08-17 (P5-02c-impl-2)
 
 ## Current phase
 
@@ -21,10 +21,11 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
     - P5-02b-impl-1 — RetrievalArtifact lifecycle correctness: **DONE**
     - P5-02b-impl-2a — OpenAI production provider adapters: **DONE**
     - P5-02b-impl-2b — production runtime wiring: **DONE** — P5-02b is implementation-complete
-  - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **IN PROGRESS**
+  - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **implementation complete**
     - P5-02c-impl-1 — Search JSON API and owner-scoped search composition: **DONE after formal-review correction**
-    - P5-02c-impl-2 — the common client's `search()` method: **NEXT / NOT STARTED**
-- P5-03 — Project auto-detection: **NOT STARTED**
+    - P5-02c-impl-2 — the common client's `search()` method: **DONE**
+  - P5-02 is implementation-complete, pending formal review
+- P5-03 — Project auto-detection: **NEXT / NOT STARTED**
 
 ## Source of truth
 
@@ -1156,19 +1157,32 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **One usage row per Memory offered, and a closed report when one is lost** (D-426). The route writes nothing itself. The failure reporter may pass on `event`, `kind` and `attemptedRows` and nothing else, under the new closed event `SEARCH_USAGE_LOG_WRITE_FAILED` — the only log event that reports a partial success.
 
+## What exists now — the common client's search (P5-02c-impl-2)
+
+**`search(problemId, request)`, and the client now has two methods.** It sends the four fields exactly as the contract names them, `snake_case` in and `snake_case` out, and returns what came back unchanged — no renaming, no dates parsed, no sorting, no de-duplication, no ranks renumbered (D-433, D-435).
+
+**The contract is mirrored, and the mirror is joined in the server's suite** (D-432). Every closed set, bound and field list is written from the published contract, nothing in the package reaches `src/`, and `tests/packages/api-client-contract.test.ts` compares each copy against both the domain constants and the route schemas the OpenAPI document is generated from.
+
+**Four outcomes returned, everything else raised** (D-434). The server's three, plus the client's naming of a `404 NOT_FOUND` as `CURRENT_PROBLEM_NOT_AVAILABLE` — that exact pairing only, so a 404-shaped answer from anything else stays a protocol failure or an ordinary refusal. A `500` stays a refusal: it may mean the server's provider integration is broken, and re-reading it as an empty result would erase the signal.
+
+**Validated to the leaf, refused rather than repaired** (D-433, D-435). Exact key sets on every nested object, closed enums, ranks as whole numbers from one, nullable fields present-and-null rather than absent, `required_checks` four-with-no-repeats. A `200` that is not one of the three outcomes is the new `SEARCH_RESPONSE_MALFORMED`, and the body that could not be read is not attached to it.
+
+**A search waits longer than a read, and one knob still beats both** (D-436). The ordinary constant keeps its name, value and meaning; a search has its own longer finite default, because a cold search runs two provider calls in series behind the server. An explicit `timeoutMs` overrides every operation, and no second knob was added.
+
+**One call, one request; no judgement, no fallback** (D-437). Nothing retried, ever. An unreachable Memory raises rather than returning an empty result, `CURRENT_SOURCE_CHANGED` does not trigger a second search, and `source_ai` is passed through as the caller wrote it.
+
+**The Claude adapter is unchanged** (D-438). It returns the client it built, so the method arrived for free — and a guard checks it did not also grow policy about when to search or what to call itself.
+
 ## Immediate objective
 
-P5-02c-impl-2 — the common client's `search()` method.
+P5-03 — Project auto-detection.
 
-**NOT STARTED.** impl-1 is done, its formal review is answered, and the server publishes the route; nothing calls it yet. What remains:
-- **`search()` on `packages/memory-api-client`.** The client is deliberately untouched by impl-1, and a guard fails if any shipped client module so much as mentions `/search` or `searchProblemMemory` — a half-written method is worse than none, because a caller cannot tell which it has
-- **A timeout decision, which is why this is a separate task** (D-427). The client's default is `MEMORY_API_REQUEST_TIMEOUT_MS = 10_000`; the provider transport behind the route has a far longer deadline, and a cold search runs an embedding call and a rerank call in series. Inheriting the 10 s default would abort searches the server was about to answer. A per-call override, a longer default for this one method, or a documented expectation — but a decision, not a copy of `getProblem`
-- **The three-branch answer must reach the caller intact.** `SEARCHED`, `MEMORY_READ_DISABLED` and `CURRENT_SOURCE_CHANGED` are all 200, so status alone cannot distinguish them, and the two non-search kinds must not be flattened into an empty result
-- **A 500 from this route may mean the provider integration is broken** (D-428). It is not the caller's request being wrong, and a client must not present it as one
+**NOT STARTED**, and not to be started before P5-02's formal review. P5-02 is implementation-complete: an assistant can now reach the whole Memory through the common client, including the search.
 
 Notes for whoever picks this up:
-- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix, and now the production wiring end to end. Read D-393 to D-431 before touching any of it
-- **The specification's minimum API is now fully routed.** The cross-project similarity search was the only item in that list without a route, and impl-1 published it (D-357, D-376, D-420)
+- **The retrieval path is finished end to end** — write → invalidation → generation → artifact → search → HTTP → client. Read D-393 to D-438 before touching any of it
+- **The specification's minimum API is fully routed and reachable.** The cross-project similarity search was the last item without a route (D-357, D-376, D-420), and the client can call it (D-433)
+- **What P5-03 must not take on.** When to search, what `source_ai` to send, how to present a result, and how to carry on when the Memory is unavailable are all later tasks with their own decisions (D-437, D-438). The adapter deliberately holds none of them today, and a guard says so
 - **An adapter must not import the internal service** (D-363), and the common client must stay free of any assistant, host or protocol (D-382). Both are guarded in `tests/packages/boundary.test.ts`
 - **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look details up fresh from the official documentation rather than from anything recorded here
 - `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide — including what happens to a rendering when the record changes, and what the maintenance loop now does automatically

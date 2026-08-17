@@ -3889,3 +3889,63 @@ Neither is a version change. The API stays 0.5.0 with 28 operations: nothing was
 Untouched: the route path and body, the candidate response shape, the owner composition, the search cache semantics, the UsageLog semantics, the provider-disabled semantics, the artifact lifecycle, `packages/memory-api-client` — which still does not know the search exists — the API version, the operation count, the migrations, the schema and the dependencies. No MCP anything. API 0.5.0 / 28 operations, migrations 16, tables 12, FK 13, DOMAIN 8, triggers 0, deps 3/0/0. 3971 tests across 132 files; eighteen mutations, all killed.
 
 D-427's standing follow-up about malformed-versus-unreachable is **resolved** by D-428 and is no longer open. The client timeout handoff is not: the client's 10 s default is still shorter than the provider ceiling behind this route, and choosing what a `search()` method does about that remains P5-02c-impl-2's decision.
+
+## D-432 — The client mirrors the search contract rather than importing it (P5-02c-impl-2)
+
+`packages/memory-api-client/src/search.ts` carries its own copy of every closed set, bound and field list the search uses: the two channel statuses, the project relations, the comparison dimensions, the four revalidation checks in the server's order, the verification kinds, the feature vocabulary and its version, the four request fields, the eight feature fields, and the four bounds. Nothing in the package reaches `src/` — a client that did could only run beside the repository it was built in, which is the opposite of what a common client is for.
+
+A copy drifts, so the joining happens in the only place allowed to see both sides: the server's own suite. `tests/packages/api-client-contract.test.ts` compares each mirror against the server's domain constants *and* against the route schemas the OpenAPI document is generated from, including the exact request field set, the exact feature field set, the candidate's five fields and both status enums. What fails there is a real thing rather than bookkeeping: a status the client has not heard of makes it reject the whole answer as malformed — a search that worked, reported as a protocol failure, with the candidates thrown away.
+
+## D-433 — `search(problemId, request)`, and the request stays on the wire (P5-02c-impl-2)
+
+The method is `search`, not `searchProblemMemory`. The operation id is the server's name for a route and the natural thing for a generated client to use; this one is hand-written and reads like a client, exactly as `getProblem` does rather than `getProblemById`.
+
+The request type is the wire shape — `source_ai`, `lexical_text`, `semantic_text`, `current_features`, all `snake_case`, features `snake_case` inside. A client that renamed them into camelCase would be a second description of what a search is, and the deepest structure this API returns is the last place to keep two of those. Four fields and no fifth, enforced by an exact key check rather than by a list of forbidden names: `owner_id`, `project_id`, every limit, `embedding`, `model`, `provider`, `session_id` and the rest are refused structurally, so the refusal cannot fall behind a blacklist nobody remembered to extend.
+
+Validation happens before the request is spent, and refuses rather than repairs. Nothing is trimmed, truncated, coerced, de-duplicated or dropped: whitespace is *looked at* to decide whether a text is blank and never removed, because a caller reasoning about the search it made must be reasoning about the search that was made. `MemoryApiArgumentError` names the argument — `problem id`, `search request` — and never a value, because a search is made of somebody's own words about their own problem.
+
+**No secret detection here.** The privacy policy belongs to the Memory Server, applied in one place; a second detector in the client would be a second privacy contract, and two of those disagree the first time one is extended. A guard scans the shipped client for one.
+
+## D-434 — Three server outcomes returned unchanged, and one 404 named (P5-02c-impl-2)
+
+`SEARCHED` (candidates, possibly none), `MEMORY_READ_DISABLED` and `CURRENT_SOURCE_CHANGED` are returned exactly as they arrived. The client adds a fourth to what a *caller* sees: a `404` whose envelope carries `NOT_FOUND` becomes `CURRENT_PROBLEM_NOT_AVAILABLE`. Every other operation raises on a 404 and this one does not, for a reason particular to search: elsewhere the Problem is the thing being read, and failing to read it is a failed call; here it is the search's *context*, and losing the context is a state a caller routinely handles.
+
+The normalisation is exactly that pairing, deliberately. A 404 whose body is not JSON, whose envelope is malformed, or whose code is something else is a protocol failure or an ordinary refusal — deciding from the status alone would turn any 404-shaped answer, including a proxy's, into "your Problem is gone". And the union is not pretended to be the server's: the server publishes three kinds and the client's type has four, with the fourth documented as the client's naming of a status code.
+
+Nothing else is reinterpreted. A `500` stays a `MemoryApiError`: it may mean the server's provider integration is broken, which is a fact worth surfacing, and turning it into a channel status or an empty result would erase the one signal that something needs fixing. The client does not re-derive the server's failure classification.
+
+## D-435 — The response is validated to the leaf and returned untouched (P5-02c-impl-2)
+
+Every nested object is checked for its exact key set, not merely for the keys the client needs, because the server declares all of them closed: a field nobody here knows about means the two ends disagree about the contract, and passing it through lets the disagreement travel. Enums are closed, ranks must be whole numbers from one, `structural_score` may be a number or null and nothing else, nullable fields must be present *and* null rather than absent, and `required_checks` must be four entries with no repeats from a four-value set — which is the only way to say "all four" without depending on arrival order.
+
+What passes is returned as it arrived. No camelCase, no `Date`, no class, no sorting, no de-duplication, no renumbering. The witness is one fixture carrying every field of every kind of material — a failed Verification beside a passing one, nulls where nulls are allowed, two candidates out of rank order with a gap between the two ranks — compared whole. That fixture began with one candidate and could not see a reordering; a mutation that sorted by rank survived, which is what a lossless witness is for, and the fixture now has two.
+
+A `200` that is not one of the three outcomes is `SEARCH_RESPONSE_MALFORMED`, its own protocol failure rather than `RESOURCE_MALFORMED`: they are two different success contracts, and a caller told only "malformed" could not tell which of its calls to look at. The body is not attached to it — on a success path that body is Memory content.
+
+## D-436 — A search waits longer than a read, and one knob still beats both (P5-02c-impl-2)
+
+The client had one timeout for everything. It is too short for a search: a cold search runs an embedding call and a rerank call in series behind the server, each with its own far longer ceiling, so a client giving up first would abandon searches the server was about to answer — every time, reported as an unreachable Memory, which would not be true.
+
+So the default is per operation: the existing constant keeps its name, its value and its meaning for an ordinary read, and a search has its own, longer. Both are finite; an unbounded request is a hung caller, and no version of "wait forever" is what somebody watching an assistant work would prefer. A timeout is still `MemoryApiUnreachableError` with `ABORTED`, with no search-specific error type — a caller does the same thing either way.
+
+An explicit `timeoutMs` continues to override *every* operation. No `searchTimeoutMs` was added: a caller that wants a ceiling wants a ceiling, and a second option would only be a precedence question for somebody to get wrong. A guard reads which constant each method reaches for, positionally, so a search quietly inheriting the ordinary ceiling fails by name.
+
+The exact numbers are implementation constants, like their predecessor. What is recorded is that a search has its own longer finite default; the value belongs to whatever the slowest configured stack does, and should move when that moves rather than be defended.
+
+## D-437 — One call, one request, no judgement, no fallback (P5-02c-impl-2)
+
+Nothing is retried: not a transport failure, not a timeout, not a 429-shaped refusal, not a 500, not a malformed answer. A retry the caller did not ask for is a second search recorded against the Memory and a second provider call paid for, and the caller that could have decided whether to ask again never learns anything was asked twice. Every failure mode is tested for exactly one request.
+
+Nothing is fabricated either. An unreachable Memory raises rather than returning an empty `SEARCHED` — "the Memory said nothing" and "the Memory had nothing" are different facts, and folding them together would make an assistant reason from an absence of evidence as though it were evidence of absence. `CURRENT_SOURCE_CHANGED` does not trigger a second search, `CURRENT_PROBLEM_NOT_AVAILABLE` does not create a Problem, and `MEMORY_READ_DISABLED` is not overridden. Carrying on without memory belongs to an adapter; so does deciding what a candidate is worth, and so does showing any of it to a person.
+
+`source_ai` is passed through as the caller wrote it. It is not checked against the credential, not restricted to a known set, and not defaulted to anything — this package does not know which assistant is calling, and the day it did would be the day it stopped being common.
+
+## D-438 — What impl-2 changed, and P5-02 is implementation-complete (P5-02c-impl-2)
+
+Two new client modules' worth of contract in one file plus the method, one new protocol failure, one new timeout constant, the exports, and the tests on both sides of the wire. The Claude adapter is unchanged: it returns the client it built, so `search()` reached it the moment the client grew one — and a guard now checks it did *not* also grow policy about when to search or what to call itself, which are later tasks with their own decisions.
+
+The client↔server integration test is the part worth keeping. The client's suite drives it against fixtures and the route's suite drives the route against fixtures, and both pass if both fixtures share the same mistake — which is the failure a mirrored contract is prone to. So a real client, whose `fetch` is a bridge into a real `buildMemoryHttpApp`, calls the real route: a whole candidate crosses the wire and is compared field by field on the far side, both non-search outcomes round-trip, the 404 becomes the typed outcome, and a server fault arrives as a refusal.
+
+Nothing on the server moved. API 0.5.0 / 28 operations, migrations 16, tables 12, FK 13, DOMAIN 8, triggers 0, deps 3/0/1-workspace, MCP 0, SDK 0, client methods 2. 4109 tests across 134 files; thirty-three mutations, all killed.
+
+D-427's timeout handoff is **resolved** by D-436. P5-02c is implementation-complete, and so is P5-02. P5-03 is next and is not started.

@@ -238,27 +238,150 @@ describe('the common client', () => {
     }
   });
 
-  it('does not know the search route yet', async () => {
+  it('keeps its knowledge of the search route in the two modules that own it', async () => {
     const shipped = (await sourcesOf('memory-api-client')).filter((file) =>
       file.path.startsWith('src/'),
     );
     expect(shipped.length).toBeGreaterThan(0);
 
-    // P5-02c published `POST /v1/problems/:problem_id/search` on the server.
-    // The client method that calls it is the next task, deliberately: a search
-    // request has four fields and a three-branch answer, and the client's
-    // ten-second default is shorter than the provider ceiling behind that
-    // route — so the method needs a timeout decision, not a copy of `getProblem`.
+    // P5-02c-impl-1 published `POST /v1/problems/:problem_id/search`; impl-2
+    // added the method that calls it. This guard used to say the client knew
+    // nothing about the route at all, which was the right claim while it did.
     //
-    // Until then nothing here may half-know the route. A half-written method is
-    // worse than none, because a caller cannot tell which it has.
+    // Now the claim is narrower and worth more: the path is built in exactly one
+    // place, and the contract is described in exactly one place. A third module
+    // that started constructing the URL, or a second copy of the field lists,
+    // would be a second description of an operation this package exists to hold
+    // in one.
+    // Every URL this package builds is built here. Code only, so an import
+    // specifier and a doc comment naming the route do not count as building it.
+    const buildsPaths = shipped
+      .filter((file) => codeOnly(file.source).includes('/v1/problems/'))
+      .map((file) => file.path);
+    expect(buildsPaths).toEqual(['src/client.ts']);
+
+    // And the contract is described once. A second copy of the field lists is a
+    // second answer to "what is a search request", which is the drift this
+    // package's mirroring is already one step away from.
+    const describesTheContract = shipped
+      .filter((file) => codeOnly(file.source).includes('MEMORY_SEARCH_REQUEST_FIELDS ='))
+      .map((file) => file.path);
+    expect(describesTheContract).toEqual(['src/search.ts']);
+
+    // The operation id is the server's name for the route. The client's method
+    // is `search`, deliberately — a client reads like a client, not like an
+    // OpenAPI document — so the id has no business here.
     for (const { path, source } of shipped) {
-      expect(`${path} knows /search:${source.includes('/search')}`).toBe(
-        `${path} knows /search:false`,
+      expect(`${path} names the operation id:${source.includes('searchProblemMemory')}`).toBe(
+        `${path} names the operation id:false`,
       );
-      expect(`${path} knows searchProblemMemory:${source.includes('searchProblemMemory')}`).toBe(
-        `${path} knows searchProblemMemory:false`,
-      );
+    }
+  });
+
+  it('exposes two methods and no way around them', async () => {
+    const shipped = await sourcesOf('memory-api-client');
+    const client = shipped.find((file) => file.path === 'src/client.ts');
+    expect(client).toBeDefined();
+    const code = codeOnly(client?.source ?? '');
+
+    // Two methods, both named. The interface is small on purpose: a method that
+    // no caller has is a guess about how it will be called, and it grows one
+    // task at a time.
+    expect(code).toContain('getProblem(problemId: string)');
+    expect(code).toContain('search(problemId: string, request: MemorySearchRequest)');
+
+    // And no escape hatch. A public `request(path, init)` would be one line and
+    // would end this package's usefulness: every caller reaching for it would be
+    // building paths, choosing methods and reading status codes, which is
+    // exactly the knowledge that belongs here.
+    for (const forbidden of ['request(path', 'sendRaw', 'fetchJson', 'rawRequest']) {
+      expect(`${forbidden}:${code.includes(forbidden)}`).toBe(`${forbidden}:false`);
+    }
+  });
+
+  it('gives each operation its own default ceiling, and lets one knob beat both', async () => {
+    const shipped = await sourcesOf('memory-api-client');
+    const client = shipped.find((file) => file.path === 'src/client.ts');
+    const code = codeOnly(client?.source ?? '');
+
+    // The finding this pins: a search runs two provider calls in series behind
+    // the server, and inheriting an ordinary read's ceiling would abandon
+    // searches the server was about to answer — every time, reported as an
+    // unreachable Memory, which would not be true.
+    //
+    // Read positionally rather than by counting occurrences: what matters is
+    // which constant each method reaches for, and both appear elsewhere in the
+    // file as declarations.
+    const getProblemAt = code.indexOf('async getProblem(');
+    const searchAt = code.indexOf('async search(');
+    expect(getProblemAt).toBeGreaterThan(-1);
+    expect(searchAt).toBeGreaterThan(getProblemAt);
+
+    const inGetProblem = code.slice(getProblemAt, searchAt);
+    const inSearch = code.slice(searchAt);
+
+    expect(inGetProblem).toContain('MEMORY_API_REQUEST_TIMEOUT_MS');
+    expect(
+      `getProblem reaches for the search ceiling:${inGetProblem.includes('MEMORY_API_SEARCH_TIMEOUT_MS')}`,
+    ).toBe('getProblem reaches for the search ceiling:false');
+    expect(inSearch).toContain('MEMORY_API_SEARCH_TIMEOUT_MS');
+    expect(
+      `search reaches for the ordinary ceiling:${inSearch.includes('MEMORY_API_REQUEST_TIMEOUT_MS')}`,
+    ).toBe('search reaches for the ordinary ceiling:false');
+
+    // One knob. A `searchTimeoutMs` beside `timeoutMs` would be a precedence
+    // question for somebody to get wrong, and a caller that wants a ceiling
+    // wants a ceiling.
+    expect(`a second knob:${code.includes('searchTimeoutMs')}`).toBe('a second knob:false');
+    // And every request is finite: the ceiling is chosen per operation, never
+    // skipped.
+    expect(code).toContain('AbortSignal.timeout(');
+    expect(`unbounded:${code.includes('Infinity')}`).toBe('unbounded:false');
+  });
+
+  it('holds no privacy policy of its own', async () => {
+    const shipped = (await sourcesOf('memory-api-client')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // The search request carries somebody's own words about their own problem,
+    // and whether any of it may be sent to a provider is decided by the Memory
+    // Server's sanitization boundary — in one place, once. A second detector
+    // here would be a second privacy contract, and two privacy contracts
+    // disagree the first time one of them is extended.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of [
+        'secret',
+        'Secret',
+        'redact',
+        'Redact',
+        'sanitiz',
+        'Sanitiz',
+        'credentialPattern',
+      ]) {
+        expect(`${path} inspects for ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} inspects for ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
+  it('never retries a call on the caller’s behalf', async () => {
+    const shipped = (await sourcesOf('memory-api-client')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // A hidden retry turns one search into two provider calls and one recorded
+    // usage row into two, and the caller that could have decided whether
+    // resending was safe never learns anything was resent.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of ['retry', 'Retry', 'attempt <', 'backoff', 'setTimeout(']) {
+        expect(`${path} retries via ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} retries via ${forbidden}:false`,
+        );
+      }
     }
   });
 
@@ -347,6 +470,29 @@ describe('the Claude adapter', () => {
 
         expect(`${path} imports ${specifier}`).toBe(
           allowed ? `${path} imports ${specifier}` : 'a forbidden import',
+        );
+      }
+    }
+  });
+});
+
+describe('the Claude adapter, still', () => {
+  it('has not started searching, or injecting itself into a search', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+    expect(shipped.length).toBeGreaterThan(0);
+
+    // The adapter returns the client it built, so `search()` reached it for free
+    // the moment the client grew one. What it must not have grown is *policy*:
+    // when to search, what `source_ai` to send, how to present a result. Each of
+    // those is a later task with its own decisions, and doing any of them here
+    // would settle them by accident.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of ['.search(', 'autoSearch', 'sourceAi:', 'source_ai']) {
+        expect(`${path} does ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} does ${forbidden}:false`,
         );
       }
     }
