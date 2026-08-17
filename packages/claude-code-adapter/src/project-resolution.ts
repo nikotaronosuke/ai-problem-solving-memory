@@ -36,13 +36,27 @@
  * is not visible from here, and the cost of getting it wrong is Memory filed
  * under the wrong Project for as long as nobody notices.
  *
- * ## What a candidate may say
+ * ## Nothing the server said travels further than it has to
  *
- * A candidate is material for somebody to choose from, so it is built rather
- * than passed through. The stored `repo` is **canonicalised before it is shown**:
- * it is free-form text a person may have typed, and a person may have typed a
- * URL with a token in it. The absolute path of the session is not in a candidate
- * either — it is not in `ProjectSignals` to begin with.
+ * Every outcome carries material this module built, and none of them carries a
+ * server record. A candidate is built because it is shown to somebody, and the
+ * stored `repo` is **canonicalised before it is shown**: free-form text a person
+ * may have typed, possibly a URL with a token in it. A resolution is built for
+ * the same reason one step further on: the answer to which Project a session is
+ * in is an identity, and a Project's name, repository, platform, owner and
+ * timestamps are none of it.
+ *
+ * The first version made `RESOLVED` the exception and passed the server's record
+ * through, on the grounds that the caller might want it. Formal review rejected
+ * that: "might want" is not a requirement, a passthrough is the widest possible
+ * answer to a narrow question, and the value being safe today because it came
+ * through the server's own sanitization is a fact about the server rather than a
+ * reason for this module to widen its own output. A field a later task genuinely
+ * needs is added by that task, which is also where somebody will be looking at
+ * whether it should travel.
+ *
+ * The absolute path of the session is in none of it either — it is not in
+ * `ProjectSignals` to begin with.
  *
  * ## What this module does not do
  *
@@ -115,12 +129,13 @@ export interface ProjectSuggestion {
 /**
  * What a Project resolution concluded.
  *
- * `RESOLVED` carries the server's own record unchanged — the caller needs its
- * `project_id`, and editing what the server said would make this a second
- * description of a Project. Every other outcome carries material built here.
+ * `RESOLVED` carries an identity and nothing else. That is the whole of what
+ * "which Project is this session in" answers, and it is what the next task needs
+ * in order to ask about Problems. Reading a Project's name or repository is a
+ * different question with its own call.
  */
 export type ProjectResolution =
-  | { readonly kind: 'RESOLVED'; readonly project: ProjectResource }
+  | { readonly kind: 'RESOLVED'; readonly projectId: string }
   | { readonly kind: 'UNREGISTERED'; readonly suggestion: ProjectSuggestion }
   | {
       readonly kind: 'AMBIGUOUS';
@@ -195,7 +210,11 @@ export async function resolveProject(
     if (onPrimary.length === 1) {
       const project = onPrimary[0];
       if (project !== undefined) {
-        return { kind: 'RESOLVED', project };
+        // The list entry was the material for deciding; the identity is what
+        // comes out. Copying the field rather than the record is the whole of
+        // the correction, and it is deliberately the only place a resolution is
+        // built.
+        return { kind: 'RESOLVED', projectId: project.project_id };
       }
     }
 

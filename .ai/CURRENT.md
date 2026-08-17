@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-03)
+Updated: 2026-08-17 (P5-03, after formal-review correction)
 
 ## Current phase
 
@@ -24,7 +24,7 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
   - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **DONE**
     - P5-02c-impl-1 — Search JSON API and owner-scoped search composition: **DONE after formal-review correction**
     - P5-02c-impl-2 — the common client's `search()` method: **DONE after formal-review correction**
-- P5-03 — Project auto-detection: **DONE**
+- P5-03 — Project auto-detection: **DONE after formal-review correction**
 - P5-04 — Current Problem detection: **NEXT / NOT STARTED**
 
 ## Source of truth
@@ -1191,6 +1191,8 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **No absolute path leaves the detector** (D-445). `ProjectSignals` is five fields and none of them is a path; a candidate's repository is canonicalised before it is shown, because a stored `repo` is free-form text somebody may have typed a token into.
 
+**And no server record leaves the resolver either** (D-449, added by the formal review). `RESOLVED` was the one outcome that passed a whole `ProjectResource` through. It is now `{ kind: 'RESOLVED', projectId }`: the answer to which Project a session is in is an identity, and the name, repository, platform, owner and timestamps are none of it. This supersedes D-445's `RESOLVED` exception; the candidate policy it set is unchanged.
+
 **The monorepo question is the owner's** (D-446). The subpath is display and evidence, never identity: with it every subdirectory becomes a Project, without it a deliberate split shows up as `AMBIGUOUS` — a question rather than a wrong answer.
 
 **The client gained `listProjects` and nothing else** (D-447). `createProject` is absent because nothing calls one; the list is returned as the server sent it, and one malformed Project makes the whole answer a protocol failure rather than being skipped.
@@ -1202,7 +1204,7 @@ P5-04 — Current Problem detection.
 **NOT STARTED.** P5-03 is done: an adapter can resolve a Project deterministically and hand ambiguity onward as a typed answer.
 
 Notes for whoever picks this up:
-- **The retrieval path is finished end to end** — write → invalidation → generation → artifact → search → HTTP → client. Read D-393 to D-448 before touching any of it
+- **The retrieval path is finished end to end** — write → invalidation → generation → artifact → search → HTTP → client. Read D-393 to D-449 before touching any of it
 - **The specification's minimum API is fully routed and reachable.** The cross-project similarity search was the last item without a route (D-357, D-376, D-420), and the client can call it (D-433)
 - **Measure, do not assume** (D-375, D-441). What `/cd` does to `CLAUDE_PROJECT_DIR` is not stated in the official documentation, and P5-04 is where it is measured
 - **The concurrent-first-use race is open and untriggered** (D-448). `POST /v1/projects` has no idempotency key and `projects` has no uniqueness on `repo`. Nothing in P5-03 can hit it because P5-03 creates nothing; the task that adds `createProject` re-evaluates it
