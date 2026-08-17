@@ -38,6 +38,10 @@ import {
   ResourceNotFoundError,
 } from './errors.js';
 import type { AuthenticatedRequestContext } from './request-context.js';
+import {
+  requestGenerationQuietly,
+  type RetrievalArtifactMaintenance,
+} from './retrieval-artifact-maintenance.js';
 import type { ProblemStatus } from '../domain/enums.js';
 import { decideTransition, requiresSuccessfulVerification } from '../domain/problem-status.js';
 import { describeProblemChanges } from './problem-changes.js';
@@ -79,7 +83,9 @@ function asProblemId(value: string): ProblemId {
   }
 }
 
-export function createProblemStatusService(): ProblemStatusService {
+export function createProblemStatusService(
+  retrievalMaintenance?: RetrievalArtifactMaintenance,
+): ProblemStatusService {
   return {
     async transition(context, problemId, command) {
       const { targetStatus, expectedVersion } = command;
@@ -87,7 +93,7 @@ export function createProblemStatusService(): ProblemStatusService {
 
       // The read, the write and the record of it are one transaction, as for
       // the ordinary update.
-      return context.runInTransaction(async (repository) => {
+      const transitioned = await context.runInTransaction(async (repository) => {
         const problem = await repository.getProblem(target);
         if (problem === undefined) {
           // Unknown and another owner's are the same answer, as everywhere
@@ -143,6 +149,13 @@ export function createProblemStatusService(): ProblemStatusService {
 
         return updated;
       });
+
+      // After the transaction has committed — a status is canonical source,
+      // so the write above took the old artifact with it. A refused or
+      // conflicted transition threw before reaching this line.
+      requestGenerationQuietly(retrievalMaintenance, context, target);
+
+      return transitioned;
     },
   };
 }

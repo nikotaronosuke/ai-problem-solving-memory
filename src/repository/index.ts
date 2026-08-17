@@ -21,6 +21,15 @@ export type { CreateProjectInput, ProjectRecord, UpdateProjectInput } from '../d
 export { EmptyProjectUpdateError } from '../db/projects.js';
 export type { CreateEnvironmentInput, EnvironmentRecord } from '../db/environments.js';
 export type { CreateProblemInput, ProblemRecord, UpdateProblemInput } from '../db/problems.js';
+export { updateTouchesCanonicalSource } from '../db/problems.js';
+export {
+  createRetrievalArtifactReconciliationReader,
+  type RetrievalArtifactReconciliationReader,
+} from './retrieval-artifact-reconciliation-reader.js';
+export type {
+  ArtifactGenerationFinding,
+  ArtifactGenerationReason,
+} from '../db/retrieval-artifact-reconciliation.js';
 export { EmptyProblemUpdateError } from '../db/problems.js';
 export type { AppendEventInput, EventRecord } from '../db/events.js';
 export type { AppendVerificationInput, VerificationRecord } from '../db/verifications.js';

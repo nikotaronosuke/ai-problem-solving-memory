@@ -606,12 +606,78 @@ describe('the delete path', () => {
       .map((module) => module.path)
       .sort();
 
-    // One file. Revoking a credential is an update rather than a delete, so
-    // this is the only place in the system that removes a row at all. What
-    // must not appear is a second: the order rows have to go in is a fact
-    // about the foreign key graph, and a second place that knows it is a
-    // second place that can be wrong about it.
-    expect(deleters).toEqual(['db/problem-deletion.ts']);
+    // Two files, each owning a different kind of removal. The delete path is
+    // the only place that removes Memory rows — the order rows have to go in
+    // is a fact about the foreign key graph, and a second place that knows it
+    // is a second place that can be wrong about it. The invalidation module
+    // removes exactly one derived table's rows and knows no ordering at all;
+    // the next test pins it to that table. Every other file that wants a
+    // delete embeds the invalidation module's text rather than writing its
+    // own.
+    expect(deleters).toEqual(['db/problem-deletion.ts', 'db/retrieval-artifact-invalidation.ts']);
+  });
+
+  it('lets the invalidation module delete derived rows and nothing else', async () => {
+    const source = await readFile(join(SRC, 'db', 'retrieval-artifact-invalidation.ts'), 'utf8');
+
+    const statements = source.match(/delete\s+from\s+public\.(\w+)/gi) ?? [];
+    // One delete, of the one regenerable table. A canonical table appearing
+    // here would make an invalidation into a data loss.
+    expect(statements).toEqual(['delete from public.retrieval_artifacts']);
+
+    // Owner and problem both, as bound parameters — never an interpolation.
+    expect(source).toContain('where owner_id = $1');
+    expect(source).toContain('and problem_id = $2');
+  });
+
+  it('keeps every provider and network reach out of the invalidation path', async () => {
+    // The delete runs inside canonical write transactions. Anything slow or
+    // external there would put somebody's inference time inside everybody's
+    // lock time — the rule the generation service is built around, applied to
+    // the module that rides the writes.
+    for (const file of [
+      'db/retrieval-artifact-invalidation.ts',
+      'db/events.ts',
+      'db/verifications.ts',
+      'db/problems.ts',
+    ]) {
+      const source = await readFile(join(SRC, ...file.split('/')), 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      for (const forbidden of ['fetch(', 'http://', 'https://', 'setTimeout', 'axios']) {
+        expect(`${file}:${code.includes(forbidden)}`).toBe(`${file}:false`);
+      }
+    }
+  });
+
+  it('keeps the maintenance layer vendor-neutral', async () => {
+    // Which concrete stack generates is the composition edge's decision, and
+    // no earlier layer's. A vendor name in the scheduler or the sweep would
+    // be that decision leaking upstream.
+    for (const file of [
+      'app/retrieval-generation-coordinator.ts',
+      'app/retrieval-artifact-reconciliation-service.ts',
+      'app/retrieval-artifact-maintenance.ts',
+      'domain/retrieval-generation-profile.ts',
+      'db/retrieval-artifact-reconciliation.ts',
+    ]) {
+      const source = await readFile(join(SRC, ...file.split('/')), 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      for (const vendor of ['openai', 'anthropic', 'gemini', 'voyage', 'cohere', 'claude']) {
+        expect(`${file}:${code.toLowerCase().includes(vendor)}`).toBe(`${file}:false`);
+      }
+    }
+  });
+
+  it('runs every canonical write that invalidates inside a transaction boundary', async () => {
+    // The delete is a second statement, and the transaction is what makes it
+    // one atom with the write. The Problem writers are wrapped by their
+    // services' transactions; the two append services must wrap explicitly,
+    // and this reads that they still do.
+    const eventService = await readFile(join(SRC, 'app', 'event-service.ts'), 'utf8');
+    const verificationService = await readFile(join(SRC, 'app', 'verification-service.ts'), 'utf8');
+
+    expect(eventService).toMatch(/runInTransaction\([\s\S]*?appendEvent\(/);
+    expect(verificationService).toMatch(/runInTransaction\([\s\S]*?appendVerification\(/);
   });
 
   it('names the owner in every statement that removes something', async () => {
@@ -2355,6 +2421,14 @@ describe('structural reranking', () => {
     expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('pr.owner_id = ra.owner_id');
     expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('pr.memory_read_enabled');
     expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('ra.problem_id = any($2::uuid[])');
+    // The source-schema gate is a predicate, never a value this stage reads:
+    // the fingerprint decides whether an artifact may be compared, and its
+    // bytes still travel nowhere.
+    expect(STRUCTURAL_ARTIFACT_STATEMENT).toContain('starts_with(ra.source_fingerprint, $3)');
+    const selectList = STRUCTURAL_ARTIFACT_STATEMENT.slice(
+      0,
+      STRUCTURAL_ARTIFACT_STATEMENT.indexOf('from public.retrieval_artifacts'),
+    );
     for (const unused of [
       'normalized_summary',
       'keywords',
@@ -2362,10 +2436,7 @@ describe('structural reranking', () => {
       'search_document',
       'source_fingerprint',
     ]) {
-      expect(
-        STRUCTURAL_ARTIFACT_STATEMENT.includes(unused),
-        `the structural read pulls ${unused}`,
-      ).toBe(false);
+      expect(selectList.includes(unused), `the structural read pulls ${unused}`).toBe(false);
     }
   });
 

@@ -27,6 +27,7 @@ import {
 import type { ProjectId } from '../domain/project.js';
 import { normaliseOptionalText } from '../domain/text.js';
 import type { DatabaseExecutor } from './executor.js';
+import { invalidateRetrievalArtifact } from './retrieval-artifact-invalidation.js';
 
 const OWNER_PROJECT_ENVIRONMENT_FK = 'problems_owner_project_environment_fkey';
 
@@ -376,7 +377,39 @@ export async function updateProblem(
   );
 
   const row = result.rows[0];
+  if (row !== undefined && updateTouchesCanonicalSource(input)) {
+    // The update wrote a field the canonical source is built from, so the
+    // stored rendering now renders something else and goes with the write. A
+    // metadata-only patch changes nothing a summary was generated from, and
+    // regenerating for it would be pure provider cost; a version conflict
+    // wrote nothing and never reaches this line. Atomic when the executor is
+    // transactional, which the mutation path guarantees.
+    await invalidateRetrievalArtifact(executor, context, problemId);
+  }
   return row === undefined ? undefined : toRecord(row);
+}
+
+/**
+ * Whether an update writes a field the canonical retrieval source is built
+ * from.
+ *
+ * The list mirrors the Problem half of the canonical source statement: title,
+ * symptoms, problem domain, suspected boundary. Status and fix kind are also
+ * canonical but cannot travel through this input — they have their own write
+ * paths below, which invalidate unconditionally. Everything else in this
+ * input is metadata about the Memory rather than content of it, read live by
+ * ranking, and changing it must not cost a regeneration.
+ *
+ * Exported so the layer that schedules regeneration can ask the same question
+ * of the same input, rather than keeping a second copy of this list to drift.
+ */
+export function updateTouchesCanonicalSource(input: UpdateProblemInput): boolean {
+  return (
+    input.title !== undefined ||
+    input.symptoms !== undefined ||
+    input.problemDomain !== undefined ||
+    input.suspectedBoundary !== undefined
+  );
 }
 
 /**
@@ -422,6 +455,13 @@ export async function updateProblemStatus(
   );
 
   const row = result.rows[0];
+  if (row !== undefined) {
+    // Status is canonical source, so a transition that matched takes the
+    // artifact with it; a version conflict wrote nothing and deletes nothing.
+    // A second statement for the snapshot reason the invalidation module
+    // explains, atomic inside the transition service's transaction.
+    await invalidateRetrievalArtifact(executor, context, problemId);
+  }
   return row === undefined ? undefined : toRecord(row);
 }
 
@@ -463,5 +503,12 @@ export async function updateProblemConclusion(
   );
 
   const row = result.rows[0];
+  if (row !== undefined) {
+    // Both fields are canonical, so a conclusion that matched takes the
+    // artifact with it. Inside the close transaction the review Events do
+    // the same; deleting an absent row is a no-op, and a rollback puts
+    // everything back including the artifact.
+    await invalidateRetrievalArtifact(executor, context, problemId);
+  }
   return row === undefined ? undefined : toRecord(row);
 }

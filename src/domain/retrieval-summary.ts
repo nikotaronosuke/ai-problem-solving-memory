@@ -55,6 +55,17 @@ export const RETRIEVAL_SOURCE_SCHEMA_VERSION = '1';
 /** Names the source schema the digest was taken under. */
 export const RETRIEVAL_SOURCE_FINGERPRINT_PREFIX = 'retrieval-source-v1';
 
+/**
+ * What a current artifact's fingerprint starts with, separator included.
+ *
+ * This is the compatibility gate every artifact-backed read applies: an
+ * artifact fingerprinted under another source schema renders a document this
+ * code no longer writes, and it must not surface anywhere until regenerated.
+ * The trailing separator is load-bearing — without it, a future
+ * `retrieval-source-v10` would pass a `v1` prefix test.
+ */
+export const RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX = `${RETRIEVAL_SOURCE_FINGERPRINT_PREFIX}:`;
+
 /** The version of the structural feature vocabulary below. */
 export const STRUCTURAL_FEATURE_SCHEMA_VERSION = '1';
 

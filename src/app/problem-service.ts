@@ -22,12 +22,20 @@
 
 import { InvalidApplicationInputError, ResourceNotFoundError } from './errors.js';
 import type { AuthenticatedRequestContext } from './request-context.js';
+import {
+  requestGenerationQuietly,
+  type RetrievalArtifactMaintenance,
+} from './retrieval-artifact-maintenance.js';
 import type { Confidence, Freshness } from '../domain/enums.js';
 import { toEnvironmentId } from '../domain/environment.js';
 import { toProblemId } from '../domain/problem.js';
 import { applyProblemMutation } from './problem-mutation.js';
 import { toProjectId, type ProjectId } from '../domain/project.js';
-import type { ProblemRecord, UpdateProblemInput } from '../repository/index.js';
+import {
+  updateTouchesCanonicalSource,
+  type ProblemRecord,
+  type UpdateProblemInput,
+} from '../repository/index.js';
 
 export interface CreateProblemCommand {
   readonly environmentId: string;
@@ -100,7 +108,9 @@ function asProjectId(value: string): ProjectId {
   }
 }
 
-export function createProblemService(): ProblemService {
+export function createProblemService(
+  retrievalMaintenance?: RetrievalArtifactMaintenance,
+): ProblemService {
   async function requireProject(
     context: AuthenticatedRequestContext,
     projectId: ProjectId,
@@ -132,7 +142,7 @@ export function createProblemService(): ProblemService {
       // Status, confidence, freshness, the flags and version are not passed:
       // they come from the column defaults, so a new Problem cannot be created
       // already claiming to be verified or trusted.
-      return context.repository.createProblem({
+      const created = await context.repository.createProblem({
         projectId: project,
         environmentId,
         title: command.title,
@@ -143,6 +153,13 @@ export function createProblemService(): ProblemService {
           : {}),
         ...(command.sourceAi !== undefined ? { sourceAi: command.sourceAi } : {}),
       });
+
+      // A new Problem is its canonical source's first state, and the first
+      // rendering starts now rather than at the first Event: an in-progress
+      // investigation is already experience another session may need.
+      requestGenerationQuietly(retrievalMaintenance, context, created.problemId);
+
+      return created;
     },
 
     async getProblem(context, problemId) {
@@ -226,13 +243,23 @@ export function createProblemService(): ProblemService {
 
       // One shared path for every field change, so the locking, the
       // transaction and the history cannot drift between surfaces.
-      return applyProblemMutation(context, {
+      const updated = await applyProblemMutation(context, {
         problemId: target,
         expectedVersion: command.expectedVersion,
         changedBy: command.changedBy,
         patch,
         changedFields,
       });
+
+      // Only when the patch touched the canonical source — the same question
+      // the write itself asked, from the same predicate, so the scheduling
+      // and the invalidation cannot disagree about which fields matter. A
+      // metadata patch invalidated nothing and has nothing to regenerate.
+      if (updateTouchesCanonicalSource(patch)) {
+        requestGenerationQuietly(retrievalMaintenance, context, target);
+      }
+
+      return updated;
     },
   };
 }

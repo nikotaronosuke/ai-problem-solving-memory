@@ -535,7 +535,7 @@ describe.skipIf(databaseUrl === undefined)('generating and storing a retrieval a
       expect(await actor.artifacts.getArtifact(problemId)).toBeUndefined();
     });
 
-    it('leaves an existing artifact exactly as it was', async () => {
+    it('ends with the artifact absent: the append removed it and the stale run cannot rewrite it', async () => {
       const problemId = await makeProblem(actor, 'embed-race-existing');
       const first = await serviceFor(
         actor,
@@ -543,7 +543,7 @@ describe.skipIf(databaseUrl === undefined)('generating and storing a retrieval a
         scriptedProvider(),
       ).generateArtifact(problemId);
       expect(first.kind).toBe('STORED');
-      const existing = await actor.artifacts.getArtifact(problemId);
+      expect(await actor.artifacts.getArtifact(problemId)).toBeDefined();
 
       const provider = barrierProvider();
       const running = serviceFor(actor, scriptedGenerator(), provider).generateArtifact(problemId);
@@ -556,10 +556,14 @@ describe.skipIf(databaseUrl === undefined)('generating and storing a retrieval a
       });
       provider.release();
 
+      // Both halves of the lifecycle in one interleaving. The append took the
+      // stored artifact with it in its own statement — a rendering of the
+      // pre-append source must not survive the append — and the generation
+      // that had been reading that source reaches the locked gate, sees the
+      // fingerprint no longer matches, and writes nothing. Stale data loses
+      // both ways; what remains is absence, which reconciliation can see.
       expect((await running).kind).toBe('SOURCE_CHANGED');
-      // A failed regeneration is not a reason to lose the artifact that was
-      // valid when it was written.
-      expect(await actor.artifacts.getArtifact(problemId)).toEqual(existing);
+      expect(await actor.artifacts.getArtifact(problemId)).toBeUndefined();
     });
 
     it('notices the read control turned off and stores nothing', async () => {

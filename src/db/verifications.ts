@@ -27,16 +27,11 @@ import {
   toVerificationSummary,
   type VerificationId,
 } from '../domain/verification.js';
-import {
-  FOREIGN_KEY_VIOLATION,
-  ProblemNotAvailableError,
-  UNIQUE_VIOLATION,
-  violatesConstraint,
-} from './errors.js';
+import { FOREIGN_KEY_VIOLATION, ProblemNotAvailableError, violatesConstraint } from './errors.js';
 import type { DatabaseExecutor } from './executor.js';
+import { invalidateRetrievalArtifact } from './retrieval-artifact-invalidation.js';
 
 const OWNER_PROBLEM_FK = 'verifications_owner_id_problem_id_fkey';
-const CLIENT_EVENT_ID_KEY = 'verifications_owner_id_client_event_id_key';
 
 export interface VerificationRecord {
   readonly verificationId: VerificationId;
@@ -145,11 +140,14 @@ async function findVerificationByClientEventId(
  * The insert is attempted first and the unique index on
  * `(owner_id, client_event_id)` is what decides. Reading before writing would
  * leave a window in which two concurrent attempts both find nothing and both
- * insert; here one of them loses to the constraint and reads back the winner.
+ * insert; here the loser's insert simply writes nothing and reads back the
+ * winner, exactly as the Event append does.
  *
- * As with Events, the failed insert aborts its transaction. That works because
- * each `executor.query` is its own implicit transaction; calling this inside an
- * explicit one would need a savepoint.
+ * It used the raised violation instead until the lifecycle work, and a
+ * standing note said what would force the change: this append now runs inside
+ * an explicit transaction, so its artifact invalidation can be atomic with
+ * it, and an aborted insert would poison that transaction where `on conflict
+ * do nothing` does not.
  *
  * Whether the problem exists is checked above this, before the append. The
  * unique index is evaluated before the foreign key, so an unknown problem plus
@@ -168,11 +166,19 @@ export async function appendVerification(
 
   let inserted;
   try {
+    // `on conflict do nothing` rather than catching the violation, which is a
+    // change the lifecycle work forced and a standing note had already
+    // prescribed: this append now runs inside an explicit transaction so the
+    // invalidation below can be atomic with it, and an aborted insert would
+    // poison that transaction where the Event form does not. First write
+    // still wins — a conflicting insert writes nothing and reads back the
+    // winner below.
     inserted = await executor.query<VerificationRow>(
       `insert into public.verifications
               (verification_id, owner_id, problem_id, verification_type, result, summary,
                evidence_ref, verified_by, client_event_id)
             values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       on conflict (owner_id, client_event_id) do nothing
          returning ${VERIFICATION_COLUMNS}`,
       [
         verificationId,
@@ -192,30 +198,31 @@ export async function appendVerification(
       // unknown or someone else's is not distinguished, by design.
       throw new ProblemNotAvailableError();
     }
-    if (violatesConstraint(error, UNIQUE_VIOLATION, CLIENT_EVENT_ID_KEY)) {
-      // The same write, sent again. Return what it produced the first time.
-      const original = await findVerificationByClientEventId(
-        executor,
-        context,
-        input.clientEventId,
-      );
-      if (original === undefined) {
-        // The constraint fired, so the row was there a moment ago.
-        // Verifications have no delete path, so this should be unreachable;
-        // saying so beats returning something invented.
-        throw new Error('Verification conflicted on client_event_id but could not be read back.');
-      }
-      return original;
-    }
     throw error;
   }
 
   const row = inserted.rows[0];
-  if (row === undefined) {
-    throw new Error('Verification insert returned no row.');
+  if (row !== undefined) {
+    // A fresh Verification changed the canonical source, so the old rendering
+    // goes with it — a second statement on the same executor, for the same
+    // snapshot reason as the Event append: an artifact committed while the
+    // insert waited on the generation gate's lock is visible to this
+    // statement and to nothing inside the insert's own. Atomic when the
+    // executor is transactional, which the append services guarantee.
+    await invalidateRetrievalArtifact(executor, context, input.problemId);
+    return toRecord(row);
   }
 
-  return toRecord(row);
+  // Nothing was written, so this key was already used: the same write, sent
+  // again. Return what it produced the first time, artifact untouched.
+  const original = await findVerificationByClientEventId(executor, context, input.clientEventId);
+  if (original === undefined) {
+    // The conflict fired, so the row was there a moment ago. Verifications
+    // have no delete path, so this should be unreachable; saying so beats
+    // returning something invented.
+    throw new Error('Verification conflicted on client_event_id but could not be read back.');
+  }
+  return original;
 }
 
 /**

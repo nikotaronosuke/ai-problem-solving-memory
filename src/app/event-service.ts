@@ -20,6 +20,10 @@
 
 import { ResourceNotFoundError } from './errors.js';
 import type { AuthenticatedRequestContext } from './request-context.js';
+import {
+  requestGenerationQuietly,
+  type RetrievalArtifactMaintenance,
+} from './retrieval-artifact-maintenance.js';
 import { toClientEventId } from '../domain/client-event-id.js';
 import type { EventType } from '../domain/enums.js';
 import { toProblemId, type ProblemId } from '../domain/problem.js';
@@ -58,7 +62,9 @@ function asProblemId(value: string): ProblemId {
   }
 }
 
-export function createEventService(): EventService {
+export function createEventService(
+  retrievalMaintenance?: RetrievalArtifactMaintenance,
+): EventService {
   async function requireProblem(
     context: AuthenticatedRequestContext,
     problemId: ProblemId,
@@ -87,16 +93,31 @@ export function createEventService(): EventService {
 
       // The event id and the timestamp are the server's. A caller supplies
       // what happened, never when or under which identity.
-      return context.repository.appendEvent({
-        problemId: problem,
-        eventType: command.eventType,
-        summary: command.summary,
-        clientEventId,
-        ...(command.result !== undefined ? { result: command.result } : {}),
-        ...(command.reason !== undefined ? { reason: command.reason } : {}),
-        ...(command.sourceAi !== undefined ? { sourceAi: command.sourceAi } : {}),
-        ...(command.evidenceRef !== undefined ? { evidenceRef: command.evidenceRef } : {}),
-      });
+      //
+      // In a transaction since the lifecycle work: a fresh append and the
+      // invalidation of the artifact it outdates are two statements, and the
+      // transaction is what makes them one atom. The append itself stays
+      // idempotent and conflict-safe exactly as before.
+      const event = await context.runInTransaction((repository) =>
+        repository.appendEvent({
+          problemId: problem,
+          eventType: command.eventType,
+          summary: command.summary,
+          clientEventId,
+          ...(command.result !== undefined ? { result: command.result } : {}),
+          ...(command.reason !== undefined ? { reason: command.reason } : {}),
+          ...(command.sourceAi !== undefined ? { sourceAi: command.sourceAi } : {}),
+          ...(command.evidenceRef !== undefined ? { evidenceRef: command.evidenceRef } : {}),
+        }),
+      );
+
+      // After the append is committed. A fresh Event changed the canonical
+      // source and the statement took the old artifact with it; a replay
+      // changed nothing and this request costs at worst one regeneration of
+      // an identical rendering — a replay is a retry, and rare.
+      requestGenerationQuietly(retrievalMaintenance, context, problem);
+
+      return event;
     },
 
     async listEvents(context, problemId) {

@@ -24,6 +24,7 @@ import type { ProblemId } from '../domain/problem.js';
 import { normaliseOptionalText } from '../domain/text.js';
 import { FOREIGN_KEY_VIOLATION, ProblemNotAvailableError, violatesConstraint } from './errors.js';
 import type { DatabaseExecutor } from './executor.js';
+import { invalidateRetrievalArtifact } from './retrieval-artifact-invalidation.js';
 
 const OWNER_PROBLEM_FK = 'events_owner_id_problem_id_fkey';
 
@@ -191,6 +192,15 @@ export async function appendEvent(
 
   const row = inserted.rows[0];
   if (row !== undefined) {
+    // A fresh Event changed the canonical source, so the old rendering goes
+    // with it — as a second statement on the same executor, which is what
+    // makes it see an artifact committed while the insert above was waiting
+    // on the generation gate's lock: this statement's snapshot is newer than
+    // that commit, where a CTE riding the insert would still be looking at
+    // the world as it was before. Atomic when the executor is transactional,
+    // which the append services guarantee; a replay returns below and never
+    // reaches this line.
+    await invalidateRetrievalArtifact(executor, context, input.problemId);
     return toRecord(row);
   }
 

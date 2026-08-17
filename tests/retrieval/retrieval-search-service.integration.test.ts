@@ -346,6 +346,44 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
   }
 
   /**
+   * What regeneration would do after a canonical write: put a current
+   * rendering back.
+   *
+   * A test that appends an Event or a Verification to a seeded candidate has
+   * just invalidated its artifact — that is the lifecycle rule, not a fixture
+   * accident — so a test that then searches for the candidate re-seeds the
+   * rendering first, exactly as the maintenance path will.
+   */
+  async function refreshArtifact(
+    owner: Actor,
+    problemId: ProblemId,
+    marker = 'deployment',
+  ): Promise<void> {
+    await owner.artifacts.upsertArtifact({
+      problemId,
+      normalizedSummary: `a summary about ${marker}`,
+      keywords: [marker],
+      structuralFeatures: {
+        schema_version: '1',
+        problem_domain: 'deployment',
+        symptom_patterns: ['fails once deployed'],
+        suspected_boundaries: ['configuration'],
+        occurrence_conditions: ['deployed only'],
+        successful_directions: [],
+        dead_end_directions: ['timeout'],
+        environment_facts: ['node 22.12.0'],
+      },
+      summaryGeneratorId: 'fixture-summary-generator',
+      summaryGeneratorVersion: '1',
+      embedding: [1, 0, 0],
+      embeddingModel: MODEL.id,
+      embeddingModelVersion: MODEL.version,
+      sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
+      generatedAt: new Date('2026-08-16T14:05:00.000Z'),
+    });
+  }
+
+  /**
    * A Problem to search from, with two findable neighbours.
    *
    * Two rather than one on purpose: the rerank stage does not call its model
@@ -1300,6 +1338,9 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
         summary: 'the suite passed at the time',
         clientEventId: randomUUID() as ClientEventId,
       });
+      // The append invalidated the candidate's rendering; regeneration puts a
+      // current one back before anything searches.
+      await refreshArtifact(owner, candidate.problemId);
       const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
 
       const outcome = await searchFor(service, current.problemId);
@@ -1457,6 +1498,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const owner = await makeActor();
       const { current, candidate, other } = await seedSearchable(owner);
       await deadEnd(owner, candidate.problemId, 'widening the connection pool');
+      // The append invalidated the rendering; regeneration restores it.
+      await refreshArtifact(owner, candidate.problemId);
       const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
 
       const outcome = await searchFor(service, current.problemId);
@@ -1479,6 +1522,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const owner = await makeActor();
       const { current, candidate } = await seedSearchable(owner);
       await deadEnd(owner, candidate.problemId, 'widening the connection pool');
+      // The append invalidated the rendering; regeneration restores it.
+      await refreshArtifact(owner, candidate.problemId);
       const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
 
       const outcome = await searchFor(service, current.problemId);
@@ -1556,6 +1601,8 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       const owner = await makeActor();
       const { current, candidate } = await seedSearchable(owner);
       await deadEnd(owner, candidate.problemId, 'widening the connection pool');
+      // The append invalidated the rendering; regeneration restores it.
+      await refreshArtifact(owner, candidate.problemId);
       const service = serviceFor(owner, createRetrievalSearchCache(), provider(), reranker());
 
       const outcome = await searchFor(service, current.problemId);

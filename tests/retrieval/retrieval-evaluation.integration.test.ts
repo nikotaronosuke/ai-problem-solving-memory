@@ -240,22 +240,6 @@ describe.skipIf(databaseUrl === undefined)('retrieval evaluation', () => {
       suspectedBoundary: memory.suspectedBoundary,
     });
 
-    if (memory.artifact !== undefined) {
-      await actor.artifacts.upsertArtifact({
-        problemId: problem.problemId,
-        normalizedSummary: memory.artifact.normalizedSummary,
-        keywords: [...memory.artifact.keywords],
-        structuralFeatures: memory.artifact.features,
-        summaryGeneratorId: 'evaluation-summary-generator',
-        summaryGeneratorVersion: '1',
-        embedding: [...SEMANTIC_CLASSES[memory.artifact.semanticClass]],
-        embeddingModel: EVALUATION_MODEL.id,
-        embeddingModelVersion: memory.artifact.modelVersion ?? EVALUATION_MODEL.version,
-        sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
-        generatedAt: new Date('2026-08-16T09:00:00.000Z'),
-      });
-    }
-
     const update = {
       ...(memory.confidence === undefined ? {} : { confidence: memory.confidence }),
       ...(memory.freshness === undefined ? {} : { freshness: memory.freshness }),
@@ -267,6 +251,38 @@ describe.skipIf(databaseUrl === undefined)('retrieval evaluation', () => {
     }
 
     return problem.problemId;
+  }
+
+  /**
+   * The Memory's search rendering, written after every canonical write.
+   *
+   * Separate from `seedMemory`, and called last, because the lifecycle rule
+   * applies to fixtures too: the Events and Verifications seeded below are
+   * canonical writes, and each takes the artifact of its Problem with it. The
+   * corpus therefore writes the whole record first and renders it once, in
+   * the order production regeneration would.
+   */
+  async function seedArtifact(
+    actor: Actor,
+    memory: CorpusMemory,
+    problemId: ProblemId,
+  ): Promise<void> {
+    if (memory.artifact === undefined) {
+      return;
+    }
+    await actor.artifacts.upsertArtifact({
+      problemId,
+      normalizedSummary: memory.artifact.normalizedSummary,
+      keywords: [...memory.artifact.keywords],
+      structuralFeatures: memory.artifact.features,
+      summaryGeneratorId: 'evaluation-summary-generator',
+      summaryGeneratorVersion: '1',
+      embedding: [...SEMANTIC_CLASSES[memory.artifact.semanticClass]],
+      embeddingModel: EVALUATION_MODEL.id,
+      embeddingModelVersion: memory.artifact.modelVersion ?? EVALUATION_MODEL.version,
+      sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
+      generatedAt: new Date('2026-08-16T09:00:00.000Z'),
+    });
   }
 
   /** The identifier a role was seeded under. */
@@ -356,6 +372,12 @@ describe.skipIf(databaseUrl === undefined)('retrieval evaluation', () => {
       }
     }
 
+    // Every canonical write is in; now render each Memory once, as
+    // regeneration would after the record settled.
+    for (const memory of CORPUS_MEMORIES) {
+      await seedArtifact(owner, memory, idOf(memory.role));
+    }
+
     // Another owner's perfect match for the delivery query.
     const foreignProject = await stranger.memory.createProject({
       projectName: `${FOREIGN_PROJECT.role} ${randomUUID()}`,
@@ -369,6 +391,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval evaluation', () => {
         new Map([[FOREIGN_PROJECT.role, foreignProject.projectId]]),
       ),
     );
+    await seedArtifact(stranger, FOREIGN_DECOY, idOf(FOREIGN_DECOY.role));
   }, 60_000);
 
   afterAll(async () => {
