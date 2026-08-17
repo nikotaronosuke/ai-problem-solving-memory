@@ -426,14 +426,21 @@ describe('what a search refuses to send', () => {
     const plantedFeature = 'plantedfeaturemarker-Kf2W';
     const { fetch } = recordingFetch(() => jsonResponse(200, SEARCHED));
 
+    // Built as an untyped value and cast at the boundary, deliberately. The
+    // public type refuses a wrong version outright — see `search-types.test.ts`
+    // — and what is under test here is the *runtime* refusal, which is the one
+    // that matters for a features block assembled from a config file, a prompt
+    // or another process.
+    const invalid = {
+      ...REQUEST,
+      // Invalid because the version is wrong; the texts are valid and are the
+      // thing that must not travel into an error.
+      semantic_text: planted,
+      current_features: { ...FEATURES, schema_version: '2', problem_domain: plantedFeature },
+    } as unknown as MemorySearchRequest;
+
     const error = await client({ fetch })
-      .search(PROBLEM_ID, {
-        ...REQUEST,
-        // Invalid because the version is wrong; the texts are valid and are the
-        // thing that must not travel into an error.
-        semantic_text: planted,
-        current_features: { ...FEATURES, schema_version: '2', problem_domain: plantedFeature },
-      })
+      .search(PROBLEM_ID, invalid)
       .catch((raised: unknown) => raised);
 
     const serialized = `${(error as Error).message} ${JSON.stringify(error)} ${String((error as Error).stack)}`;
