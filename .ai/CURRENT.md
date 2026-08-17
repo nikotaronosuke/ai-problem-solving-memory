@@ -1184,7 +1184,7 @@ P5-02 is **complete**: implemented, formally reviewed, and its two review findin
 corrected. An assistant can now reach the whole Memory — including the search —
 through the common client.
 
-**NOT STARTED**, and not to be started before P5-02's formal review. P5-02 is implementation-complete: an assistant can now reach the whole Memory through the common client, including the search.
+P5-03 is **NOT STARTED**.
 
 Notes for whoever picks this up:
 - **The retrieval path is finished end to end** — write → invalidation → generation → artifact → search → HTTP → client. Read D-393 to D-438 before touching any of it
