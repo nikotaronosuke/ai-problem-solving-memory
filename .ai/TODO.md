@@ -819,13 +819,21 @@ Replays, version conflicts and refused moves invalidate nothing (D-397). The rea
 
 3726 tests across 121 files. Twenty-eight mutations killed — three first survived and were real test gaps (the close test's review Events masked the conclusion's own delete; the vector and successful-direction gates had no test). All counts unchanged: API 0.4.0 / 27, migrations 16, tables 12, triggers 0, deps 3/0/0, MCP 0.
 
-#### NEXT — P5-02b-impl-2, NOT STARTED
+#### P5-02b-impl-2a — DONE
 
-The production providers and the runtime wiring: three concrete provider implementations and their configuration and credential; the per-owner composition of coordinator and reconciliation; startup and interval sweeps; the dispatcher behind the maintenance doorbell; unconfigured startup behaviour (CRUD runs, generation off). See the handoff in D-403.
+The OpenAI production provider adapters, behind the vendor-neutral ports.
+
+`src/providers/openai/` holds all of it — config, transport, summary generator, embedding provider, structural reranker, profile factory — and a guard proves the vendor's name appears nowhere else in `src/` (D-404). Terra for the generative calls with strict structured outputs, `text-embedding-3-large` at 1024 for vectors, both as code constants whose change is an identity change (D-405). The alias-only limitation is recorded honestly (D-406); the generator identity splits model (id) from this repo's prompt/schema contract (version, D-407). One fixed official host with no way to move it, one credential variable read in one file, absence = stack disabled rather than startup failure (D-408). Native fetch, no SDK, zero hidden retries (D-409). Domain validators stayed the authority over provider schemas (D-410); UUIDs never travel, opaque per-call keys map back locally, and no caller byte reaches the instruction channel (D-411). The external-transmission fact is public in docs/retrieval.md (D-412).
+
+3766 tests across 125 files; twenty-three mutations killed, one after its duplicate-candidate fixture was rebuilt to stop hiding behind the coverage rule.
+
+#### NEXT — P5-02b-impl-2b, NOT STARTED
+
+The runtime wiring: compose config → transport → providers → profile in `src/index.ts`; per-owner coordinator and reconciliation; startup and interval sweeps; the dispatcher behind the maintenance doorbell; unconfigured startup behaviour (CRUD runs, generation off, one safe line). See D-403 and D-408.
 
 #### P5-02c — NOT STARTED
 
-The Search JSON API, the owner-scoped retrieval composition behind it, the client's search method, and the contract version that comes with them. After P5-02b-impl-2, not before.
+The Search JSON API, the owner-scoped retrieval composition behind it, the client's search method, and the contract version that comes with them. After P5-02b-impl-2b, not before.
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
 

@@ -25,6 +25,16 @@ The separation is deliberate and load-bearing:
   the artifact — all in one short transaction. What the commit guarantees is
   exactly that at the moment the artifact was written, its fingerprint described
   the source.
+- Generating one **sends Memory content to a configured external provider**.
+  The canonical source document goes to a summary model, the resulting
+  summary to an embedding model, and at search time structural features go to
+  a comparison model. Production provider adapters exist (initially OpenAI,
+  requests marked not-to-be-stored, no tools, no identifiers attached); the
+  standard server wiring that activates them is the next piece of work, and
+  without a configured credential nothing is sent anywhere. The provider sits
+  behind vendor-neutral seams and is replaceable — no vendor is a permanent
+  part of this design, and changing one regenerates artifacts rather than
+  touching any Memory.
 - A searchable artifact **describes the current record, or it does not exist**.
   Every write that changes what a summary is generated from — an Event, a
   Verification, a canonical Problem field, a status — removes the stored
