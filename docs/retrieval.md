@@ -234,13 +234,40 @@ memory that was asked for. A failure carries less still — the standard error
 envelope and a request id, with nothing the provider said, in the response or in
 the log.
 
-## Not built yet
+## Asking for one through the common client
 
-**No client method.** The server publishes the route; the common API client does
-not call it yet. A search request has four fields and a three-branch answer, and
-the client's default timeout is shorter than the deadline the provider calls sit
-behind — so the method needs a timeout decision rather than a copy of an existing
-one, and a half-written method is worse than none.
+`@ai-problem-solving-memory/api-client` has `search(problemId, request)`. It
+sends the four fields exactly as they are written above, validates them before
+spending a request, and returns what came back without changing it: no renaming,
+no timestamps parsed into dates, no sorting, no de-duplication, no ranks
+renumbered.
+
+Four outcomes are returned rather than raised. Three are the server's — the
+candidates, reading turned off, the source changed. The fourth is the client's
+naming of the `404`: for a search the Problem is the _context_, and losing the
+context is something a caller routinely handles rather than an exception to its
+plan, so it arrives as `CURRENT_PROBLEM_NOT_AVAILABLE` alongside the others. That
+is a normalisation the client performs, not a fourth kind the server sends.
+
+Everything else raises, meaning intact. A refusal is a refusal — including a
+`500`, which may mean the server's provider integration is broken and never means
+the request was wrong. An unanswerable request is an unreachable Memory. An
+answer this contract cannot read is a protocol failure, and the body that could
+not be read is not attached to it.
+
+A search waits longer than an ordinary read. The client's default ceiling for one
+is minutes rather than seconds, because a cold search runs an embedding call and
+a rerank call in series behind the server, and a client that gave up first would
+report an unreachable Memory that was about to answer. It is still finite, and a
+caller that sets its own `timeoutMs` overrides every operation with it.
+
+The client never retries, never falls back, and never judges. An unreachable
+Memory is not answered with an empty result, a Problem that changed mid-search is
+not searched again, and no candidate is called strong or weak. Carrying on
+without memory when the Memory is unavailable is an adapter's decision, and so is
+what to show a person.
+
+## Not built yet
 
 **No automatic trigger.** When to search — a problem appearing, repeated
 failures, a large change in understanding — is an adapter's decision, not the

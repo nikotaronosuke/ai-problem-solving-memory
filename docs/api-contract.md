@@ -417,6 +417,14 @@ second kind of history — see `docs/retrieval.md` for the whole shape.
 
 ## Consuming the document
 
+There is also a hand-written client — `@ai-problem-solving-memory/api-client` —
+which speaks this contract for the two operations it has so far. It mirrors the
+published value sets rather than importing anything from this repository, so it
+can run beside a Memory Server it was not built with; tests here compare both
+copies. It is not a generated client and there is no plan for one: a generator
+would be a build step and a generated file to keep honest, which is larger than
+what it replaces while the client has two methods.
+
 `GET /openapi.json` needs no owner context and returns the document the server
 generated at startup. It is the same object `app.swagger()` reports, and the
 same on every request.
