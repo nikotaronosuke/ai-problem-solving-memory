@@ -1,0 +1,26 @@
+{
+  "name": "@ai-problem-solving-memory/claude-code-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Claude Code's side of the Memory boundary. Turns this host's configuration into a common Memory API client.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-problem-solving-memory/api-client": "*"
+  }
+}

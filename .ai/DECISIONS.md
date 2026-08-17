@@ -3522,3 +3522,123 @@ P5-02 owns it, together with the common JSON API client the adapter sits on. Not
 No production code, test, migration, dependency, route or schema changed. API 0.4.0 with 27 operations, migrations 16, tables 12, FKs 13, DOMAINs 8, `MemoryRepository` 25 and three runtime dependencies are untouched, along with every other Phase 4 count — an audit that changed the system would be an implementation task wearing an audit's name. Three files under `.ai/` were edited and nothing else.
 
 Deliberately absent from these Decisions: the host version the audit ran against, the lifecycle event catalogue, the command list, current CLI flags, the number and names of the skills in the reference library, preview syntax, timeout defaults, and the current on-disk location of any configuration file. Every one of them is true today and none is an invariant of this system; a Decision pinning one would be read later as a rule and would be wrong by then. What belongs here is the shape of the connection and the boundaries it has to respect. Those hold while the details underneath them move, and the details are looked up fresh from the official documentation each time they are needed.
+
+## D-378 — P5-02 is done in three parts, and the roadmap is not rewritten (P5-02a)
+
+The private roadmap has one P5-02: separate what is Claude Code-specific from the Memory, and use a common API client. Investigation found that doing all of it in one change meant a workspace reorganisation, a client, an HTTP route, a per-request composition of eleven owner-scoped services, a decision about three providers nothing implements, and a protocol server — in one commit, with the provider question unresolved underneath it.
+
+So the work is split into P5-02a (this: package boundary and the common client), P5-02b (a read-only investigation of the production retrieval runtime, provider ownership and artifact lifecycle, ending in a design freeze) and P5-02c (the Search route, the owner-scoped composition, the client's search method, and the contract version that comes with them).
+
+The private breakdown is unchanged, and deliberately: this is implementation granularity inside one of its tasks, not a revision of what the task is. P5-02 is done when all three parts are.
+
+## D-379 — Search is not published while nothing can generate an artifact (P5-02a)
+
+The specification allows an initial vertical slice that searches full text only, and the obvious reading is that P5-02 could publish a lexical search now and add the semantic half later. That reading does not survive contact with the code.
+
+Every channel of the search — lexical included — reads a `retrieval_artifact`, and in production nothing generates one: `generateArtifact` has no caller anywhere in `src/`, and none of the three ports has a concrete implementation. A route published now would answer every real search with nothing found, correctly and uselessly, and the fixtures that make it look alive exist only in tests.
+
+Wiring permanently-unavailable providers to make the route exist would be worse than not having it. It would not produce the lexical slice the specification allows — that slice needs artifacts too — and it would convert "this capability is not built" into "this capability is built and returns nothing", which is the harder failure to notice and the one that reaches a user.
+
+So P5-02a adds no route, no provider stub, no version bump and no operation. The contract stays at 0.4.0 with 27 operations.
+
+## D-380 — The artifact and provider gap is P5-02b's, and it is more than one task's leftovers (P5-02a)
+
+P5-02b decides, at minimum: which summary generator, embedding provider and structural reranker production uses; where a concrete provider's selection and configuration live; what triggers an artifact to be created and what triggers it to be regenerated; what happens to an artifact when the record it describes changes; how a stale one is treated; how a provider failure is isolated; and whether any of it needs background work.
+
+Naming P5-09's close review as the sole owner was the obvious answer and is wrong. A Memory has to be searchable before P5-05 turns on automatic search, which is well before anything closes; and a canonical record keeps changing after a close, so a trigger that fires once at the end describes a lifecycle this system does not have.
+
+What P5-02a establishes is only that the question is open and assigned. The absence of an owner was the finding; leaving it without one would have been the failure.
+
+## D-381 — The workspace grows around the server rather than moving it (P5-02a)
+
+`packages/*` with two new private packages, and the Memory Server stays exactly where it is: `src/`, `tests/` and `supabase/` are untouched, and `src/index.ts` is still the composition root.
+
+Moving the server into `packages/server/` would have been tidier on paper and would have rewritten several hundred relative imports across four completed phases to make room for two packages that needed none of it. The layering guards, the delete-path guards and the credential guards all read paths; a move would have touched every one of them, and a rename that large is indistinguishable from a change when something breaks afterwards.
+
+One consequence is deliberate: the root `package.json` is both the workspace root and the server's own manifest. That keeps the server's three runtime dependencies where a reader already looks for them, and a guard asserts they are still exactly `@fastify/swagger`, `fastify` and `pg`.
+
+## D-382 — The common client is what the next assistant reuses, so it knows nothing about this one (P5-02a)
+
+`@ai-problem-solving-memory/api-client` speaks the Memory JSON API and nothing else. No assistant, host, protocol, model or session appears in it, and a guard fails on the vendor names, on an MCP import and on the host's own environment variables.
+
+It has **no external runtime dependencies at all**, which is the property that makes it reusable rather than merely reused: every dependency here is one that a future adapter's environment would have to accept, and the number to defend is zero.
+
+The transport is the platform's `fetch`, injectable for tests. Node has had it for several major versions; adding a client library would be re-implementing something already present, and the injection point costs nothing and is what production actually calls.
+
+## D-383 — One method, because a method nobody calls is a guess (P5-02a)
+
+The client has `getProblem` and no more. The API has twenty-seven operations and the specification names eleven adapter-level meanings, and implementing all of them now would be writing the shape of calls nobody has made yet — `add_event` before anything decides what an Event capture looks like, `close_problem` before the close flow exists.
+
+`getProblem` is the one worth having now: the route is stable, it proves the whole boundary against a real contract, and P5-04 will need it.
+
+There is deliberately no public `request(path, init)`. It is one line and it would end the package's usefulness — every caller reaching for it would be building paths, choosing methods and deciding what `snake_case` means, which is the knowledge this package exists to hold once. A private helper does that inside; nothing exports it.
+
+No code generator either. One method does not justify a generator dependency, a generation step, generated files and a drift policy; the question is worth reopening when hand-writing the client is visibly the problem, and not before.
+
+## D-384 — Three failures, because a caller does three different things (P5-02a)
+
+`MemoryApiError` — the server answered and refused, with the status, the closed code and the request id. `MemoryApiUnreachableError` — no answer, so nothing is known about whether the request arrived. `MemoryApiProtocolError` — something answered in a language this contract does not describe.
+
+The middle one is why there are three. "The Memory said no" and "the Memory said nothing" are different facts, and a fallback path is built on the difference; an adapter that folded them together would treat a restart as a refusal. The third exists because a proxy's error page is not the Memory refusing anything, and reporting it as one would keep the request that caused it.
+
+**No message carries a value.** Every message is fixed prose selected by a closed identifier: the rejected base URL is not echoed, nor the malformed body, nor the server's own `message` field, nor the underlying transport error — not even as a `cause`, which every ordinary logger prints. The trade is real: a failure says what kind it was rather than what the bytes were. The kind is what a caller branches on, and the bytes are what a human wants, which is what the request id leads to.
+
+## D-385 — No retries, and the absence is tested (P5-02a)
+
+Not on a transport failure, not on a 5xx, not on a timeout. A hidden retry turns one recorded Event into two, and the caller that could have judged whether resending was safe never learns anything was resent. Three tests assert one call is one request, for a failure, an error and a success.
+
+A request does carry a deadline, because a call that hangs forever stops the work it was helping. The deadline is a named constant and not a recorded invariant: the right value depends on what the slowest server path ends up doing, and it should move with that rather than be defended.
+
+Retrying is a policy about the caller's work rather than about HTTP. It belongs with the retry queue, in P5-11.
+
+## D-386 — The credential is configured once and is not readable afterwards (P5-02a)
+
+It is presented as `Authorization: Bearer`, and appears in no URL, no query string, no body, no error message, no error property and nothing the client can be serialised into. `Object.keys` on a built client is exactly `['getProblem']`, and the adapter returns a client rather than a configuration object — a returned `{ client, credential }` would be convenient once and would then be the reason a credential is in a diagnostic dump.
+
+A base URL carrying its own credentials is refused rather than stripped: quietly dropping half of `http://user:pw@host` would send the request anyway, authenticated in a way nobody mentioned.
+
+Blank is refused too, at construction. A blank credential is a configuration mistake wearing an authentication failure's clothes, and it is the exact shape an unset environment variable arrives in.
+
+The tests for all of this assert **absence as a boolean**. A failing equality assertion prints both sides, and one of the sides would be the credential.
+
+## D-387 — Presence is the adapter's question, meaning is the client's (P5-02a)
+
+The adapter reads `MEMORY_API_TOKEN` and `MEMORY_API_URL` and applies exactly one rule of its own: whether the credential variable is set. Everything about whether the values *mean* anything — that a base URL is a URL, carries no credentials and has no query or fragment, that a credential is not blank — is the client's, applied where it lives rather than copied.
+
+The division is real rather than cosmetic. "You have not configured this host" is something only this host's adapter can say; "this is not a usable base URL" is true wherever the value came from. Two tests pin the sides: an unset variable raises the adapter's error, a blank one raises the client's.
+
+## D-388 — The adapter has no protocol code, so it has no protocol dependency (P5-02a)
+
+The current official TypeScript SDK is a stable v2 published as split server and client packages, and none of it is installed. The adapter depends on the workspace client and on nothing else; a guard fails on any `@modelcontextprotocol/*` or `zod` entry in its manifest.
+
+Adding an SDK now would pin a version against code that does not exist yet, and the state of that SDK is exactly the kind of fact P5-01 refused to record — it changed generation once already while this phase was being planned. It is checked again, from the official source, in the task that writes the first protocol call.
+
+There is no `bin`, no stdio bootstrap and no empty server. Something that starts and answers nothing is worse than nothing: it is a thing to configure, misconfigure and debug for no capability.
+
+## D-389 — The boundaries are declared in manifests, not only asserted in prose (P5-02a)
+
+The load-bearing guard is the dependency list. A package that does not declare a dependency cannot import it, whatever a source scan says, so the manifests are checked first: the server's three, the client's zero, the adapter's one.
+
+The source scans catch what a manifest cannot. npm hoists workspace dependencies to the root `node_modules` and Node resolves them from there, so an undeclared import can work by accident — and a relative import escapes a package without naming anything. That last one is resolved rather than matched: `../../../src/app/index.js` and a longer walk to the same file are one violation, and only the short spelling looks like one. A mutation injecting exactly that import survived the first version of the guard, which allowed any relative specifier; the guard was wrong and the mutation is what said so.
+
+The vendor-name scan reads shipped code only. A test fixture legitimately contains `claude-code` as a `source_ai` value, which is free-form text the server really returns, and a guard that could not tell a dependency from a sample is one nobody keeps.
+
+## D-390 — The client mirrors the contract, and the server's own suite keeps the mirror honest (P5-02a)
+
+The client carries its own copies of the Problem statuses, fix kinds, confidences, freshnesses, error codes and required fields, because importing them from `src/` would make it a client only this repository could run.
+
+A copy drifts, so a test in the server's suite compares both lists — the only place allowed to see both sides. What it prevents is not bookkeeping: if the server learns a sixth status and the client does not, the client rejects every Problem in that state as a malformed response, and a Memory that exists and is readable is reported as a protocol failure.
+
+## D-391 — One command still checks everything (P5-02a)
+
+`npm run typecheck`, `npm run build`, `npm run lint`, `npm run format:check`, `npm test` and `npm run check` all cover the server and both packages. One test run collects every suite, and a guard asserts that each workspace package is named in the root build and typecheck scripts and defines those scripts itself — because a package no root command names is a package that is quietly not checked, and nothing else would fail if a third were added and forgotten.
+
+The one place the same edge is described twice is deliberate and small: `paths` in the root `tsconfig.json` and an alias in the Vitest config resolve the workspace packages to their sources, so a clean checkout typechecks, lints and tests with nothing built. Both build configurations clear `paths`, so a built package depends on a built package rather than carrying a copy of a sibling's source — and a test asserts that clearing, because the version of it that was missing produced no error at all.
+
+## D-392 — What P5-02a changed, and what it left alone (P5-02a)
+
+Two new private packages, one new root test directory, workspace configuration, and nothing else. No route, no migration, no schema, no repository operation, no runtime dependency for the server, no provider, no protocol code. API 0.4.0 with 27 operations, migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, `MemoryRepository` 25, server runtime dependencies 3, client 0, adapter 0, MCP 0 — every one measured.
+
+Twenty-eight mutations, all killed by a named test or guard: twenty-two on behaviour and six injecting a forbidden construct. Two behaviour mutations had to be corrected first because they proved nothing — one appended a closed identifier rather than leaking anything, the other called a function that did not exist and so never retried — and one boundary mutation found a real hole, which is D-389.
+
+P5-02b is next and has not started. Nothing in Phase 5 beyond this boundary exists: no Search route, no Project detection, no session handling, no MCP server, and no Skill, hook or plugin.

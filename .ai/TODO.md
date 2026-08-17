@@ -781,11 +781,41 @@ Not depended on, deliberately: preview features, delegation as a transport, defe
 
 Every count unchanged: 3607 tests across 113 files, migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, `MemoryRepository` 25, API 0.4.0 / 27 operations, runtime dependencies 3.
 
-### NEXT — P5-02 adapter boundary, common Memory API client, search transport
+### P5-02 — IN PROGRESS, split into three parts
 
-**NOT STARTED.** See the private Phase 5 breakdown. P5-01 settled how the assistant reaches the Memory; P5-02 settles what it says when it gets there — the adapter's tool surface, the common JSON API client, and the cross-project search route Phase 4 handed forward (D-357, D-376).
+The private breakdown has one P5-02 and is unchanged. This is implementation granularity inside it (D-378), because doing all of it at once meant a workspace reorganisation, a client, an HTTP route, a per-request composition of eleven owner-scoped services, an unresolved provider question and a protocol server in one commit.
 
-**Before the first real integration run, check that the local assistant installation is in a supported working state.** The audit found the launcher shim on this machine pointing at an executable that was not present, so the ordinary command did not start; the audit worked around it read-only rather than repairing it. Verifying and, where needed, automatically repairing or updating the installation is a preflight the tooling performs — a user should not be asked to fix it by hand. The repair itself has not been started, and the version number involved is not an invariant of this system (D-377).
+#### P5-02a — DONE
+
+Package boundary and the common Memory API client.
+
+**Two private workspace packages, and the server stayed put** (D-381). `packages/memory-api-client/` speaks the Memory JSON API and knows no assistant, host or protocol; `packages/claude-code-adapter/` holds what is particular to this host. `src/`, `tests/` and `supabase/` did not move — relocating four completed phases to make room for two packages that needed none of it would have rewritten several hundred imports and every path-reading guard.
+
+**The client** has no external runtime dependencies at all, uses the platform's `fetch`, and has one method: `getProblem` (D-382, D-383). Twenty-seven operations exist and eleven adapter meanings are named in the specification; implementing them now would be writing the shape of calls nobody has made. There is no public `request()` escape hatch and no code generator. Failures come in three kinds — refused, unreachable, unreadable — because a caller does three different things with them, and no message carries a value that caused it, not even as a `cause` (D-384). No retries of any kind, and the absence is tested (D-385). The credential is a bearer token and is not readable back off the client (D-386).
+
+**The adapter** turns `MEMORY_API_TOKEN` and `MEMORY_API_URL` into a client and does nothing else. It owns one rule, whether the credential variable is set, and leaves what the values mean to the client (D-387). `CLAUDE_CODE_SOURCE_AI` is `'claude-code'` — no version, no session, no path, never model-supplied.
+
+**No Search route, and that is the point** (D-379). Every search channel reads a retrieval artifact and production generates none, so a route published now would answer every real search with nothing found. Wiring permanently-unavailable providers to make it exist would turn "not built" into "built and returns nothing", which is the harder failure to notice. **No MCP dependency and no protocol code** either, so no SDK version is pinned against code that does not exist yet (D-388) — and no `bin`, no stdio bootstrap, no empty server.
+
+**The boundaries are declared in manifests first** and scanned in sources second (D-389), because npm hoists and a relative import can escape a package without naming anything. A test in the server's suite compares the client's mirrored value sets against the server's own, so the copy cannot drift into rejecting valid Problems as malformed (D-390). One `npm run check` still covers everything, and a guard asserts every workspace package is named in the root commands (D-391).
+
+Twenty-eight mutations, all killed: twenty-two on behaviour, six injecting a forbidden construct. Two behaviour mutations proved nothing until corrected, and one boundary mutation found a real hole — the adapter guard allowed any relative import, including `../../../src/app/index.js`.
+
+3675 tests across 117 files. Unchanged: API 0.4.0 / 27 operations, migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, `MemoryRepository` 25, server runtime dependencies 3. New: client dependencies 0, adapter external dependencies 0, MCP dependencies 0.
+
+#### NEXT — P5-02b, read-only, NOT STARTED
+
+Production retrieval providers, and the artifact generation and freshness lifecycle. Ends in a design freeze rather than in code.
+
+It has to name owners for: the concrete summary generator, embedding provider and structural reranker; where provider selection and configuration live; what triggers artifact generation and regeneration; what happens to an artifact when the record it describes changes, including after a close; stale artifacts; provider failure isolation; and whether background work is needed (D-380).
+
+P5-09 was the obvious sole owner and is the wrong one: a Memory must be searchable before P5-05 turns on automatic search, which is long before anything closes, and a canonical record keeps changing afterwards.
+
+#### P5-02c — NOT STARTED
+
+The Search JSON API, the owner-scoped retrieval composition behind it, the client's search method, and the contract version that comes with them. After P5-02b, not before.
+
+**Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
 
 ## BLOCKED
 

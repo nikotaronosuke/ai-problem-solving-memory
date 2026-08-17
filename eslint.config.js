@@ -4,7 +4,8 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**'],
+    // Build output anywhere, including each workspace package's own.
+    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
