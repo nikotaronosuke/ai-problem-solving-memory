@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02b-impl-2a)
+Updated: 2026-08-17 (P5-02b-impl-2b)
 
 ## Current phase
 
@@ -20,7 +20,7 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
   - P5-02b — production retrieval runtime: investigation and design freeze **DONE**
     - P5-02b-impl-1 — RetrievalArtifact lifecycle correctness: **DONE**
     - P5-02b-impl-2a — OpenAI production provider adapters: **DONE**
-    - P5-02b-impl-2b — runtime wiring (composition, sweeps, dispatcher): **NEXT / NOT STARTED**
+    - P5-02b-impl-2b — production runtime wiring: **DONE** — P5-02b is implementation-complete
   - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **NOT STARTED**
 - P5-03 — Project auto-detection: **NOT STARTED**
 
@@ -1128,22 +1128,27 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **The trust boundary did not move.** Strict schemas make well-formed answers the cheap case; the domain validators remain the authorities, refusals and incomplete responses are refused by kind, and there is no prose fallback (D-410). What travels is minimal: the fingerprinted source, the verbatim summary, features under per-call opaque keys — never a Problem UUID, never ranking material, never an instruction channel a caller byte can reach (D-411). Sending Memory content to the configured provider is named plainly in `docs/retrieval.md` (D-412).
 
+## What exists now — the production retrieval runtime (P5-02b-impl-2b)
+
+**A standard `npm start` server now runs the whole supply side** when `OPENAI_API_KEY` is set: canonical write → atomic invalidation → post-commit doorbell → owner-scoped background generation through the configured providers → locked fingerprint gate → stored artifact, with a startup sweep as automatic backfill and a periodic sweep as crash and outage recovery. Without the credential, the capability is disabled and nothing else changes — CRUD runs, `/health` keeps its meaning, no timer, no owner scan, no outbound request, and the startup summary says `retrieval-generation=DISABLED` (D-414).
+
+**The boundaries held.** The composition root imports one vendor-neutral boundary (`src/providers/index.ts`) and never a vendor name (D-413). The runtime (`src/runtime/retrieval-runtime.ts`) is vendor-neutral and owner-honest: cross-owner discovery returns identifiers only, every context is resolved through `resolveOwnerContextFor` with casts guarded off, and every read below is owner-scoped (D-415). Owner stacks are lazy, cached, and evicted on failed builds; a process-wide semaphore holds generation to one at a time across owners (D-416). Sweeps run after the listener, are never awaited, never overlap, and contain their failures as closed words (D-417). `stop()` clears the timer, refuses new work, and shutdown waits for no provider (D-418).
+
 ## Immediate objective
 
-P5-02b-impl-2b — the runtime wiring of the lifecycle.
+P5-02c — the Search JSON API.
 
-**NOT STARTED.** The lifecycle is enforced and the providers exist; what remains is everything that makes a standard `npm start` server actually generate artifacts.
-
-What it owns:
-- **The composition wiring**: resolve `resolveOpenAiRetrievalConfig`, build the transport and the three providers, derive the profile with `retrievalGenerationProfileFor`, compose coordinator and reconciliation per owner, run the sweep at startup and on an interval, and stand a dispatcher behind the services' `RetrievalArtifactMaintenance` doorbell
-- **Startup behaviour when unconfigured**: Memory CRUD runs, retrieval generation stays off, one safe line says so (frozen direction from the P5-02b investigation)
+**NOT STARTED**, pending formal review of P5-02b. The supply side is production-complete; what remains of P5-02 is the demand side:
+- **The route** — `POST /v1/problems/:problem_id/search` per the frozen investigation shape: four request fields, all outcomes as 200 typed answers, lossless candidate material, API 0.4.0 → 0.5.0, operations 27 → 28
+- **The owner-scoped search composition**, built per request where the owner context already exists; the configured `structuralReranker` is already constructed and waiting on `ConfiguredRetrievalProviders` (D-413), and the search cache lives at the composition root with the owner inside the key
+- **The common client's `search()` method**, and the OpenAPI drift tests that come with the new response shape
 
 Notes for whoever picks this up:
-- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix. Read D-393 to D-403 before touching any of it; the CTE-versus-second-statement history in D-395 is the one most likely to be re-litigated by accident
-- **The search route is owed and was not cancelled.** The specification lists a cross-project similarity search among the minimum API surface, and it is the only item in that list without a route (D-357, D-376). P5-02c stays behind impl-2
+- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix, and now the production wiring end to end. Read D-393 to D-419 before touching any of it
+- **The search route is owed and was not cancelled.** The specification lists a cross-project similarity search among the minimum API surface, and it is the only item in that list without a route (D-357, D-376)
 - **An adapter must not import the internal service** (D-363), and the common client must stay free of any assistant, host or protocol (D-382). Both are guarded in `tests/packages/boundary.test.ts`
 - **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look details up fresh from the official documentation rather than from anything recorded here
-- `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide — including, since impl-1, what happens to a rendering when the record changes
+- `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide — including what happens to a rendering when the record changes, and what the maintenance loop now does automatically
 - **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been done once; the failure it fixed was a silent one and can recur
 
 ## Core MVP milestone

@@ -34,9 +34,23 @@ export interface StartupSummary {
   readonly nodeVersion: string;
   readonly host: string;
   readonly port: number;
+  /**
+   * Whether a retrieval generation stack is configured, as one closed word.
+   *
+   * The one operational fact somebody needs when artifacts are not
+   * appearing. Deliberately a boolean-shaped word and nothing else: no
+   * vendor, no model, and no field that could ever hold a credential — the
+   * provider configuration is not part of `AppEnv` at all, precisely so it
+   * cannot end up in a line built for pasting into an issue.
+   */
+  readonly retrievalGeneration: 'ENABLED' | 'DISABLED';
 }
 
-export function buildStartupSummary(env: AppEnv, nodeVersion = process.version): StartupSummary {
+export function buildStartupSummary(
+  env: AppEnv,
+  retrievalGenerationEnabled = false,
+  nodeVersion = process.version,
+): StartupSummary {
   return {
     service: SERVICE_NAME,
     nodeEnv: env.nodeEnv,
@@ -44,6 +58,7 @@ export function buildStartupSummary(env: AppEnv, nodeVersion = process.version):
     nodeVersion,
     host: env.host,
     port: env.port,
+    retrievalGeneration: retrievalGenerationEnabled ? 'ENABLED' : 'DISABLED',
   };
 }
 
@@ -55,5 +70,6 @@ export function formatStartupSummary(summary: StartupSummary): string {
     `log=${summary.logLevel}`,
     `host=${summary.host}`,
     `port=${summary.port}`,
+    `retrieval-generation=${summary.retrievalGeneration}`,
   ].join(' | ');
 }

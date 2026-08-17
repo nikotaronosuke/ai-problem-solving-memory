@@ -7,6 +7,7 @@ describe('startup summary', () => {
   it('describes the service from the loaded environment', () => {
     const summary = buildStartupSummary(
       loadEnv({ NODE_ENV: 'test', LOG_LEVEL: 'error', HOST: '127.0.0.1', PORT: '4000' }),
+      false,
       'v22.0.0',
     );
 
@@ -17,15 +18,16 @@ describe('startup summary', () => {
       nodeVersion: 'v22.0.0',
       host: '127.0.0.1',
       port: 4000,
+      retrievalGeneration: 'DISABLED',
     });
   });
 
   it('formats a single-line startup message', () => {
-    const summary = buildStartupSummary(loadEnv({}), 'v22.0.0');
+    const summary = buildStartupSummary(loadEnv({}), true, 'v22.0.0');
 
     expect(formatStartupSummary(summary)).toBe(
       `${SERVICE_NAME} starting | node=v22.0.0 | env=development | log=info | ` +
-        `host=127.0.0.1 | port=3000`,
+        `host=127.0.0.1 | port=3000 | retrieval-generation=ENABLED`,
     );
   });
 
@@ -33,6 +35,7 @@ describe('startup summary', () => {
     const line = formatStartupSummary(
       buildStartupSummary(
         loadEnv({ DATABASE_URL: 'postgresql://u:hunter2@db.example.com:5432/x' }),
+        false,
         'v22.0.0',
       ),
     );

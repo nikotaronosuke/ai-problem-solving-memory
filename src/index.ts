@@ -42,6 +42,8 @@ import { createCredentialAuthenticator, createCredentialRepository } from './cre
 import { closePool, createPool, type DatabasePool } from './db/pool.js';
 import { createTransactionRunner } from './db/transaction.js';
 import { buildMemoryHttpApp, createLoggerOptions } from './http/index.js';
+import { createConfiguredRetrievalProviders } from './providers/index.js';
+import { createRetrievalRuntime } from './runtime/retrieval-runtime.js';
 import { buildStartupSummary, formatStartupSummary, STARTUP_FAILURE_MESSAGE } from './service.js';
 
 /**
@@ -62,6 +64,22 @@ async function main(): Promise<void> {
   const env = loadEnv();
   const pool = createPool(resolveDatabaseConfig({ nodeEnv: env.nodeEnv }));
 
+  // The retrieval stack, if one is configured. `enabled: false` is the
+  // ordinary answer for a server without the provider credential: everything
+  // below composes exactly as it always has, no maintenance runtime exists,
+  // and no timer or outbound request can occur. The composition root learns
+  // whether a stack exists and never which vendor it is.
+  const configuredRetrieval = createConfiguredRetrievalProviders(process.env);
+  const retrievalRuntime = configuredRetrieval.enabled
+    ? createRetrievalRuntime({
+        pool,
+        summaryGenerator: configuredRetrieval.summaryGenerator,
+        embeddingProvider: configuredRetrieval.embeddingProvider,
+        generationProfile: configuredRetrieval.generationProfile,
+      })
+    : undefined;
+  const maintenance = retrievalRuntime?.maintenance;
+
   const app = buildMemoryHttpApp({
     healthService: createHealthService(pool),
     requestContextService: createRequestContextService(
@@ -70,15 +88,15 @@ async function main(): Promise<void> {
       createCredentialAuthenticator(createCredentialRepository(pool)),
     ),
     projectEnvironmentService: createProjectEnvironmentService(),
-    problemService: createProblemService(),
-    problemStatusService: createProblemStatusService(),
-    eventService: createEventService(),
-    verificationService: createVerificationService(),
+    problemService: createProblemService(maintenance),
+    problemStatusService: createProblemStatusService(maintenance),
+    eventService: createEventService(maintenance),
+    verificationService: createVerificationService(maintenance),
     relationService: createRelationService(),
     usageLogService: createUsageLogService(),
     changeLogService: createChangeLogService(),
     memoryControlService: createMemoryControlService(),
-    problemCloseService: createProblemCloseService(),
+    problemCloseService: createProblemCloseService(maintenance),
     problemDeleteService: createProblemDeleteService(),
     exportService: createExportService(),
     // Credentials must not survive into a log file, and the failure is silent
@@ -99,8 +117,11 @@ async function main(): Promise<void> {
     app.log.info({ event: 'SERVER_SHUTDOWN', signal }, 'shutting down');
 
     try {
-      // Stop accepting requests before taking the database away from the ones
-      // already in flight.
+      // Maintenance first, so nothing schedules new background work while
+      // the door is closing; then stop accepting requests; then take the
+      // database away. An in-flight generation is not waited for — its
+      // failure leaves absence, which the next startup sweep repairs.
+      retrievalRuntime?.stop();
       await app.close();
       await closePool(pool);
     } catch {
@@ -122,10 +143,11 @@ async function main(): Promise<void> {
   }
 
   // Static, and the only console output the server process makes: a service
-  // name, a Node version, an environment name, a log level, and the address it
-  // is about to bind. No connection string, no owner id, nothing a caller sent
-  // — there are no callers yet.
-  console.log(formatStartupSummary(buildStartupSummary(env)));
+  // name, a Node version, an environment name, a log level, the address it
+  // is about to bind, and whether a retrieval generation stack is configured
+  // — as one closed word, never a credential or a vendor. No connection
+  // string, no owner id, nothing a caller sent — there are no callers yet.
+  console.log(formatStartupSummary(buildStartupSummary(env, configuredRetrieval.enabled)));
 
   try {
     await app.listen({ host: env.host, port: env.port });
@@ -134,6 +156,12 @@ async function main(): Promise<void> {
     await closeQuietly(pool);
     throw error;
   }
+
+  // After the listener is up, deliberately: the startup sweep is the backfill
+  // and the crash recovery, it runs in the background, and ordinary CRUD
+  // availability never waits on a provider. Its failures stay inside the
+  // runtime as closed diagnostics and cannot become a startup failure.
+  retrievalRuntime?.start();
 }
 
 try {
