@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02b-impl-1)
+Updated: 2026-08-17 (P5-02b-impl-2a)
 
 ## Current phase
 
@@ -19,7 +19,8 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
   - P5-02a — package boundary and common Memory API client: **DONE**
   - P5-02b — production retrieval runtime: investigation and design freeze **DONE**
     - P5-02b-impl-1 — RetrievalArtifact lifecycle correctness: **DONE**
-    - P5-02b-impl-2 — production providers, configuration, runtime wiring: **NEXT / NOT STARTED**
+    - P5-02b-impl-2a — OpenAI production provider adapters: **DONE**
+    - P5-02b-impl-2b — runtime wiring (composition, sweeps, dispatcher): **NEXT / NOT STARTED**
   - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **NOT STARTED**
 - P5-03 — Project auto-detection: **NOT STARTED**
 
@@ -1119,15 +1120,22 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **Handed to P5-02b-impl-2, by name.** The concrete providers, their configuration and credential, the startup and interval wiring of the sweep, and the per-owner dispatcher behind the doorbell. P5-02c stays behind that (D-403).
 
+## What exists now — the OpenAI provider adapters (P5-02b-impl-2a)
+
+**The three ports have production implementations**, all under `src/providers/openai/`, and the vendor's name appears nowhere else in `src/` — a guard reads that (D-404). Generative calls use `gpt-5.6-terra` on the Responses API with strict structured outputs; embeddings use `text-embedding-3-large` at 1024 dimensions. Both are code constants, not knobs: changing a model is a visible identity change that reconciliation turns into regeneration (D-405). OpenAI publishes no dated snapshots, so the alias is the identity and its limits are recorded rather than papered over (D-406); the generator id carries the model, the generator version (`retrieval-summary-v1`) carries this repo's prompt/schema contract (D-407).
+
+**One fixed host, one credential.** The transport posts to the official endpoint as a constant with no way to move it; `OPENAI_API_KEY` is read in exactly one file, appears only in the authorization header, and its absence means the retrieval stack is disabled — never a startup failure (D-408). Native fetch, no SDK, zero hidden retries, a named-constant timeout (D-409).
+
+**The trust boundary did not move.** Strict schemas make well-formed answers the cheap case; the domain validators remain the authorities, refusals and incomplete responses are refused by kind, and there is no prose fallback (D-410). What travels is minimal: the fingerprinted source, the verbatim summary, features under per-call opaque keys — never a Problem UUID, never ranking material, never an instruction channel a caller byte can reach (D-411). Sending Memory content to the configured provider is named plainly in `docs/retrieval.md` (D-412).
+
 ## Immediate objective
 
-P5-02b-impl-2 — the production providers and the runtime wiring of the lifecycle.
+P5-02b-impl-2b — the runtime wiring of the lifecycle.
 
-**NOT STARTED.** The lifecycle correctness underneath it is done and guarded; what remains is everything that makes a standard `npm start` server actually generate artifacts.
+**NOT STARTED.** The lifecycle is enforced and the providers exist; what remains is everything that makes a standard `npm start` server actually generate artifacts.
 
-What it owns, by the impl-1 handoff (D-403):
-- **The three concrete providers** — summary generator, embedding provider, structural reranker — their configuration, their credential (server process env only, D-374 applies), and the identity values that feed `RetrievalGenerationProfile`
-- **The composition wiring**: build the coordinator and reconciliation per owner, run the sweep at startup and on an interval, and stand a dispatcher behind the services' `RetrievalArtifactMaintenance` doorbell
+What it owns:
+- **The composition wiring**: resolve `resolveOpenAiRetrievalConfig`, build the transport and the three providers, derive the profile with `retrievalGenerationProfileFor`, compose coordinator and reconciliation per owner, run the sweep at startup and on an interval, and stand a dispatcher behind the services' `RetrievalArtifactMaintenance` doorbell
 - **Startup behaviour when unconfigured**: Memory CRUD runs, retrieval generation stays off, one safe line says so (frozen direction from the P5-02b investigation)
 
 Notes for whoever picks this up:
