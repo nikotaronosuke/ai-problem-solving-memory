@@ -3949,3 +3949,23 @@ The client↔server integration test is the part worth keeping. The client's sui
 Nothing on the server moved. API 0.5.0 / 28 operations, migrations 16, tables 12, FK 13, DOMAIN 8, triggers 0, deps 3/0/1-workspace, MCP 0, SDK 0, client methods 2. 4109 tests across 134 files; thirty-three mutations, all killed.
 
 D-427's timeout handoff is **resolved** by D-436. P5-02c is implementation-complete, and so is P5-02. P5-03 is next and is not started.
+
+## D-439 — The reference set is not normative (P5-02 milestone closeout)
+
+`docs/reference-set.md` exists because eight months of conversation accumulated official documentation families, a reference implementation, several articles, a social post, a video and a handful of ideas worth not losing — and because a pile of links with no stated status is the kind of thing a future task mistakes for a plan.
+
+It is outside the authority chain. That chain is the private specification, then the roadmap and task breakdown, then this file, then the code and its tests, and the reference set sits beside all four rather than anywhere in them. Reference, Decision and adoption are three different things: a reference is something somebody saw, a Decision is something this project settled, and adoption is code that exists. The document says so in its first sentence, labels every item with a status and a source quality, and shows official documentation and a social post as what they are rather than as equals.
+
+Where a Decision already says the same thing as a reference, the Decision is the authority and the reference is a cross-reference to where a similar idea was seen. Nothing in that document may be read as the *cause* of a Decision unless the Decision's own text says so — a mapping is "consistent with", and the causal version would be history invented after the fact.
+
+The document also records what is **not** adopted, which is the part most worth keeping: Memory as a company OS, a model router, a general tool gateway, a global approval engine or an external-credential store; a Skill registry before anything needs one; automatic Skill generation in the MVP; a heavy wrapper around the interactive session; a dependency on a local model; a compute router. None of those is banned forever. Each is a thing this system currently is not, written down so that reading an inspiring article does not quietly turn into scope.
+
+Curating it is documentation hygiene. It has no roadmap number, gained none by being written, and this closeout deliberately did not invent one.
+
+## D-440 — Promoting a reference takes a task, fresh verification, and a Decision (P5-02 milestone closeout)
+
+Six steps, and the order matters: a future task that genuinely needs the thing; the relevant official information looked up **fresh at that point** rather than read back from the document; comparison against this project's current principles; investigation and a design freeze; an explicit Decision; then implementation inside that task's scope.
+
+The second step is the one the rule exists for. Everything in the reference set was captured on one day, and a captured fact about somebody else's product decays without announcing it — which is why P5-01 deliberately refused to pin versions, event catalogues, command lists, flags and file locations (D-377), and why this document repeats that refusal instead of undoing it.
+
+Secondary and social sources are legitimate ways to *find* something and are never the final basis for anything about security, authentication, a protocol, a provider's capabilities or a product's current behaviour. An item whose original source could not be recovered is marked `UNPINNED` and cannot support an implementation at all until it is — a concept remembered from a conversation is a reason to go looking, not evidence. Guessing a title or reconstructing a URL to fill the gap would convert an honest absence into a false citation, which is worse than the gap.
