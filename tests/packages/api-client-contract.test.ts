@@ -41,6 +41,7 @@ import {
   MEMORY_SEARCH_VERIFICATION_TYPES,
   PROBLEM_RESOURCE_FIELDS,
   PROBLEM_STATUSES as CLIENT_PROBLEM_STATUSES,
+  PROJECT_RESOURCE_FIELDS,
 } from '@ai-problem-solving-memory/api-client';
 
 import { SEMANTIC_CHANNEL_STATUSES } from '../../src/app/index.js';
@@ -68,7 +69,7 @@ import {
   STRUCTURAL_FEATURE_SCHEMA_VERSION,
 } from '../../src/domain/retrieval-summary.js';
 import { ERROR_CODES } from '../../src/http/errors.js';
-import { PROBLEM_RESOURCE_SCHEMA } from '../../src/http/resources.js';
+import { PROBLEM_RESOURCE_SCHEMA, PROJECT_RESOURCE_SCHEMA } from '../../src/http/resources.js';
 import { SEARCH_REQUEST_SCHEMA, SEARCH_RESPONSE_SCHEMA } from '../../src/http/search-resources.js';
 
 describe('the value sets the client mirrors', () => {
@@ -108,6 +109,36 @@ describe('the Problem the client expects', () => {
 
     for (const field of PROBLEM_RESOURCE_FIELDS) {
       expect(`${field}:${described.includes(field)}`).toBe(`${field}:true`);
+    }
+  });
+});
+
+describe('the Project the client expects', () => {
+  it('requires exactly the fields the response schema requires', () => {
+    // The same comparison the Problem gets, against the schema the routes
+    // validate with — which is also what the OpenAPI document is assembled from,
+    // so there is one source and the client is measured against it.
+    expect([...PROJECT_RESOURCE_FIELDS].sort()).toEqual(
+      [...PROJECT_RESOURCE_SCHEMA.required].sort(),
+    );
+  });
+
+  it('expects no field the schema does not describe', () => {
+    expect([...PROJECT_RESOURCE_FIELDS].sort()).toEqual(
+      Object.keys(PROJECT_RESOURCE_SCHEMA.properties).sort(),
+    );
+    // Which is why the client checks for an exact key set rather than for the
+    // fields it needs: the server promised there would be no others.
+    expect(PROJECT_RESOURCE_SCHEMA.additionalProperties).toBe(false);
+  });
+
+  it('agrees that a repository and a platform may be absent', () => {
+    // P5-03 compares Projects by repository, and a Project without one is
+    // ordinary. A client that required it would reject those Projects as
+    // malformed responses.
+    for (const field of ['repo', 'platform'] as const) {
+      const declared = PROJECT_RESOURCE_SCHEMA.properties[field] as { type: readonly string[] };
+      expect([...declared.type].sort(), field).toEqual(['null', 'string']);
     }
   });
 });

@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02 milestone closeout)
+Updated: 2026-08-17 (P5-03)
 
 ## Current phase
 
@@ -24,7 +24,8 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
   - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **DONE**
     - P5-02c-impl-1 — Search JSON API and owner-scoped search composition: **DONE after formal-review correction**
     - P5-02c-impl-2 — the common client's `search()` method: **DONE after formal-review correction**
-- P5-03 — Project auto-detection: **NEXT / NOT STARTED**
+- P5-03 — Project auto-detection: **DONE**
+- P5-04 — Current Problem detection: **NEXT / NOT STARTED**
 
 ## Source of truth
 
@@ -1176,20 +1177,36 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **The Claude adapter is unchanged** (D-438). It returns the client it built, so the method arrived for free — and a guard checks it did not also grow policy about when to search or what to call itself.
 
+## What exists now — Project auto-detection (P5-03)
+
+**The adapter can say which existing Project a session is working in, or that the answer is not obvious.** Three modules and one client method; it asks nobody anything and creates nothing.
+
+**The anchor is the project root, given as an argument** (D-441). It will be `CLAUDE_PROJECT_DIR` — the host's own stable root — and reading it from the environment belongs to the composition that has an MCP server. The shell's working directory is not the anchor, because it moves; `--add-dir` directories are not promoted to Projects, because access is not identity.
+
+**Identity comes from one remote** (D-442). `origin`, or the single distinct canonical remote, or nothing. A secondary remote never resolves — a fork whose upstream is recorded would otherwise file this work under the upstream's Project, invisibly. Two Projects on one repository, and a name match with no usable remote, are `AMBIGUOUS` for the same reason. Four outcomes: `RESOLVED`, `UNREGISTERED`, `AMBIGUOUS` with a closed reason, `NO_PROJECT_SIGNAL`. Nothing sorts a candidate list into an answer.
+
+**A raw remote URL dies in the function that canonicalises it** (D-443). `git remote get-url` returns credentials verbatim when they are configured, so the userinfo is dropped at the conversion rather than filtered later. Canonical form is `host/path` with a non-default port; the host is folded and the path is not. No shell anywhere, `stderr` discarded everywhere, every git failure collapsing to one result.
+
+**Canonicalising is idempotent, and a test is what found that it was not** (D-444). A Project created from this design's own suggestion stores a canonical `repo`, and the first version could not read one back — Project detection would have worked exactly once per repository.
+
+**No absolute path leaves the detector** (D-445). `ProjectSignals` is five fields and none of them is a path; a candidate's repository is canonicalised before it is shown, because a stored `repo` is free-form text somebody may have typed a token into.
+
+**The monorepo question is the owner's** (D-446). The subpath is display and evidence, never identity: with it every subdirectory becomes a Project, without it a deliberate split shows up as `AMBIGUOUS` — a question rather than a wrong answer.
+
+**The client gained `listProjects` and nothing else** (D-447). `createProject` is absent because nothing calls one; the list is returned as the server sent it, and one malformed Project makes the whole answer a protocol failure rather than being skipped.
+
 ## Immediate objective
 
-P5-03 — Project auto-detection.
+P5-04 — Current Problem detection.
 
-P5-02 is **complete**: implemented, formally reviewed, and its two review findings
-corrected. An assistant can now reach the whole Memory — including the search —
-through the common client.
-
-P5-03 is **NOT STARTED**.
+**NOT STARTED.** P5-03 is done: an adapter can resolve a Project deterministically and hand ambiguity onward as a typed answer.
 
 Notes for whoever picks this up:
-- **The retrieval path is finished end to end** — write → invalidation → generation → artifact → search → HTTP → client. Read D-393 to D-438 before touching any of it
+- **The retrieval path is finished end to end** — write → invalidation → generation → artifact → search → HTTP → client. Read D-393 to D-448 before touching any of it
 - **The specification's minimum API is fully routed and reachable.** The cross-project similarity search was the last item without a route (D-357, D-376, D-420), and the client can call it (D-433)
-- **What P5-03 must not take on.** When to search, what `source_ai` to send, how to present a result, and how to carry on when the Memory is unavailable are all later tasks with their own decisions (D-437, D-438). The adapter deliberately holds none of them today, and a guard says so
+- **Measure, do not assume** (D-375, D-441). What `/cd` does to `CLAUDE_PROJECT_DIR` is not stated in the official documentation, and P5-04 is where it is measured
+- **The concurrent-first-use race is open and untriggered** (D-448). `POST /v1/projects` has no idempotency key and `projects` has no uniqueness on `repo`. Nothing in P5-03 can hit it because P5-03 creates nothing; the task that adds `createProject` re-evaluates it
+- **What is still not the adapter's.** When to search, what `source_ai` to send, how to present a result, and how to carry on when the Memory is unavailable are later tasks with their own decisions (D-437, D-438), and guards say the adapter holds none of them today
 - **An adapter must not import the internal service** (D-363), and the common client must stay free of any assistant, host or protocol (D-382). Both are guarded in `tests/packages/boundary.test.ts`
 - **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look details up fresh from the official documentation rather than from anything recorded here
 - `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide — including what happens to a rendering when the record changes, and what the maintenance loop now does automatically
