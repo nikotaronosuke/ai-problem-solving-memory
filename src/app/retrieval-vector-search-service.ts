@@ -51,6 +51,7 @@ import {
   toProviderEmbedding,
   type EmbeddingProvider,
 } from '../domain/retrieval-embedding.js';
+import { isRetrievalProviderIntegrationFailure } from '../domain/retrieval-provider-failure.js';
 import { resolveVectorSearchQuery, type VectorCandidate } from '../domain/retrieval-search.js';
 import type { RetrievalVectorSearchReader } from '../repository/index.js';
 import { createSemanticQueryInspectionPolicy } from '../sanitization/index.js';
@@ -184,7 +185,21 @@ export function createRetrievalVectorSearchService(
       let embedded: unknown;
       try {
         embedded = await embeddingProvider.embed({ text: query.text });
-      } catch {
+      } catch (error) {
+        // An integration failure is not an outage, and must not be reported as
+        // one. A provider that answered with a vector of the wrong width, or
+        // refused the request outright, is broken in a way no waiting fixes —
+        // and `PROVIDER_UNAVAILABLE` would make it indistinguishable from a
+        // deployment that deliberately configured no provider, which is how it
+        // could stay broken indefinitely with every search still answering.
+        //
+        // Everything else degrades, including a port that throws something with
+        // no classification at all: the ports predate this vocabulary, a plain
+        // throw has always meant "no vector came back", and that contract is not
+        // broken by adding a way to say more.
+        if (isRetrievalProviderIntegrationFailure(error)) {
+          throw error;
+        }
         throw new EmbeddingGenerationFailedError();
       }
 

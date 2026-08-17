@@ -39,6 +39,7 @@ import type {
   StructuralRerankerInput,
 } from '../../domain/retrieval-structural-rerank.js';
 import { STRUCTURAL_COMPARISON_DIMENSIONS } from '../../domain/retrieval-structural-rerank.js';
+import { withClassifiedOpenAiFailures } from './failure.js';
 import { readStructuredDocument } from './responses.js';
 import { OpenAiRequestError, type OpenAiTransport } from './transport.js';
 
@@ -91,114 +92,116 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 export function createOpenAiStructuralReranker(transport: OpenAiTransport): StructuralReranker {
   return {
-    async rerank(input: StructuralRerankerInput): Promise<unknown> {
-      // Per-call opaque names, positional and meaningless. The map is local
-      // and dies with the call.
-      const keys = input.candidates.map((_, index) => `candidate_${String(index + 1)}`);
-      const keyToProblem = new Map(
-        keys.map((key, index) => [key, input.candidates[index]?.problemId]),
-      );
+    rerank(input: StructuralRerankerInput): Promise<unknown> {
+      return withClassifiedOpenAiFailures(async () => {
+        // Per-call opaque names, positional and meaningless. The map is local
+        // and dies with the call.
+        const keys = input.candidates.map((_, index) => `candidate_${String(index + 1)}`);
+        const keyToProblem = new Map(
+          keys.map((key, index) => [key, input.candidates[index]?.problemId]),
+        );
 
-      const document = {
-        current: input.current,
-        candidates: input.candidates.map((candidate, index) => ({
-          key: keys[index],
-          features: candidate.features,
-        })),
-      };
+        const document = {
+          current: input.current,
+          candidates: input.candidates.map((candidate, index) => ({
+            key: keys[index],
+            features: candidate.features,
+          })),
+        };
 
-      // The schema is per-call: the candidate key is an enum of exactly this
-      // call's names, so the strict validation itself refuses an invented
-      // candidate. Score bounds are not expressible in this schema dialect
-      // and stay with the domain parser.
-      const schema = {
-        type: 'object',
-        additionalProperties: false,
-        required: ['candidates'],
-        properties: {
-          candidates: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              required: ['candidate', 'structural_score', 'matched_dimensions'],
-              properties: {
-                candidate: { type: 'string', enum: keys },
-                structural_score: { type: 'number' },
-                matched_dimensions: {
-                  type: 'array',
-                  items: { type: 'string', enum: [...STRUCTURAL_COMPARISON_DIMENSIONS] },
+        // The schema is per-call: the candidate key is an enum of exactly this
+        // call's names, so the strict validation itself refuses an invented
+        // candidate. Score bounds are not expressible in this schema dialect
+        // and stay with the domain parser.
+        const schema = {
+          type: 'object',
+          additionalProperties: false,
+          required: ['candidates'],
+          properties: {
+            candidates: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['candidate', 'structural_score', 'matched_dimensions'],
+                properties: {
+                  candidate: { type: 'string', enum: keys },
+                  structural_score: { type: 'number' },
+                  matched_dimensions: {
+                    type: 'array',
+                    items: { type: 'string', enum: [...STRUCTURAL_COMPARISON_DIMENSIONS] },
+                  },
                 },
               },
             },
           },
-        },
-      };
+        };
 
-      const body = await transport.postJson('/responses', {
-        model: OPENAI_RERANK_MODEL,
-        store: false,
-        stream: false,
-        background: false,
-        // Cross-technology analogy is the judgement-heavy call of the
-        // pipeline; extraction gets less, this gets more. A working setting,
-        // not an invariant.
-        reasoning: { effort: 'medium' },
-        instructions: RERANK_INSTRUCTIONS,
-        input: JSON.stringify(document),
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'structural_rerank',
-            strict: true,
-            schema,
+        const body = await transport.postJson('/responses', {
+          model: OPENAI_RERANK_MODEL,
+          store: false,
+          stream: false,
+          background: false,
+          // Cross-technology analogy is the judgement-heavy call of the
+          // pipeline; extraction gets less, this gets more. A working setting,
+          // not an invariant.
+          reasoning: { effort: 'medium' },
+          instructions: RERANK_INSTRUCTIONS,
+          input: JSON.stringify(document),
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'structural_rerank',
+              strict: true,
+              schema,
+            },
           },
-        },
-      });
-
-      const answer = readStructuredDocument(body);
-
-      // Mapping back requires exactly one answer per key this call invented.
-      // These checks exist because mapping needs them; everything about
-      // whether the mapped result is a *rerank* stays with the domain parser.
-      if (!isPlainObject(answer) || !Array.isArray(answer['candidates'])) {
-        throw new OpenAiRequestError('MALFORMED_RESPONSE');
-      }
-      const items = answer['candidates'] as unknown[];
-      const seen = new Set<string>();
-      const mapped: {
-        problemId: unknown;
-        structuralScore: unknown;
-        matchedDimensions: unknown;
-      }[] = [];
-
-      for (const item of items) {
-        if (!isPlainObject(item)) {
-          throw new OpenAiRequestError('MALFORMED_RESPONSE');
-        }
-        const key = item['candidate'];
-        if (typeof key !== 'string' || !keyToProblem.has(key)) {
-          throw new OpenAiRequestError('MALFORMED_RESPONSE');
-        }
-        if (seen.has(key)) {
-          throw new OpenAiRequestError('MALFORMED_RESPONSE');
-        }
-        seen.add(key);
-        mapped.push({
-          problemId: keyToProblem.get(key),
-          structuralScore: item['structural_score'],
-          matchedDimensions: item['matched_dimensions'],
         });
-      }
-      if (seen.size !== keys.length) {
-        // Coverage: every candidate that went out must come back. The domain
-        // parser enforces this too; failing here as well means an omission
-        // can never be mistaken for an answer even by a caller that skipped
-        // the parser.
-        throw new OpenAiRequestError('MALFORMED_RESPONSE');
-      }
 
-      return { candidates: mapped };
+        const answer = readStructuredDocument(body);
+
+        // Mapping back requires exactly one answer per key this call invented.
+        // These checks exist because mapping needs them; everything about
+        // whether the mapped result is a *rerank* stays with the domain parser.
+        if (!isPlainObject(answer) || !Array.isArray(answer['candidates'])) {
+          throw new OpenAiRequestError('MALFORMED_RESPONSE');
+        }
+        const items = answer['candidates'] as unknown[];
+        const seen = new Set<string>();
+        const mapped: {
+          problemId: unknown;
+          structuralScore: unknown;
+          matchedDimensions: unknown;
+        }[] = [];
+
+        for (const item of items) {
+          if (!isPlainObject(item)) {
+            throw new OpenAiRequestError('MALFORMED_RESPONSE');
+          }
+          const key = item['candidate'];
+          if (typeof key !== 'string' || !keyToProblem.has(key)) {
+            throw new OpenAiRequestError('MALFORMED_RESPONSE');
+          }
+          if (seen.has(key)) {
+            throw new OpenAiRequestError('MALFORMED_RESPONSE');
+          }
+          seen.add(key);
+          mapped.push({
+            problemId: keyToProblem.get(key),
+            structuralScore: item['structural_score'],
+            matchedDimensions: item['matched_dimensions'],
+          });
+        }
+        if (seen.size !== keys.length) {
+          // Coverage: every candidate that went out must come back. The domain
+          // parser enforces this too; failing here as well means an omission
+          // can never be mistaken for an answer even by a caller that skipped
+          // the parser.
+          throw new OpenAiRequestError('MALFORMED_RESPONSE');
+        }
+
+        return { candidates: mapped };
+      });
     },
   };
 }

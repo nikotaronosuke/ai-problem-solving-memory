@@ -20,6 +20,7 @@ export {
   type OpenAiTransport,
 } from './transport.js';
 export { OpenAiResponseError, type OpenAiResponseFailure } from './responses.js';
+export { classifyOpenAiFailure, withClassifiedOpenAiFailures } from './failure.js';
 export {
   createOpenAiSummaryGenerator,
   OPENAI_SUMMARY_GENERATOR_ID,
