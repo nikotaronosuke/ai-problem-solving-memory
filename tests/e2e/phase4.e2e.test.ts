@@ -118,6 +118,7 @@ import {
   createFixtureStructuralOracle,
   SEMANTIC_CLASSES,
 } from '../retrieval/fixtures/retrieval-evaluation-corpus.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -311,6 +312,7 @@ describe.skipIf(databaseUrl === undefined)('Phase 4, end to end', { sequential: 
 
   function build(): FastifyInstance {
     return buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,

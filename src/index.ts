@@ -44,6 +44,7 @@ import { createTransactionRunner } from './db/transaction.js';
 import { buildMemoryHttpApp, createLoggerOptions } from './http/index.js';
 import { createConfiguredRetrievalProviders } from './providers/index.js';
 import { createRetrievalRuntime } from './runtime/retrieval-runtime.js';
+import { createRetrievalSearchRuntime } from './runtime/retrieval-search-runtime.js';
 import { buildStartupSummary, formatStartupSummary, STARTUP_FAILURE_MESSAGE } from './service.js';
 
 /**
@@ -80,6 +81,27 @@ async function main(): Promise<void> {
     : undefined;
   const maintenance = retrievalRuntime?.maintenance;
 
+  // Search, unlike maintenance, exists either way. Its two provider ports are
+  // optional all the way down: with no configured stack the lexical channel
+  // answers, the semantic channel reports itself unavailable and the
+  // structural stage reports its reranker unavailable — a smaller answer to the
+  // same question, not a missing route. So this is built unconditionally, from
+  // the same single `createConfiguredRetrievalProviders` call that maintenance
+  // uses, and the ports are passed only when there is a stack to pass.
+  //
+  // Nothing vendor-shaped crosses this line: the runtime receives two ports and
+  // a pool. It holds the one process-wide rerank cache, whose key includes the
+  // owner, and builds the owner-scoped pipeline per request.
+  const retrievalSearchResolver = createRetrievalSearchRuntime({
+    pool,
+    embeddingProvider: configuredRetrieval.enabled
+      ? configuredRetrieval.embeddingProvider
+      : undefined,
+    structuralReranker: configuredRetrieval.enabled
+      ? configuredRetrieval.structuralReranker
+      : undefined,
+  });
+
   const app = buildMemoryHttpApp({
     healthService: createHealthService(pool),
     requestContextService: createRequestContextService(
@@ -99,6 +121,7 @@ async function main(): Promise<void> {
     problemCloseService: createProblemCloseService(maintenance),
     problemDeleteService: createProblemDeleteService(),
     exportService: createExportService(),
+    retrievalSearchResolver,
     // Credentials must not survive into a log file, and the failure is silent
     // if they do. Built by the http module so the configuration a test
     // exercises is the configuration the server runs.

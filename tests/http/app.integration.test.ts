@@ -44,6 +44,7 @@ import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
 import { createTransactionRunner } from '../../src/db/transaction.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -58,6 +59,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
     ownersCreated.push(ownerId);
 
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createFixedRequestContextService(pool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),
@@ -138,6 +140,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
     ['well-formed but unissued', `Bearer ${formatCredentialToken(generateCredentialToken())}`],
   ])('refuses identically when the credential is %s', async (_label, authorization) => {
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,
@@ -178,6 +181,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
 
   it('leaves health working when no credential is presented', async () => {
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,
@@ -218,6 +222,7 @@ describe.skipIf(databaseUrl === undefined)('HTTP over a real database', () => {
       resolveDatabaseConfig({ nodeEnv: 'test', connectionTimeoutMillis: 5_000 }),
     );
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(ownPool),
       requestContextService: createFixedRequestContextService(ownPool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),

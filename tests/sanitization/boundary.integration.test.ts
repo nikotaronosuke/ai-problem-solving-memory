@@ -51,6 +51,7 @@ import {
   type SanitizationPolicy,
   type SanitizationSite,
 } from '../../src/sanitization/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -111,6 +112,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
     ownersCreated.push(ownerId);
 
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createFixedRequestContextService(pool, ownerId, policy),
       projectEnvironmentService: createProjectEnvironmentService(),
@@ -380,6 +382,7 @@ describe.skipIf(databaseUrl === undefined)('the sanitization boundary, in place'
       ownersCreated.push(ownerId);
 
       const app = buildMemoryHttpApp({
+        retrievalSearchResolver: createUnusedSearchResolver(),
         healthService: createHealthService(pool),
         requestContextService: createFixedRequestContextService(pool, ownerId, policy),
         projectEnvironmentService: createProjectEnvironmentService(),

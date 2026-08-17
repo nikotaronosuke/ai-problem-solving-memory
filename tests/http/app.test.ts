@@ -38,6 +38,7 @@ import {
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import { ERROR_CODES, ERROR_STATUS } from '../../src/http/errors.js';
 import type { MemoryRepository } from '../../src/repository/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const OWNER_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 
@@ -65,6 +66,7 @@ function contextServiceFailing(internalReason: RequestContextFailure): RequestCo
 
 function buildApp(overrides: Partial<Parameters<typeof buildMemoryHttpApp>[0]> = {}) {
   return buildMemoryHttpApp({
+    retrievalSearchResolver: createUnusedSearchResolver(),
     healthService: healthServiceReturning({ status: 'ok', latencyMs: 0 }),
     requestContextService: contextServiceFor(OWNER_ID),
     // Real service, stubbed repository: these tests are about the transport

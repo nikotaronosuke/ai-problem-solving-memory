@@ -70,6 +70,7 @@ import {
   type RetryDelivery,
 } from '../../src/reliability/index.js';
 import type { ErrorCode } from '../../src/http/errors.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -159,6 +160,7 @@ describe.skipIf(databaseUrl === undefined)('a write that could not be sent', () 
 
   function build(): FastifyInstance {
     return buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,

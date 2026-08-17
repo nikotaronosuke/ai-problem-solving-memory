@@ -835,11 +835,30 @@ With `OPENAI_API_KEY` set, a standard server runs the whole supply side: write �
 
 3795 tests across 128 files. Twenty mutations killed — three exposed real guard holes (sweep-before-listen, a second discovery column, an `as unknown` context) now guarded by name. The first full-suite run also caught an unscoped sweep writing artifacts into other suites' fixtures on the shared test database; the discovery seam that fixes it is the production default plus injectable owners for tests (D-419).
 
-#### NEXT — P5-02c, NOT STARTED
+#### P5-02c-impl-1 — DONE
 
-The Search JSON API: the route per the frozen investigation shape, the owner-scoped search composition (the configured reranker is already waiting), the common client's `search()`, API 0.5.0 / 28 operations, and the OpenAPI drift tests. Pending formal review of P5-02b.
+The Search JSON API and the owner-scoped search composition.
+
+`POST /v1/problems/:problem_id/search`, one route and one method, guarded (D-420). Four request fields, all required, closed, with every refusal reasoned and `parseStructuralFeatures` still the trust boundary behind the transport schema (D-421). Three outcomes as ordinary 200s, one as the ordinary 404, no 409, and a refused search reusing the existing application-rejection branch for its 400 (D-422). Lossless candidate material, written out by hand rather than spread, nothing sorted or renumbered, no recommendation or verdict or cache or provider identity anywhere in the nested schema (D-423). Both provider ports optional at the stage services, no stand-in provider anywhere in `src/`, and a port that answers unusably treated as an internal failure rather than a degraded channel (D-424). Transport asks through a resolver and never assembles a pipeline; owner from the authenticated context, cross-checked and resolved rather than cast; request-scoped graph, one process-wide cache; the resolver required rather than optional (D-425). One usage row per Memory offered, written by the search service and not the route, and a lost record reported with three closed fields under one new log event (D-426).
+
+API 0.5.0 / 28 operations. 3908 tests across 131 files. Twenty-eight mutations killed across behaviour and forbidden-boundary injection. Five pre-existing guards were *updated* rather than satisfied — three P4-era suites asserted this material was not reachable over HTTP "yet", and each now pins the exact modules where the name may appear; the owner-boundary security suite refused to pass until `searchProblemMemory` was classified and attacked from both directions (D-427).
+
+#### NEXT — P5-02c-impl-2, NOT STARTED
+
+The common client's `search()` method. Pending formal review of P5-02c-impl-1.
+
+The client is deliberately untouched by impl-1, and a guard fails if any shipped client module mentions `/search` or `searchProblemMemory`. Two things have to be decided rather than copied (D-427):
+
+- **The timeout.** `MEMORY_API_REQUEST_TIMEOUT_MS` is 10 s; the provider transport behind this route has a far longer deadline, and a cold search runs an embedding call and a rerank call in series. A method inheriting the client default would abort searches the server was about to answer. Per-call override, a longer default for this one method, or a documented expectation — but a decision.
+- **The three-branch answer.** `SEARCHED`, `MEMORY_READ_DISABLED` and `CURRENT_SOURCE_CHANGED` are all 200, so status alone cannot distinguish them; the typed union has to reach the caller intact and the two non-search kinds must not be flattened into an empty result.
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
+
+## STANDING NOTE — malformed and unreachable are one signal at the provider adapters
+
+The stage services already distinguish them: a port that *throws* degrades the channel, a port that *returns* an unusable answer fails the search through the domain parser (D-424). The OpenAI adapters validate their own responses and raise a transport-level error, so a malformed answer from that family arrives at the stage services as unreachability — which means a broken integration currently looks like a deliberate deployment choice for as long as it stays broken.
+
+Closing it means giving the vendor-neutral ports a two-way failure vocabulary — "could not reach" versus "answered unusably" — which is a contract change to the ports, to the P5-02a adapters and to their tests. Not urgent: the statuses are honest about what the caller got either way, and no result is wrong. Worth doing when the ports are next opened, and worth remembering before anyone concludes from a `PROVIDER_UNAVAILABLE` that a provider was down.
 
 ## BLOCKED
 

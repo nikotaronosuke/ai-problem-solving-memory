@@ -61,7 +61,12 @@ import {
   hashCredentialSecret,
 } from '../../src/domain/credential.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
+import {
+  STRUCTURAL_FEATURE_LISTS,
+  STRUCTURAL_FEATURE_SCHEMA_VERSION,
+} from '../../src/domain/retrieval-summary.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { createRetrievalSearchRuntime } from '../../src/runtime/retrieval-search-runtime.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -115,7 +120,32 @@ const OWNER_SCOPED_OPERATIONS = {
 
   /** Removes an aggregate. */
   deleteProblem: 'DELETE',
+
+  /**
+   * Names one resource and reads *around* it.
+   *
+   * Its own class, because it is the only operation whose answer is drawn from
+   * everything the owner has rather than from the resource named. Two ways to
+   * cross the boundary, therefore: naming somebody else's Problem to search
+   * from, and searching from your own in the hope of surfacing theirs. Both are
+   * attacked below.
+   */
+  searchProblemMemory: 'RESOURCE_NEIGHBOURHOOD_READ',
 } as const;
+
+/** The exact structural block the search route accepts, at its emptiest. */
+const SEARCH_FEATURES = {
+  schema_version: STRUCTURAL_FEATURE_SCHEMA_VERSION,
+  problem_domain: null,
+  ...Object.fromEntries(STRUCTURAL_FEATURE_LISTS.map((list) => [list, []])),
+};
+
+const SEARCH_PAYLOAD = {
+  source_ai: 'intruder',
+  lexical_text: 'anything',
+  semantic_text: 'anything at all',
+  current_features: SEARCH_FEATURES,
+};
 
 const MEMORY_TABLES = [
   'projects',
@@ -154,6 +184,10 @@ describe.skipIf(databaseUrl === undefined)('the owner boundary', () => {
 
   function buildApp(): FastifyInstance {
     return buildMemoryHttpApp({
+      // The real search composition, with neither provider port configured.
+      // A stand-in resolver would answer every attack below with a fault
+      // instead of the boundary's own answer, which is the thing under test.
+      retrievalSearchResolver: createRetrievalSearchRuntime({ pool }),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,
@@ -575,6 +609,13 @@ describe.skipIf(databaseUrl === undefined)('the owner boundary', () => {
           },
         },
         {
+          operations: ['searchProblemMemory'],
+          label: 'search from their problem',
+          method: 'POST',
+          url: `/v1/problems/${aliceGraph.problemId}/search`,
+          payload: SEARCH_PAYLOAD,
+        },
+        {
           operations: ['deleteProblem'],
           label: 'delete the problem',
           method: 'DELETE',
@@ -826,6 +867,35 @@ describe.skipIf(databaseUrl === undefined)('the owner boundary', () => {
       // something other than an empty document.
       expect(body).toContain(bobGraph.problemId);
       expect(body).toContain('bob hypothesis');
+    });
+  });
+
+  describe('a search reads around a resource, not only it', () => {
+    it('surfaces nothing of another owner’s, from a Problem of one’s own', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/problems/${bobGraph.problemId}/search`,
+        headers: auth(bob),
+        payload: SEARCH_PAYLOAD,
+      });
+
+      // The second way across: a legitimate Problem, a legitimate credential,
+      // and an answer drawn from every Project the owner has. Isolation here is
+      // not about the identifier in the path — nothing in the request names
+      // Alice — so the whole body is swept for anything of hers.
+      expect(response.statusCode).toBe(200);
+      for (const forbidden of [
+        alice.ownerId,
+        aliceGraph.projectId,
+        aliceGraph.problemId,
+        aliceGraph.secondProblemId,
+        aliceGraph.environmentId,
+        'alice',
+      ]) {
+        expect(`${forbidden} surfaced:${response.body.includes(forbidden)}`).toBe(
+          `${forbidden} surfaced:false`,
+        );
+      }
     });
   });
 

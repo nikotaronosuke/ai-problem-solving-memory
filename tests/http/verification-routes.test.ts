@@ -45,6 +45,7 @@ import type { ProblemId } from '../../src/domain/problem.js';
 import type { VerificationId } from '../../src/domain/verification.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import type { MemoryRepository } from '../../src/repository/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const OWNER_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 const PROBLEM_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
@@ -97,6 +98,7 @@ const healthService: HealthService = {
 
 function buildApp(service: VerificationService, authenticated = true) {
   return buildMemoryHttpApp({
+    retrievalSearchResolver: createUnusedSearchResolver(),
     healthService,
     requestContextService: authenticated
       ? ({

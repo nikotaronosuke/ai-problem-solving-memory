@@ -400,6 +400,21 @@ automatically, and nothing can distinguish your own write from an assistant's.
 Recording the intent now is what lets the layer that can tell the difference
 honour it later.
 
+**Search** is the one operation whose answer is drawn from everything you have
+rather than from the resource it names. It takes the Problem being worked on, two
+query texts and a structural description of it, and returns candidates with the
+material to judge them — what each was true of, where it did and did not lead,
+and what contradicts it. Never a recommendation: the server's job is to put the
+comparable material in front of whoever asked, and deciding what it means for
+the situation in front of them is theirs.
+
+Nothing about scope, ranking or cost is stateable by a caller. It searches every
+Project you have, it excludes the Problem you are searching from, and the stage
+bounds are the server's. Nothing about it is a write to the Problem, so there is
+no `expected_version` and no conflict to report. It does record one usage log per
+Memory it actually offered, which is the ordinary usage-log path rather than a
+second kind of history — see `docs/retrieval.md` for the whole shape.
+
 ## Consuming the document
 
 `GET /openapi.json` needs no owner context and returns the document the server

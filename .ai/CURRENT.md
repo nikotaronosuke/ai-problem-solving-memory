@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02b-impl-2b)
+Updated: 2026-08-17 (P5-02c-impl-1)
 
 ## Current phase
 
@@ -21,7 +21,9 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
     - P5-02b-impl-1 — RetrievalArtifact lifecycle correctness: **DONE**
     - P5-02b-impl-2a — OpenAI production provider adapters: **DONE**
     - P5-02b-impl-2b — production runtime wiring: **DONE** — P5-02b is implementation-complete
-  - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **NOT STARTED**
+  - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **IN PROGRESS**
+    - P5-02c-impl-1 — Search JSON API and owner-scoped search composition: **DONE**
+    - P5-02c-impl-2 — the common client's `search()` method: **NOT STARTED**
 - P5-03 — Project auto-detection: **NOT STARTED**
 
 ## Source of truth
@@ -1052,7 +1054,7 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No idempotency key on a usage log, and no third queued write kind. The retry queue replays writes that carry a key, and a replayed usage row would be a second record of one search (D-306)
 - No morphological analysis. `pgroonga`, `pg_trgm` and `unaccent` are available on the server and deliberately not installed; Japanese sentences are one lexeme to the built-in parser (D-239)
 - No query language of this system's own, and no term extraction, OR-relaxation or query expansion — ordinary terms are joined with AND and that is left visible (D-236)
-- No HTTP surface for artifacts or for generation. No route, no OpenAPI operation, no debug endpoint; the contract stays at 0.4.0 with 27 operations. Generation is background work, and what a client may ask of a search belongs to the task that has one to expose (D-216, D-228)
+- No HTTP surface for artifacts or for generation. No route, no OpenAPI operation, no debug endpoint — generation is background work, and an artifact is a rendering nobody asked for by name (D-216, D-228). The *search* is published as of P5-02c-impl-1, and it is the only way any of this reaches a caller: API 0.5.0 with 28 operations (D-420)
 - No claim that a summary is true. Structure, bounds, the success-claim evidence gate, privacy and source consistency are checked; a well-formed summary of a version nobody mentioned passes all of them. Semantic quality is P4-14's, measured against fixtures (D-228)
 - No link from a `FIX` Event to a Verification, and nothing that invents one (D-221)
 - No way to tell a close-review Event from an ordinary one. No marker exists, and nothing guesses from authorship or timing (D-221)
@@ -1134,18 +1136,34 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **The boundaries held.** The composition root imports one vendor-neutral boundary (`src/providers/index.ts`) and never a vendor name (D-413). The runtime (`src/runtime/retrieval-runtime.ts`) is vendor-neutral and owner-honest: cross-owner discovery returns identifiers only, every context is resolved through `resolveOwnerContextFor` with casts guarded off, and every read below is owner-scoped (D-415). Owner stacks are lazy, cached, and evicted on failed builds; a process-wide semaphore holds generation to one at a time across owners (D-416). Sweeps run after the listener, are never awaited, never overlap, and contain their failures as closed words (D-417). `stop()` clears the timer, refuses new work, and shutdown waits for no provider (D-418).
 
+## What exists now — the Search JSON API (P5-02c-impl-1)
+
+**One route, and it is the demand side of the whole phase.** `POST /v1/problems/:problem_id/search` takes four fields — `source_ai`, `lexical_text`, `semantic_text`, `current_features` — and returns candidates with the material to judge them. It hangs off the Problem being worked on because that Problem *is* the search context, and a guard requires exactly one search path and one method in all of `src/` (D-420). API 0.5.0, 28 operations, `Search` tag, `operationId: searchProblemMemory`.
+
+**The refusals are the design** (D-421). No owner or client, no Project, no limit of any kind, no embedding or vector, no model, provider or cache instruction, no recommendation or action. Unknown fields are a 400 rather than a silent drop. `current_features` is the domain's eight-field profile built from the domain's own constants, with the version pinned to an exact enum; `parseStructuralFeatures` remains the trust boundary and the schema is the transport boundary, and both stay.
+
+**Three outcomes are ordinary 200s; one is the ordinary 404** (D-422). Zero candidates, reading turned off and a Problem that moved mid-search are answers, not faults. A Problem this owner cannot read is the same 404 as one that never existed. No 409 — a search writes nothing to the Problem. A refused search reuses the existing application-rejection branch for its 400; a broken pipeline stays a 500.
+
+**Material, never an answer** (D-423). Every field of all five kinds travels, written out by hand rather than spread, with nothing sorted, deduplicated, truncated or renumbered and `structural_score` null rather than zero when nothing scored it. No recommendation, verdict, winner, should-retry, cache hit or provider identity anywhere in the nested schema — a contract test sweeps the serialised whole for each word.
+
+**A missing provider is a smaller answer, not a missing route** (D-424). Both ports are optional at the two stage services; with neither configured the lexical channel answers, the two statuses name themselves, and a database-backed test proves the platform `fetch` is never called. No stand-in provider exists anywhere in `src/`, and a guard scans for one by name. A port that *answers unusably* is an internal failure rather than a degraded channel — with one recorded limitation about the OpenAI adapters' own pre-validation, and a named follow-up.
+
+**Transport asks for a service and never assembles one** (D-425). `RetrievalSearchServiceResolver` is the seam; `src/http/` still holds no pool and no repository, and only `src/index.ts` knows both the runtime and the transport. The owner comes from `context.repository.ownerId`, is cross-checked against the artifact repository's, and is resolved through `resolveOwnerContextFor` — never cast. The service graph is request-scoped because the usage-log writer inside it belongs to that request; the rerank cache is process-wide because the owner is inside its key. The resolver is a *required* dependency of `buildMemoryHttpApp`, so a wiring slip cannot quietly shrink the contract.
+
+**One usage row per Memory offered, and a closed report when one is lost** (D-426). The route writes nothing itself. The failure reporter may pass on `event`, `kind` and `attemptedRows` and nothing else, under the new closed event `SEARCH_USAGE_LOG_WRITE_FAILED` — the only log event that reports a partial success.
+
 ## Immediate objective
 
-P5-02c — the Search JSON API.
+P5-02c-impl-2 — the common client's `search()` method.
 
-**NOT STARTED**, pending formal review of P5-02b. The supply side is production-complete; what remains of P5-02 is the demand side:
-- **The route** — `POST /v1/problems/:problem_id/search` per the frozen investigation shape: four request fields, all outcomes as 200 typed answers, lossless candidate material, API 0.4.0 → 0.5.0, operations 27 → 28
-- **The owner-scoped search composition**, built per request where the owner context already exists; the configured `structuralReranker` is already constructed and waiting on `ConfiguredRetrievalProviders` (D-413), and the search cache lives at the composition root with the owner inside the key
-- **The common client's `search()` method**, and the OpenAPI drift tests that come with the new response shape
+**NOT STARTED**, pending formal review of P5-02c-impl-1. The server publishes the route; nothing calls it yet. What remains:
+- **`search()` on `packages/memory-api-client`.** The client is deliberately untouched by impl-1, and a guard fails if any shipped client module so much as mentions `/search` or `searchProblemMemory` — a half-written method is worse than none, because a caller cannot tell which it has
+- **A timeout decision, which is why this is a separate task** (D-427). The client's default is `MEMORY_API_REQUEST_TIMEOUT_MS = 10_000`; the provider transport behind the route has a far longer deadline, and a cold search runs an embedding call and a rerank call in series. Inheriting the 10 s default would abort searches the server was about to answer. A per-call override, a longer default for this one method, or a documented expectation — but a decision, not a copy of `getProblem`
+- **The three-branch answer must reach the caller intact.** `SEARCHED`, `MEMORY_READ_DISABLED` and `CURRENT_SOURCE_CHANGED` are all 200, so status alone cannot distinguish them, and the two non-search kinds must not be flattened into an empty result
 
 Notes for whoever picks this up:
-- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix, and now the production wiring end to end. Read D-393 to D-419 before touching any of it
-- **The search route is owed and was not cancelled.** The specification lists a cross-project similarity search among the minimum API surface, and it is the only item in that list without a route (D-357, D-376)
+- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix, and now the production wiring end to end. Read D-393 to D-427 before touching any of it
+- **The specification's minimum API is now fully routed.** The cross-project similarity search was the only item in that list without a route, and impl-1 published it (D-357, D-376, D-420)
 - **An adapter must not import the internal service** (D-363), and the common client must stay free of any assistant, host or protocol (D-382). Both are guarded in `tests/packages/boundary.test.ts`
 - **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look details up fresh from the official documentation rather than from anything recorded here
 - `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide — including what happens to a rendering when the record changes, and what the maintenance loop now does automatically

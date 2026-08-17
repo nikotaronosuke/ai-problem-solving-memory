@@ -120,6 +120,13 @@ const QUERY_INSPECTION_SITE = {
  * configuration — which composition owns; this service simply uses whatever
  * space the provider it was handed declares.
  *
+ * The provider may be absent, which is what lets a server with no configured
+ * retrieval stack still answer a search: the semantic half degrades exactly as
+ * it does for an outage, and the lexical half is unaffected. The alternative —
+ * a stand-in provider that always fails — was rejected: production would then
+ * contain an object whose only purpose is to be broken, and every reader of
+ * the composition would have to work out which failures were real.
+ *
  * The query policy is **not** a parameter. It was one, defaulted to the safe
  * policy, and that was wrong: a default only decides what happens when nobody
  * chooses, and a caller passing a policy that keeps everything would have
@@ -133,10 +140,12 @@ const QUERY_INSPECTION_SITE = {
  * changed is only who may choose the policy, which is nobody.
  */
 export function createRetrievalVectorSearchService(
-  embeddingProvider: EmbeddingProvider,
+  embeddingProvider: EmbeddingProvider | undefined,
   reader: RetrievalVectorSearchReader,
 ): RetrievalVectorSearchService {
-  requireEmbeddingProviderIdentity(embeddingProvider);
+  if (embeddingProvider !== undefined) {
+    requireEmbeddingProviderIdentity(embeddingProvider);
+  }
   const queryPolicy = createSemanticQueryInspectionPolicy();
 
   return {
@@ -154,6 +163,22 @@ export function createRetrievalVectorSearchService(
       // token expired during deployment" is still searchable.
       if (queryPolicy.inspect(query.text, QUERY_INSPECTION_SITE).kind === 'reject') {
         return { kind: 'SENSITIVE_QUERY_NOT_EMBEDDED' };
+      }
+
+      if (embeddingProvider === undefined) {
+        // No provider is configured in this process, which the hybrid stage
+        // already knows how to survive: it is the same signal an outage
+        // raises, and it reaches the same `PROVIDER_UNAVAILABLE`. Deliberately
+        // *not* a new outcome variant and deliberately not a stand-in
+        // provider — a fake would answer with a vector nothing produced, and
+        // a fourth status would make callers handle "never configured"
+        // separately from "did not answer" when the useful response to both
+        // is the lexical half alone.
+        //
+        // After the query inspection above, so a credential-bearing query is
+        // reported as skipped rather than as a missing provider whichever
+        // deployment it lands in.
+        throw new EmbeddingGenerationFailedError();
       }
 
       let embedded: unknown;

@@ -180,20 +180,57 @@ this code cannot see, and is reported through the ordinary usage log path. The
 log records the ranking view; it never copies a warning, a direction or a
 disagreement into itself.
 
+## How a search is asked for
+
+`POST /v1/problems/{problem_id}/search`, with four fields: which assistant is
+asking, the lexical query, the longer text to compare by meaning, and a
+structural description of the Problem in front of the caller.
+
+It hangs off the Problem being worked on because that Problem _is_ the search
+context — the subject candidates are compared against, the source of the current
+Project, and the one thing excluded from its own results. A collection route
+would have to take the Problem in the body, which is the same fact with two
+possible sources.
+
+Four fields, and no fifth. Not an owner or a client, because ownership is
+established by the credential and a request that could name an owner would be a
+request that could name the wrong one. Not a Project, because a search is
+cross-project by default and the current Project is read from the Problem's own
+row. Not a limit of any kind, because how many candidates each stage considers is
+the server's to tune and a published knob is a published promise. Not an
+embedding or any vector, because a query vector must come from the space the
+artifacts were embedded in, and the only way to guarantee that is for the server
+to produce it. Not a model, a provider or a cache instruction, for the same
+reason. Nothing unknown is dropped quietly: an unexpected field is a 400, so a
+caller cannot believe a limit it sent was honoured.
+
+Three of the four outcomes are `200`. A search that found nothing is one of
+them — no candidates worth reading is a fact about the memory, not a fault. So
+is a Problem whose owner turned automatic reading off, and a Problem that changed
+underneath the search while it ran; both carry only their kind, because what to
+do about either is the caller's decision. The fourth, a Problem this owner cannot
+read, is the `404` every missing resource gets: unknown, deleted and somebody
+else's are one answer here as everywhere.
+
+Each channel reports itself by name. A server with no configured provider still
+answers: the lexical channel works, the semantic channel reports
+`PROVIDER_UNAVAILABLE`, the structural stage reports `RERANKER_UNAVAILABLE`, and
+every candidate still carries its material with `structural_score` absent rather
+than filled in with a zero. That is a smaller answer to the same question, not a
+missing route — and it is why the route exists whether or not a credential does.
+
+What a response never carries: a recommendation, a verdict, a winner, an answer,
+a should-retry, whether anything was cached, or which model was involved. The
+first group is the caller's judgement and the second is not a fact about the
+memory that was asked for.
+
 ## Not built yet
 
-**No concrete provider.** The summary generator, the embedding provider and the
-structural reranker are ports. No vendor SDK, no model, no credential and no
-network call exists in the runtime dependencies, which are still `fastify`, `pg`
-and `@fastify/swagger`.
-
-**No HTTP surface.** The retrieval path is an internal application service. The
-specification lists a cross-project similarity search among the minimum API, and
-that remains true — the transport belongs with the phase that builds the client
-which will call it, alongside the decision about how an assistant identifies
-itself. Publishing a route now would ship a contract that no standard server
-composition can yet answer, because nothing concrete is wired behind the three
-ports.
+**No client method.** The server publishes the route; the common API client does
+not call it yet. A search request has four fields and a three-branch answer, and
+the client's default timeout is shorter than the deadline the provider calls sit
+behind — so the method needs a timeout decision rather than a copy of an existing
+one, and a half-written method is worse than none.
 
 **No automatic trigger.** When to search — a problem appearing, repeated
 failures, a large change in understanding — is an adapter's decision, not the

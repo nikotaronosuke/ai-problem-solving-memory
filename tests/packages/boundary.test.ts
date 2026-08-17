@@ -238,6 +238,30 @@ describe('the common client', () => {
     }
   });
 
+  it('does not know the search route yet', async () => {
+    const shipped = (await sourcesOf('memory-api-client')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+    expect(shipped.length).toBeGreaterThan(0);
+
+    // P5-02c published `POST /v1/problems/:problem_id/search` on the server.
+    // The client method that calls it is the next task, deliberately: a search
+    // request has four fields and a three-branch answer, and the client's
+    // ten-second default is shorter than the provider ceiling behind that
+    // route — so the method needs a timeout decision, not a copy of `getProblem`.
+    //
+    // Until then nothing here may half-know the route. A half-written method is
+    // worse than none, because a caller cannot tell which it has.
+    for (const { path, source } of shipped) {
+      expect(`${path} knows /search:${source.includes('/search')}`).toBe(
+        `${path} knows /search:false`,
+      );
+      expect(`${path} knows searchProblemMemory:${source.includes('searchProblemMemory')}`).toBe(
+        `${path} knows searchProblemMemory:false`,
+      );
+    }
+  });
+
   it('knows about no assistant, host or protocol', async () => {
     // Shipped code only. A test fixture legitimately contains values a server
     // would send — `source_ai` is free-form text and `claude-code` is exactly

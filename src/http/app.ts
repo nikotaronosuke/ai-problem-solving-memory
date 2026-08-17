@@ -42,11 +42,13 @@ import type {
   ProjectEnvironmentService,
   RelationService,
   RequestContextService,
+  RetrievalSearchServiceResolver,
   UsageLogService,
   VerificationService,
 } from '../app/index.js';
 import {
   InvalidApplicationInputError,
+  InvalidRetrievalSearchError,
   ExportBlockedError,
   ProblemVersionConflictError,
   RequestContextUnavailableError,
@@ -65,6 +67,7 @@ import { registerProblemRoutes } from './problem-routes.js';
 import { registerProblemStatusRoutes } from './problem-status-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerRelationRoutes } from './relation-routes.js';
+import { registerSearchRoutes } from './search-routes.js';
 import { registerUsageLogRoutes } from './usage-log-routes.js';
 import { registerVerificationRoutes } from './verification-routes.js';
 
@@ -86,6 +89,19 @@ export interface MemoryHttpAppDependencies {
   readonly problemCloseService: ProblemCloseService;
   readonly problemDeleteService: ProblemDeleteService;
   readonly exportService: ExportService;
+  /**
+   * How a search request reaches the retrieval pipeline.
+   *
+   * Required, like every other service here. The search operation is part of
+   * the API, not part of a deployment's configuration: a server whose semantic
+   * and structural providers are unconfigured still answers searches from the
+   * lexical channel, and making this optional would turn a missing provider
+   * into a missing route — the one thing the contract promises it is not.
+   *
+   * Transport asks for a service and never assembles one, so `src/http/` still
+   * holds no pool and no repository — see `RetrievalSearchServiceResolver`.
+   */
+  readonly retrievalSearchResolver: RetrievalSearchServiceResolver;
   /**
    * Fastify logger configuration. Pass `false` in tests.
    *
@@ -189,6 +205,15 @@ export const OPERATIONAL_LOG_EVENTS = [
   'EXPORT_BLOCKED',
   'HEALTH_UNAVAILABLE',
   'UNHANDLED_REQUEST_FAILURE',
+  /**
+   * A search answered, and the record of what it surfaced did not get written.
+   *
+   * The only event here that is not about a request failing. It reports a
+   * partial success, which is why it exists at all: the caller received its
+   * candidates and has no reason to know anything was lost, so if this were not
+   * logged the loss would be invisible to everyone.
+   */
+  'SEARCH_USAGE_LOG_WRITE_FAILED',
   'SERVER_SHUTDOWN',
   'SERVER_SHUTDOWN_FAILURE',
   'SERVER_START_FAILURE',
@@ -439,12 +464,28 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       return;
     }
 
-    if (error instanceof InvalidApplicationInputError) {
+    if (
+      error instanceof InvalidApplicationInputError ||
+      error instanceof InvalidRetrievalSearchError
+    ) {
       // The error itself is not logged, and neither is its message. Every call
       // site that raises one writes a fixed sentence today, but the
       // constructor takes a `string` and a future one need not — and Pino
       // writes a message and a stack for any `Error` it is handed. What an
       // operator gets is the decision: the application layer refused this.
+      //
+      // A refused search joins the same branch rather than getting an event of
+      // its own. It is the same fact — the application would not accept this
+      // request — and the same 400, and the reasoning above applies with more
+      // force there: a search request is made of somebody's own words about
+      // their own problem, and `InvalidRetrievalSearchError` builds its message
+      // out of them being unusable.
+      //
+      // What does *not* land here matters as much. A malformed provider answer,
+      // an unusable rerank output or a broken storage invariant are internal
+      // failures; folding them in would tell a caller its request was wrong
+      // about something that was not, and leave a broken provider looking like
+      // a bad query indefinitely.
       request.log.info(
         { event: 'REQUEST_APPLICATION_REJECTED', failure: 'INVALID_APPLICATION_INPUT' },
         'request rejected by the application layer',
@@ -636,6 +677,7 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
       registerChangeLogRoutes(scope, dependencies.changeLogService);
       registerMemoryControlRoutes(scope, dependencies.memoryControlService);
       registerProblemCloseRoutes(scope, dependencies.problemCloseService);
+      registerSearchRoutes(scope, dependencies.retrievalSearchResolver);
 
       done();
     },

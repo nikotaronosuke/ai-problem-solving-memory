@@ -65,6 +65,7 @@ import {
 } from '../../src/domain/credential.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp, createLoggerOptions } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -139,6 +140,7 @@ describe.skipIf(databaseUrl === undefined)('a request the server will not accept
 
   function buildApp(): FastifyInstance {
     return buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,

@@ -48,6 +48,7 @@ import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { generateProblemId } from '../../src/domain/problem.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -67,6 +68,7 @@ describe.skipIf(databaseUrl === undefined)('Memory controls', () => {
     ownersCreated.push(ownerId);
 
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createFixedRequestContextService(pool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),
