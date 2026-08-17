@@ -26,7 +26,11 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 
 ## Current status
 
-実装 Phase 1〜4 が完了しました。次は AI Adapter（Phase 5）です。
+実装 Phase 1〜4 が完了し、AI Adapter（Phase 5）に入っています。
+
+- P5-01 接続方式の調査: 完了
+- P5-02 adapter package 境界と共通クライアント: 完了
+- 次は P5-03 Project 自動判定
 
 実装 Phase 1（保存基盤）が完了しました。
 
@@ -85,9 +89,15 @@ API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にありま�
 
 検索の設計と、サーバーが**判断しないこと**は [`docs/retrieval.md`](docs/retrieval.md) にあります。
 
-検索は現時点では内部 service であり、HTTP endpoint はまだ公開していません。embedding / 要約 / 再ランキングの具体的な provider も未接続です（いずれも交換可能な port として定義済み）。どちらも AI Adapter を作る次の段階で決めます。
+Phase 5 のうち、AI から Memory へ到達する経路までができました。
 
-AI 連携はまだこれからです。
+- 具体的な provider（要約・embedding・再ランキング）の構成が composition edge に存在します。credential がなければその機能だけが無効になり、記録と読み出しは今までどおり動きます
+- artifact の自動保守。canonical な書き込み後の通知と、起動時および定期の照合で、検索用の rendering を作り直します
+- `POST /v1/problems/:problem_id/search`。検索は HTTP から使えます
+- provider に到達できないときは、型のついた degradation として返します（検索が落ちるのではなく、使えたチャネルだけで答えます）
+- 共通 Memory API クライアントの `search(problemId, request)`
+
+まだないもの: Claude Code 固有の Project 判定・session 連携・自動検索・Event 記録。これらは Phase 5 の以降の段階です。
 
 詳細な内部仕様は現時点では非公開です。
 
@@ -147,3 +157,7 @@ npm run credential:revoke -- --credential-id <uuid>
 使わないときは `npm run supabase:stop` で停止してください。
 
 コマンド一覧・構成・規約は [docs/development.md](docs/development.md) を参照してください。
+
+外部の事例・記事など、規範ではない参考メモは
+[docs/reference-set.md](docs/reference-set.md) にあります（仕様でも roadmap でも
+なく、採用を意味しません）。

@@ -781,7 +781,7 @@ Not depended on, deliberately: preview features, delegation as a transport, defe
 
 Every count unchanged: 3607 tests across 113 files, migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, `MemoryRepository` 25, API 0.4.0 / 27 operations, runtime dependencies 3.
 
-### P5-02 — IN PROGRESS, split into three parts
+### P5-02 — DONE, split into three parts
 
 The private breakdown has one P5-02 and is unchanged. This is implementation granularity inside it (D-378), because doing all of it at once meant a workspace reorganisation, a client, an HTTP route, a per-request composition of eleven owner-scoped services, an unresolved provider question and a protocol server in one commit.
 
@@ -849,19 +849,38 @@ API 0.5.0 / 28 operations. Twenty-eight mutations killed across behaviour and fo
 
 #### P5-02c-impl-2 — DONE
 
-The common client's `search()` method. **P5-02c and P5-02 are implementation-complete.**
+The common client's `search()` method. **P5-02c and P5-02 are complete.**
 
 The contract is mirrored in the client and joined to the server's own constants and route schemas by drift tests in this repository's suite (D-432). `search(problemId, request)` sends the four wire fields unchanged, refuses an invalid request before spending one, and returns the body it validated without transforming it (D-433, D-435). Three server outcomes are returned as they arrive and a `404 NOT_FOUND` becomes `CURRENT_PROBLEM_NOT_AVAILABLE`; everything else keeps the existing error hierarchy, `500` included (D-434). A search gets its own longer finite default ceiling while an explicit `timeoutMs` still overrides every operation (D-436). Nothing is retried, faked, or judged (D-437). The Claude adapter is unchanged and guarded against growing search policy (D-438).
 
 4109 tests across 134 files; thirty-three mutations, all killed — one of them only after the lossless fixture grew a second candidate, because a one-candidate witness cannot see a reordering.
 
+Its formal review found one thing: the public type said `schema_version: string` while the validator required the mirrored constant exactly, so a wrong version compiled and failed at run time. The field is now typed from that same constant, with a compile-time witness — `expectTypeOf` equality plus `@ts-expect-error` on wrong versions — because every runtime test still passed under the defect. Putting `string` back leaves the runtime suite green and breaks the witness in six places.
+
 #### NEXT — P5-03, NOT STARTED
 
-Project auto-detection. Not to be started before P5-02's formal review.
+Project auto-detection. P5-02 is complete and formally reviewed; this is the next
+roadmap task and has not been started.
 
 Two things belong to later adapter tasks and must not be taken on early: when to search at all, and what to do when the Memory is unavailable. The client returns facts and raises failures; deciding to carry on without memory, choosing a `source_ai`, and presenting a result are each somebody else's task (D-437, D-438).
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
+
+## STANDING RULE — the reference set is not a backlog
+
+`docs/reference-set.md` holds external material — official documentation
+families, reference implementations, articles, posts, ideas — so that none of it
+is lost. It is outside the authority chain: the private specification, then the
+roadmap and task breakdown, then `.ai/DECISIONS.md`, then the code (D-439).
+
+Nothing in it is a task. It has no roadmap number and gained none by being
+written down, and "it is in the reference set" is not a reason to implement
+anything. Promoting an item requires a task that needs it, fresh official
+verification at that point, comparison against current principles, a design
+freeze, and an explicit Decision (D-440).
+
+Curating it is documentation hygiene and belongs to no phase. Adding a source is
+not a commitment; removing one is not a rejection.
 
 ## RESOLVED NOTE — the client's search timeout
 
