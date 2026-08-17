@@ -77,8 +77,14 @@ export function createOpenAiEmbeddingProvider(transport: OpenAiTransport): Embed
       // The echo is a cheap integrity check the API documents: a response
       // produced by some other model must not become a stored vector under
       // this identity, because the identity is what similarity search trusts.
+      // Exact equality, deliberately: a prefix test would quietly accept
+      // `text-embedding-3-large-something-else` as this identity, which is
+      // precisely the invented compatibility the honest-identity rule
+      // forbids. If OpenAI ever echoes a different identifier, the identity
+      // contract changes on purpose, against fresh official docs — never by
+      // an implicit match.
       const model = body['model'];
-      if (typeof model !== 'string' || !model.startsWith(OPENAI_EMBEDDING_MODEL)) {
+      if (model !== OPENAI_EMBEDDING_MODEL) {
         throw new OpenAiRequestError('MALFORMED_RESPONSE');
       }
 
