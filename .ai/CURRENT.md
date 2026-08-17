@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P4-15)
+Updated: 2026-08-17 (P5-01)
 
 ## Current phase
 
@@ -12,7 +12,7 @@ Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01
 
 Implementation Phase 4 — Retrieval: **COMPLETE** (P4-01 … P4-15)
 
-Implementation Phase 5 — Claude Code Adapter: **NOT STARTED** (P5-01 next)
+Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS** — P5-01 **DONE**, P5-02 **NEXT / NOT STARTED**
 
 ## Source of truth
 
@@ -1072,19 +1072,37 @@ Do not assume these exist, and do not add them outside the phase that owns them.
 - No permissions. A credential is all-or-nothing for its owner's memory; `clientId` is carried so that decision has somewhere to go, and nothing consults it
 - No expiry, no refresh, no scopes, no rate limiting per credential
 
+## What was decided — the Claude Code connection (P5-01)
+
+P5-01 was a read-only audit of what the assistant officially offers today, and it produced decisions rather than code. Nothing in `src/`, `tests/`, `db/`, `docs/` or the package manifest changed.
+
+**The frozen shape.** The user keeps their ordinary interactive session; nothing wraps or replaces it (D-361). The Memory reaches it through a **user-scoped local stdio MCP adapter** — configured once, applying in every project, leaving every repository untouched (D-362). The chain is assistant → stdio MCP → assistant-specific adapter → common Memory JSON API client → vendor-independent Memory Server, and the adapter may not import the core directly (D-363).
+
+**The three roles.** Hooks carry deterministic lifecycle facts. Skills carry judgement and reusable guidance, and are never a transport. A plugin is packaging, decided when there is something to package rather than now (D-366, D-369). Skill bodies are written to the portable open format so a second assistant reads the same file, with host-specific configuration pushed out to the packaging layer (D-367).
+
+**What is available and whose question it is.** The project root and the set of directories in scope are supplied natively, and P5-03 owns what to do with them (D-364). A session identifier is available through hooks and identifies a conversation, never a Problem; nothing assumes it arrives with a tool call (D-365). Whether a session-start hook can reach the adapter depends on connection ordering that is not documented, so P5-04 measures it rather than assuming (D-375).
+
+**Credentials.** The Memory credential lives in the user's local environment, reaches the adapter as process environment, and is presented as an authorization header. It goes into no repository, no `CLAUDE.md`, no `SKILL.md`, no Memory content and no tool argument (D-374).
+
+**Not depended on:** preview features, delegation as a transport, deferred tool loading as a precondition, and any programmatic wrapper of the interactive session (D-370, D-373, D-361).
+
+**Transient, and deliberately not a Decision.** The audit found the local assistant installation in a broken state — the launcher shim pointed at an executable that was not there — and read-only work did not repair it. Before the first real integration run, the tooling should verify the installation is in a supported working state and repair or update it automatically; a user should not be asked to fix it by hand. The version number involved is not recorded anywhere as an invariant, and neither is the event catalogue, the command list, current flags, preview syntax, timeout defaults or any configuration path (D-377). Those are looked up fresh from the official documentation whenever they are needed.
+
 ## Immediate objective
 
-P5-01 — Claude Code's current official capabilities.
+P5-02 — the adapter boundary, the common Memory API client, and the search transport.
 
-**NOT STARTED.** Phase 4 is complete; nothing of Phase 5 has been implemented. See the private Phase 5 breakdown for what it is.
+**NOT STARTED.** P5-01 is done and produced decisions only; no Phase 5 code exists. See the private Phase 5 breakdown for the task itself.
 
 Notes for whoever picks this up:
-- **Audit against the specification as it stands when the work begins.** What Claude Code offers — MCP transports, CLI surfaces, hooks, whatever exists then — changes faster than this repository does, and a capability list recorded here would be stale before it was read. Nothing about the current command catalogue belongs in a durable Decision
-- **The search transport is P5-02's, and it is owed.** The specification lists a cross-project similarity search among the minimum API surface; every other item in that list is already a route. Phase 4 left it internal deliberately (D-357), because no concrete generator, embedding provider or reranker is wired behind the three ports and because how an assistant identifies itself is a Phase 5 question. P5-02 builds the common Memory API client, and the route belongs with it
-- **An adapter must not import the internal service.** The common JSON API is the contract and adapters sit on top of it. A library-direct shortcut would make the Memory dependent on which process happens to host it
+- **The connection shape is settled and the contract is not.** D-361 to D-377 fix how the assistant reaches the Memory. What the adapter's tools are called, what they accept and return, and what the search route looks like are all open, and they are what P5-02 decides
+- **The search transport is owed.** The specification lists a cross-project similarity search among the minimum API surface; every other item in that list is already a route. Phase 4 left it internal deliberately (D-357), because no concrete generator, embedding provider or reranker is wired behind the three ports and because how an assistant identifies itself is a Phase 5 question. P5-02 builds the common Memory API client, and the route belongs with it (D-376)
+- **An adapter must not import the internal service.** The common JSON API is the contract and adapters sit on top of it (D-363). A library-direct shortcut would make the Memory dependent on which process happens to host it
+- **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look the details up fresh from the official documentation rather than from anything recorded here
 - The three ports are `RetrievalSummaryGenerator`, `EmbeddingProvider` and `StructuralReranker`. Nothing concrete implements any of them, `src/index.ts` wires none of them, and no runtime dependency has been added for one
 - Nothing triggers artifact generation automatically. `createRetrievalArtifactGenerationService` takes a Problem id and does the whole pipeline; when to call it is an open question P5 will have an opinion about
 - `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide. It is the right thing to hand somebody before they design an adapter's presentation
+- **Before the first real integration run, check that the local assistant installation is in a supported working state, and repair or update it automatically if it is not.** This is a preflight the tooling performs; it is not a manual repair asked of the user. See the standing note in `.ai/TODO.md` for what was observed during the audit
 
 ## Core MVP milestone
 
