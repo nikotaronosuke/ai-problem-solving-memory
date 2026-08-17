@@ -28,13 +28,24 @@ The separation is deliberate and load-bearing:
 - Generating one **sends Memory content to a configured external provider**.
   The canonical source document goes to a summary model, the resulting
   summary to an embedding model, and at search time structural features go to
-  a comparison model. Production provider adapters exist (initially OpenAI,
-  requests marked not-to-be-stored, no tools, no identifiers attached); the
-  standard server wiring that activates them is the next piece of work, and
-  without a configured credential nothing is sent anywhere. The provider sits
-  behind vendor-neutral seams and is replaceable — no vendor is a permanent
-  part of this design, and changing one regenerates artifacts rather than
-  touching any Memory.
+  a comparison model. Requests are marked not-to-be-stored, carry no tools
+  and attach no identifiers. Without a configured provider credential nothing
+  is sent anywhere. The provider sits behind vendor-neutral seams and is
+  replaceable — no vendor is a permanent part of this design, and changing
+  one regenerates artifacts rather than touching any Memory.
+- With a provider credential configured, **the standard server maintains
+  artifacts automatically**. Every canonical write schedules a background
+  regeneration for its Problem; a reconciliation sweep runs at startup and
+  periodically, finding Problems whose artifact is missing, from an old
+  source schema, or from an outdated generation stack — which is also how an
+  existing database backfills itself and how the system recovers from a
+  crash or a provider outage, with no manual step. Without the credential the
+  server runs exactly as before: every record and read works, and no
+  artifact is generated.
+- A provider outage **never stops the Memory**. Canonical writes succeed,
+  `/health` keeps answering from the database, and a failed generation
+  leaves the artifact absent — never a stale fallback — until a later write
+  or sweep regenerates it.
 - A searchable artifact **describes the current record, or it does not exist**.
   Every write that changes what a summary is generated from — an Event, a
   Verification, a canonical Problem field, a status — removes the stored

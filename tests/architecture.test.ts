@@ -685,9 +685,14 @@ describe('the delete path', () => {
         `${module.path}:false`,
       );
       for (const specifier of importsOf(module.source)) {
-        expect(`${module.path} imports ${specifier}:${specifier.includes('providers/')}`).toBe(
-          `${module.path} imports ${specifier}:false`,
-        );
+        // The composition root may import the provider composition boundary
+        // — the vendor-neutral front door — and nothing may import past it.
+        // `providers/index.js` exports no vendor name, so even the one
+        // allowed import learns "a stack exists", not whose.
+        const allowed = module.path === 'index.ts' && specifier === './providers/index.js';
+        expect(
+          `${module.path} imports ${specifier}:${!allowed && specifier.includes('providers/')}`,
+        ).toBe(`${module.path} imports ${specifier}:false`);
       }
     }
   });
@@ -724,6 +729,109 @@ describe('the delete path', () => {
       .map((module) => module.path);
 
     expect(readers).toEqual(['providers/openai/config.ts']);
+  });
+
+  it('keeps the retrieval runtime vendor-neutral and honestly owner-scoped', async () => {
+    const source = await readFile(join(SRC, 'runtime', 'retrieval-runtime.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // No vendor, no credential, no network of its own: the runtime schedules
+    // work through ports it was handed and could not tell one vendor from
+    // another.
+    for (const forbidden of ['openai', 'OPENAI_API_KEY', 'fetch(', 'https://', 'http://']) {
+      expect(`${forbidden}:${code.includes(forbidden)}`).toBe(`${forbidden}:false`);
+    }
+    // Owner contexts are resolved, never asserted into existence: a cast
+    // would make up an owner nobody checked is still there. The call form is
+    // required and every escape-hatch cast is refused, because `as unknown
+    // as …` is exactly how a conjured context would be spelled.
+    expect(code).toContain('await resolveOwnerContextFor(');
+    expect(`cast:${/as\s+unknown/.test(code)}`).toBe('cast:false');
+    expect(`cast:${/as\s+OwnerContext\b/.test(code)}`).toBe('cast:false');
+  });
+
+  it('starts retrieval maintenance after the listener, and never awaits it', async () => {
+    const source = await readFile(join(SRC, 'index.ts'), 'utf8');
+
+    // The startup sweep is background backfill: CRUD availability must not
+    // wait on a provider. The start call sits after the listen, and nothing
+    // in the entrypoint awaits the runtime.
+    const listenAt = source.indexOf('await app.listen(');
+    const startAt = source.indexOf('retrievalRuntime?.start()');
+    expect(listenAt).toBeGreaterThan(-1);
+    expect(startAt).toBeGreaterThan(listenAt);
+    expect(`awaited:${/await\s+retrievalRuntime/.test(source)}`).toBe('awaited:false');
+  });
+
+  it('lets the owner discovery select identifiers and nothing else', async () => {
+    const { OWNER_DISCOVERY_STATEMENT } = await import('../src/db/owner-discovery.js');
+
+    // One column. A discovery that carried problem ids, titles or anything
+    // beyond the identifier would be a cross-owner read of actual content.
+    const selectList = OWNER_DISCOVERY_STATEMENT.slice(
+      0,
+      OWNER_DISCOVERY_STATEMENT.indexOf('from public.problems'),
+    );
+    expect(selectList).toContain('distinct owner_id');
+    expect(`extra:${selectList.includes(',')}`).toBe('extra:false');
+    for (const forbidden of ['problem_id', 'title', 'symptoms', 'summary']) {
+      expect(`${forbidden}:${OWNER_DISCOVERY_STATEMENT.includes(forbidden)}`).toBe(
+        `${forbidden}:false`,
+      );
+    }
+  });
+
+  it('keeps the all-owner discovery inside the maintenance runtime', async () => {
+    const modules = await readModules(SRC);
+
+    const users = modules
+      .filter((module) =>
+        importsOf(module.source).some((specifier) => specifier.includes('owner-discovery')),
+      )
+      .map((module) => module.path)
+      .sort();
+
+    // The one cross-owner read exists for the sweep and for nothing else. On
+    // the repository, the HTTP surface, the client or the adapter it would
+    // be a second, unguarded path to every owner's records.
+    expect(users).toEqual(['runtime/retrieval-runtime.ts']);
+
+    for (const module of modules) {
+      if (module.path.startsWith('http/') || module.path.startsWith('repository/')) {
+        expect(`${module.path}:${module.source.includes('listOwnerIdsWithReadableProblems')}`).toBe(
+          `${module.path}:false`,
+        );
+      }
+    }
+  });
+
+  it('lets only the runtime and its scheduler own an interval timer', async () => {
+    const modules = await readModules(SRC);
+
+    for (const module of modules) {
+      if (module.path === 'runtime/retrieval-runtime.ts') {
+        continue;
+      }
+      const code = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      // A timer anywhere else is background behaviour some layer acquired
+      // without a lifecycle to stop it.
+      expect(`${module.path}:${/\bsetInterval\s*\(/.test(code)}`).toBe(`${module.path}:false`);
+    }
+  });
+
+  it('keeps the provider credential out of the general configuration', async () => {
+    // The server's own EnvConfig and startup summary must not learn the
+    // provider credential: the summary is built for pasting into an issue,
+    // and the general config travels wherever configuration travels.
+    for (const file of ['config/env.ts', 'service.ts']) {
+      const source = await readFile(join(SRC, ...file.split('/')), 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      for (const forbidden of ['OPENAI_API_KEY', 'apiKey', 'credential']) {
+        expect(`${file} ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${file} ${forbidden}:false`,
+        );
+      }
+    }
   });
 
   it('runs every canonical write that invalidates inside a transaction boundary', async () => {
@@ -1453,7 +1561,9 @@ describe('the operational log', () => {
     // decided by whoever started the process, at a moment when there are no
     // callers. The failure line is a constant.
     expect(calls.map((call) => call[1])).toEqual(['log', 'error']);
-    expect(calls[0]![2]).toContain('formatStartupSummary(buildStartupSummary(env))');
+    expect(calls[0]![2]).toContain(
+      'formatStartupSummary(buildStartupSummary(env, configuredRetrieval.enabled))',
+    );
     expect(calls[1]![2]).toContain('STARTUP_FAILURE_MESSAGE');
   });
 
