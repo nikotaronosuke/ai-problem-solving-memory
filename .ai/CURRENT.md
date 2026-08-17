@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-03, after formal-review correction)
+Updated: 2026-08-18 (development workflow hardening)
 
 ## Current phase
 
@@ -1196,6 +1196,12 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 **The monorepo question is the owner's** (D-446). The subpath is display and evidence, never identity: with it every subdirectory becomes a Project, without it a deliberate split shows up as `AMBIGUOUS` — a question rather than a wrong answer.
 
 **The client gained `listProjects` and nothing else** (D-447). `createProject` is absent because nothing calls one; the list is returned as the server sent it, and one malformed Project makes the whole answer a protocol failure rather than being skipped.
+
+## Development workflow
+
+**Task handoff preflight, commit preflight and the push rule are written down** (D-450). `CLAUDE.md` now carries them: a task prompt is an input to check rather than an authority to obey, research provenance about a private individual stays off this public repository while the generalized principle stays on it, and the pre-commit check for that boundary is a task-local search rather than a denylist committed to the repository. An explicit instruction to push is approval and is not re-confirmed; force push, rebase and history rewrite remain separate and are never implied by it.
+
+Maintenance rather than a phase task: no roadmap number, and nothing in the product changed.
 
 ## Immediate objective
 
