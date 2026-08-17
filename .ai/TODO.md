@@ -1,6 +1,6 @@
 # TODO
 
-Updated: 2026-08-13
+Updated: 2026-08-17
 
 This is the working list, not a history. What was done in Phase 1 lives in git history, `.ai/DECISIONS.md` and the summary in `.ai/CURRENT.md`.
 
@@ -763,9 +763,29 @@ P4-01 through P4-15 are done. Retrieval is complete end to end: canonical Memory
 
 Not built, deliberately: no concrete embedding, summary or reranking provider; no HTTP route for search; no automatic trigger for generation or for searching. All four belong to Phase 5, and `docs/retrieval.md` says so publicly.
 
-### NEXT — P5-01 Claude Code current official capability audit
+## PHASE 5 — IN PROGRESS
 
-**NOT STARTED.** See the private Phase 5 breakdown. A READ-ONLY audit of what Claude Code actually offers at the time the work begins — recorded then, not now, because the answer moves faster than this repository does. P5-02 follows with the adapter boundary, the common Memory API client, and the search transport Phase 4 handed forward.
+### P5-01 — DONE
+
+Claude Code current official capability audit, and the connection decisions it produced.
+
+Read-only throughout. Nothing was installed, configured or connected, no MCP server was added, no plugin, skill or hook was created, and nothing under the user's assistant configuration was touched. The audit read the official documentation, the published open skill format, and one large public reference skill library, then recorded what follows. No production code, test, migration, dependency, route or schema changed (D-377).
+
+**The shape is frozen and the contract is not.** The ordinary interactive session is what gains a Memory rather than what gets wrapped (D-361); the connection is a user-scoped local stdio MCP adapter (D-362); the adapter sits on the common JSON API and may not import the core (D-363). Hooks carry lifecycle facts, Skills carry judgement, and a plugin is packaging decided later (D-366, D-369). Skill bodies are written to the portable open format so a second assistant reads the same file (D-367), and the reference library that proved cross-assistant skills work in practice is read for its shape rather than its vocabulary (D-368).
+
+**Handed to later tasks by name.** Project identity has native signals and P5-03 decides what to do with them (D-364). A session identifies a conversation and never a Problem, and nothing assumes an identifier arrives with a tool call (D-365). Whether a session-start hook can reach the adapter depends on connection ordering the documentation does not state, so P5-04 measures it (D-375). The search route the specification requires is P5-02's and was not reduced (D-376).
+
+**Two standing rules came out of it.** Check what the host already provides before building a mechanism (D-371), and use the lightest mechanism that is genuinely sufficient (D-372). Both apply to every Phase 5 task and neither is about this audit in particular.
+
+Not depended on, deliberately: preview features, delegation as a transport, deferred tool loading as a precondition, and any programmatic wrapper of the interactive session (D-370, D-373, D-361). Not recorded, deliberately: the host version, the event catalogue, the command list, current flags, the reference library's contents, preview syntax, timeout defaults and configuration paths — all true today, none an invariant, all looked up fresh when needed (D-377).
+
+Every count unchanged: 3607 tests across 113 files, migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, `MemoryRepository` 25, API 0.4.0 / 27 operations, runtime dependencies 3.
+
+### NEXT — P5-02 adapter boundary, common Memory API client, search transport
+
+**NOT STARTED.** See the private Phase 5 breakdown. P5-01 settled how the assistant reaches the Memory; P5-02 settles what it says when it gets there — the adapter's tool surface, the common JSON API client, and the cross-project search route Phase 4 handed forward (D-357, D-376).
+
+**Before the first real integration run, check that the local assistant installation is in a supported working state.** The audit found the launcher shim on this machine pointing at an executable that was not present, so the ordinary command did not start; the audit worked around it read-only rather than repairing it. Verifying and, where needed, automatically repairing or updating the installation is a preflight the tooling performs — a user should not be asked to fix it by hand. The repair itself has not been started, and the version number involved is not an invariant of this system (D-377).
 
 ## BLOCKED
 

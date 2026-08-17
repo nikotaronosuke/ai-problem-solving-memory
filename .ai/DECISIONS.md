@@ -3416,3 +3416,109 @@ The two only differ when something disappears between the stages, which is exact
 The ranks are taken from the candidate list as it arrived, before the batch read runs, and every path reports from that map — `USED` and all four degraded statuses alike. Relative ordering is unchanged: the rank is still an ascending tie-break under the structural score, and gaps do not disturb it.
 
 Seven further mutations, each killed by a named test or guard: the availability check removed, each side of it removed in turn, `successful_directions` exempted, and the ranks renumbered on the judged path, on the degraded path, and by being read after the re-read instead of before.
+
+## D-361 — The interactive session is what gains a Memory, not what gets wrapped (P5-01)
+
+The Agent SDK and non-interactive `-p` runs can both host an agent loop, and either could have been the place a Memory adapter lives. Neither is. What this system is for is the ordinary session somebody already works in; an adapter that owns the process turns "your assistant remembers" into "use this other command instead", and the first thing that costs is the reason anyone would keep it running.
+
+So the assistant's own entry point stays exactly as it is, and the Memory arrives as something the running session can reach. Programmatic surfaces remain available for automation and CI, which is a different question from how a person works, and nothing in Phase 5 depends on them.
+
+## D-362 — The primary connection is a user-scoped local stdio MCP adapter (P5-01)
+
+Four shapes were compared: a local stdio MCP server, a remote HTTP MCP server, a wrapper around the programmatic surface, and a packaged version of the first. The stdio server at user scope is the primary one for the MVP.
+
+User scope is the part that matters most. It is configured once and applies in every project, it puts nothing inside any repository, and it stays on the machine rather than travelling with a checkout. Distributing a project-scoped configuration file per repository would make every new project a setup step and would put connection details — and the question of where a credential lives — inside something other people read. It is not ruled out forever; it is not the first candidate.
+
+Remote HTTP stays the shape the API is ready for rather than the shape the MVP ships. It costs a resident service and an authorisation flow to solve a problem a local process does not have while the Memory is one person's, and the common JSON API underneath is what keeps that route open.
+
+## D-363 — The adapter sits on the JSON API, and may not import the core (P5-01)
+
+The chain is: assistant → local stdio MCP → assistant-specific adapter → common Memory JSON API client → vendor-independent Memory Server. Each arrow is a boundary, and the last one is the one that has to hold. An adapter importing an internal service directly would make the Memory dependent on being hosted in the same process as the assistant, and the next assistant would need it rebuilt rather than reused — which is the one thing this system exists not to require.
+
+It also fixes where assistant-specific knowledge is allowed to exist. Session identity, lifecycle payloads, tool naming and permission semantics stop at the adapter. Nothing below it learns which assistant is calling except as data it was handed.
+
+## D-364 — Project identity has native signals, and P5-03 decides what to do with them (P5-01)
+
+The project root is supplied to a local MCP server in its environment and is documented as stable across working directories being added or removed mid-session; the full set of directories in scope is available to a server that asks for it, with a notification when that set changes. Both are available to the adapter without inventing anything.
+
+What is recorded here is that they exist and can be used. Which of them decides that two sessions concern the same Project, how a repository remote or a subdirectory of a monorepo weighs against a launch directory, and what happens when the answer changes mid-session are P5-03's questions, and it owns them.
+
+## D-365 — A session identifies a conversation, never a Problem (P5-01)
+
+Lifecycle hooks carry a session identifier on every event, so an adapter can know which conversation it is being spoken to from. That is a useful continuity signal and it is not identity. A Problem outlives the session that discovered it, is returned to from a different session, and is the thing another project retrieves months later. Binding a Problem to a session would make the Memory forget across exactly the boundary it exists to cross.
+
+The tool call is a separate question. Nothing in the official documentation says a session identifier reaches an MCP server along with a tool invocation, so the design does not assume one: whatever the adapter needs to know about the session must arrive through a documented channel, or not be needed.
+
+## D-366 — Hooks carry lifecycle facts, Skills carry judgement (P5-01)
+
+Hooks fire on events and are deterministic; Skills are instructions the model reads. The division follows from that. A hook is the right place to know that a session started, that a tool call failed, that a session ended — facts with no interpretation in them. Deciding that an investigation has become a new Problem, that a search is worth running now, or that what just happened is a discovery is not a fact of that kind, and a hook ruling on it would be guessing from the shape of a tool call.
+
+So no semantic classification is settled by a hook alone, and no Skill is treated as a transport. A Skill says when retrieval is worth considering, why a retrieved Memory is revalidated rather than believed, and what deserves recording. It moves no data.
+
+## D-367 — One Skill body, written to the portable contract (P5-01)
+
+Skills are a published open format: a `SKILL.md` with a required name and description, a small set of optional fields, and conventional directories beside it for scripts, reference material and static assets. Claude Code implements that format and extends it with fields of its own, and the paths that validate against the published standard reject anything outside it — so the boundary between the two is a fact rather than a matter of taste.
+
+The Memory's Skills are therefore authored to the portable contract, with any host-specific frontmatter or configuration belonging to the adapter or packaging layer that installs them. The point is that a second assistant receives the same Skill body rather than a translated copy. Two copies of the same instructions drift, and the one that drifts is always the one nobody is currently looking at.
+
+## D-368 — Salesforce's skill library is read as a reference implementation, not as a standard (P5-01)
+
+`forcedotcom/sf-skills` is a large published skill set that states it follows the open specification and is installed into several different assistants from one repository. That makes it evidence that cross-assistant skills work in practice rather than only on paper, which is why it was read. Its own README says to expect frequent change, so nothing about its current contents is recorded here.
+
+What is adopted is the shape. A description that says both what the skill owns and what it must not be used for, naming the neighbouring skill instead of leaving the reader to guess. `SKILL.md` for judgement and workflow; scripts for the deterministic part; references for knowledge read only when needed; assets for static material. Progressive disclosure, so the body stays small and the detail is fetched. And an explicit rule that missing data is reported rather than invented, with failures made visible rather than smoothed over.
+
+What is not adopted is its vocabulary or its domain. Version and tool-requirement keys nested under the metadata field, its data-directory conventions and its platform knowledge are that project's house style, and recording them as the standard would be mistaking one implementation for the interface.
+
+## D-369 — A plugin is packaging, and packaging is decided when there is something to package (P5-01)
+
+A plugin can bundle skills, hooks, MCP servers and settings and install them in one step. That is a real convenience and it is not an architecture. Making it the unit of design now would fix the layout of the Memory's integration before the integration exists.
+
+P5-02 does not use one. When hooks and skills actually exist and installing them by hand has become the awkward part — P5-04 at the earliest — the question is asked again against the specification as it stands then, not against this note.
+
+## D-370 — Preview features are not depended on, and delegation is not a transport (P5-01)
+
+Event-push channels are documented as a research preview whose flag syntax and protocol may still change, and they carry authentication and allowlist requirements of their own. A Memory that works only where a preview feature is enabled is not a Memory, so nothing depends on one.
+
+Subagents and multi-agent arrangements are excluded for a different reason: they work, and they are not a transport. Retrieval is a tool call in the conversation that needs the answer. Where an isolated context genuinely earns its cost, delegation may be used on its merits — never to carry Memory data from one place to another.
+
+## D-371 — Native capability is checked before anything is built (P5-01)
+
+This audit found that most of what Phase 5 needs is already provided by the host: lifecycle events, the project root, a way for a server to learn which directories are in scope, a permission model, a skill format. What does not exist is the adapter and the API client, and that is the whole of what Phase 5 has to write.
+
+That is a standing rule rather than an observation about one audit. Before building a mechanism, check whether the assistant already provides it, and if it does and it suffices, do not reimplement it. A reimplementation has to be maintained against a host that keeps changing underneath it, and it is the kind of work that looks like progress while producing none.
+
+## D-372 — The lightest sufficient mechanism wins (P5-01)
+
+Model reasoning, a tool call, a lifecycle hook, a Skill, a script and a delegated agent are all ways to get something done, and they differ by orders of magnitude in what each invocation costs. The rule is to use the lightest one that is genuinely sufficient: a deterministic lifecycle signal is a hook rather than a model noticing; a fixed transformation is a script rather than a prompt; a retrieval is a tool call rather than a delegated agent.
+
+"Sufficient" carries the weight in that sentence. This is not an argument for pushing judgement into code — D-366 says the opposite — but for not spending a language model on something with no judgement in it.
+
+## D-373 — Deferred tool loading is welcome and is not a requirement (P5-01)
+
+The host can defer MCP tool definitions and let the model search for them, which keeps context small as tool counts grow and makes a server's own instructions the thing that decides whether its tools are found. The adapter will be written to benefit from that: instructions that say what the tools are for, and names that say what each one does.
+
+It is not a condition of the design. The documentation names configurations where the behaviour is off or unsupported, and the Memory has to work there too. If every definition is loaded up front instead, the difference must be context spent and never function lost.
+
+## D-374 — A Memory credential lives in the user's environment and nowhere in the work (P5-01)
+
+The credential the adapter presents does not go into the repository, into a `CLAUDE.md`, into a `SKILL.md` or its references and assets, into Memory content, or into a tool argument the model passes. Each of those is somewhere the value would be committed, retrieved, or echoed by something whose job is to show text to a person.
+
+The first candidate is the plainest one the host already supports: the value lives in the user's local environment, reaches the adapter as process environment, and is presented as an authorization header to the Memory JSON API. P5-02 settles it. No operating-system keychain integration is invented here — that is a mechanism this task has no evidence it needs, and D-371 applies to it directly.
+
+## D-375 — Whether a session-start hook can reach the adapter is measured, not assumed (P5-01)
+
+A hook can call an MCP tool directly, which would be the neat way to hand a new session's identity to the adapter. The same documentation says the server must already be connected and that a hook never initiates a connection, and it does not state where a local server's startup sits relative to session-start hooks.
+
+So the mechanism is not fixed here. P5-04 measures the actual ordering and chooses between a hook calling the tool, an asynchronous variant, or the adapter learning about the session another way. Recording a mechanism now on the strength of a plausible reading is precisely how a design acquires a dependency nobody ever tested.
+
+## D-376 — The search route is still owed, and it is P5-02's (P5-01)
+
+Phase 4 ended with retrieval complete and unpublished (D-357). The specification's minimum API surface does include a cross-project similarity search, and that requirement is not withdrawn: it was deferred because no concrete generator, embedding provider or reranker was wired behind the three ports, and because how a caller identifies which assistant it is belongs to Phase 5.
+
+P5-02 owns it, together with the common JSON API client the adapter sits on. Nothing decided in P5-01 reduces it.
+
+## D-377 — What P5-01 recorded, and what it refused to (P5-01)
+
+No production code, test, migration, dependency, route or schema changed. API 0.4.0 with 27 operations, migrations 16, tables 12, FKs 13, DOMAINs 8, `MemoryRepository` 25 and three runtime dependencies are untouched, along with every other Phase 4 count — an audit that changed the system would be an implementation task wearing an audit's name. Three files under `.ai/` were edited and nothing else.
+
+Deliberately absent from these Decisions: the host version the audit ran against, the lifecycle event catalogue, the command list, current CLI flags, the number and names of the skills in the reference library, preview syntax, timeout defaults, and the current on-disk location of any configuration file. Every one of them is true today and none is an invariant of this system; a Decision pinning one would be read later as a rule and would be wrong by then. What belongs here is the shape of the connection and the boundaries it has to respect. Those hold while the details underneath them move, and the details are looked up fresh from the official documentation each time they are needed.
