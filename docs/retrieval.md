@@ -219,10 +219,20 @@ every candidate still carries its material with `structural_score` absent rather
 than filled in with a zero. That is a smaller answer to the same question, not a
 missing route — and it is why the route exists whether or not a credential does.
 
+A channel that reports itself unavailable means the provider could not answer —
+unreachable, timed out, rate limited, or a server error — and the smaller answer
+is the right one. It does not mean the integration is broken. A provider that
+answers with something the server cannot use, or refuses the request outright,
+fails the search with a `500` instead, because an answer that looks complete is
+worse than one that fails: nothing would ever prompt anyone to look. That failure
+is never reported as a problem with the request, which had no part in it.
+
 What a response never carries: a recommendation, a verdict, a winner, an answer,
 a should-retry, whether anything was cached, or which model was involved. The
 first group is the caller's judgement and the second is not a fact about the
-memory that was asked for.
+memory that was asked for. A failure carries less still — the standard error
+envelope and a request id, with nothing the provider said, in the response or in
+the log.
 
 ## Not built yet
 

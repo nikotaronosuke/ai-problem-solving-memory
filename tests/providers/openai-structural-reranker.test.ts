@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ProblemId } from '../../src/domain/problem.js';
+import { RetrievalProviderCallError } from '../../src/domain/retrieval-provider-failure.js';
 import {
   parseStructuralRerankerOutput,
   type StructuralRerankerInput,
@@ -14,7 +15,6 @@ import type { StructuralFeatures } from '../../src/domain/retrieval-summary.js';
 import {
   createOpenAiStructuralReranker,
   createOpenAiTransport,
-  OpenAiRequestError,
   OPENAI_RERANK_MODEL,
   type FetchLike,
 } from '../../src/providers/openai/index.js';
@@ -204,7 +204,9 @@ describe('the OpenAI structural reranker', () => {
     ];
     for (const entries of cases) {
       const { reranker } = harness(() => answerFor(entries));
-      await expect(reranker.rerank(INPUT)).rejects.toBeInstanceOf(OpenAiRequestError);
+      const call = reranker.rerank(INPUT);
+      await expect(call).rejects.toBeInstanceOf(RetrievalProviderCallError);
+      await expect(call).rejects.toMatchObject({ failure: 'INVALID_RESPONSE' });
     }
   });
 

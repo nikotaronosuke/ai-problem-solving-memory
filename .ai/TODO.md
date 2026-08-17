@@ -835,17 +835,21 @@ With `OPENAI_API_KEY` set, a standard server runs the whole supply side: write �
 
 3795 tests across 128 files. Twenty mutations killed — three exposed real guard holes (sweep-before-listen, a second discovery column, an `as unknown` context) now guarded by name. The first full-suite run also caught an unscoped sweep writing artifacts into other suites' fixtures on the shared test database; the discovery seam that fixes it is the production default plus injectable owners for tests (D-419).
 
-#### P5-02c-impl-1 — DONE
+#### P5-02c-impl-1 — DONE after formal-review correction
 
 The Search JSON API and the owner-scoped search composition.
 
 `POST /v1/problems/:problem_id/search`, one route and one method, guarded (D-420). Four request fields, all required, closed, with every refusal reasoned and `parseStructuralFeatures` still the trust boundary behind the transport schema (D-421). Three outcomes as ordinary 200s, one as the ordinary 404, no 409, and a refused search reusing the existing application-rejection branch for its 400 (D-422). Lossless candidate material, written out by hand rather than spread, nothing sorted or renumbered, no recommendation or verdict or cache or provider identity anywhere in the nested schema (D-423). Both provider ports optional at the stage services, no stand-in provider anywhere in `src/`, and a port that answers unusably treated as an internal failure rather than a degraded channel (D-424). Transport asks through a resolver and never assembles a pipeline; owner from the authenticated context, cross-checked and resolved rather than cast; request-scoped graph, one process-wide cache; the resolver required rather than optional (D-425). One usage row per Memory offered, written by the search service and not the route, and a lost record reported with three closed fields under one new log event (D-426).
 
-API 0.5.0 / 28 operations. 3908 tests across 131 files. Twenty-eight mutations killed across behaviour and forbidden-boundary injection. Five pre-existing guards were *updated* rather than satisfied — three P4-era suites asserted this material was not reachable over HTTP "yet", and each now pins the exact modules where the name may appear; the owner-boundary security suite refused to pass until `searchProblemMemory` was classified and attacked from both directions (D-427).
+API 0.5.0 / 28 operations. Twenty-eight mutations killed across behaviour and forbidden-boundary injection. Five pre-existing guards were *updated* rather than satisfied — three P4-era suites asserted this material was not reachable over HTTP "yet", and each now pins the exact modules where the name may appear; the owner-boundary security suite refused to pass until `searchProblemMemory` was classified and attacked from both directions (D-427).
+
+**The formal review then found one thing and rejected the follow-up it had been recorded as.** Production adapters detect a malformed answer themselves and raised a transport error; both stage services degraded on any throw; so a wrong-width vector or a rejected API key came back as an ordinary 200 with the channel reported unavailable. Corrected with a three-word vendor-neutral failure vocabulary translated once at the provider boundary (D-428), a production failure matrix driven through the real transport (D-429), and two response schemas tightened to say what the server actually sends (D-430). The P4 generic-throw contract is intact, and nothing listed as untouched moved (D-431).
+
+3971 tests across 132 files; eighteen further mutations, all killed.
 
 #### NEXT — P5-02c-impl-2, NOT STARTED
 
-The common client's `search()` method. Pending formal review of P5-02c-impl-1.
+The common client's `search()` method. impl-1 is done and its formal review is answered.
 
 The client is deliberately untouched by impl-1, and a guard fails if any shipped client module mentions `/search` or `searchProblemMemory`. Two things have to be decided rather than copied (D-427):
 
@@ -854,11 +858,13 @@ The client is deliberately untouched by impl-1, and a guard fails if any shipped
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
 
-## STANDING NOTE — malformed and unreachable are one signal at the provider adapters
+## RESOLVED NOTE — malformed and unreachable are two signals now
 
-The stage services already distinguish them: a port that *throws* degrades the channel, a port that *returns* an unusable answer fails the search through the domain parser (D-424). The OpenAI adapters validate their own responses and raise a transport-level error, so a malformed answer from that family arrives at the stage services as unreachability — which means a broken integration currently looks like a deliberate deployment choice for as long as it stays broken.
+A standing note recorded that the OpenAI adapters detected a malformed answer themselves, raised a transport-level error, and that both stage services read it as unreachability — so a broken integration looked like a deliberate deployment choice for as long as it stayed broken. It was left open on the grounds that no result was wrong.
 
-Closing it means giving the vendor-neutral ports a two-way failure vocabulary — "could not reach" versus "answered unusably" — which is a contract change to the ports, to the P5-02a adapters and to their tests. Not urgent: the statuses are honest about what the caller got either way, and no result is wrong. Worth doing when the ports are next opened, and worth remembering before anyone concludes from a `PROVIDER_UNAVAILABLE` that a provider was down.
+The formal review of P5-02c-impl-1 disagreed, and it was right: an answer that looks complete is worse than one that fails, because nothing ever prompts anyone to look. Closed by D-428 — a three-word vendor-neutral vocabulary (`UNAVAILABLE`, `INVALID_RESPONSE`, `UPSTREAM_REJECTED_REQUEST`), translated once at the provider boundary, with one predicate deciding which kinds must not be degraded. `PROVIDER_UNAVAILABLE` now means what it says.
+
+Kept as a record of a follow-up that should not have been one.
 
 ## BLOCKED
 

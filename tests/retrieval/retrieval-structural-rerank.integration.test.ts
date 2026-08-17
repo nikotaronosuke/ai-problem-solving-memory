@@ -48,6 +48,7 @@ import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
 import { generateOwnerId, type OwnerContext, type OwnerId } from '../../src/domain/owner.js';
 import type { ProblemId } from '../../src/domain/problem.js';
 import type { ProjectId } from '../../src/domain/project.js';
+import { RetrievalProviderCallError } from '../../src/domain/retrieval-provider-failure.js';
 import type { HybridCandidate } from '../../src/domain/retrieval-hybrid-search.js';
 import type {
   StructuralReranker,
@@ -631,6 +632,50 @@ describe.skipIf(databaseUrl === undefined)('structural reranking', () => {
   });
 
   describe('a reranker that fails', () => {
+    it('degrades only for a failure that says the reranker could not answer', async () => {
+      const owner = await makeActor();
+      const first = await seed(owner);
+      const second = await seed(owner);
+      const unavailable: StructuralReranker = {
+        rerank: () => Promise.reject(new RetrievalProviderCallError('UNAVAILABLE')),
+      };
+
+      const result = await serviceFor(owner, unavailable).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(second, 1)],
+      });
+
+      expect(result.status).toBe('RERANKER_UNAVAILABLE');
+      expect(result.candidates.map((candidate) => candidate.problemId)).toEqual([
+        first.problemId,
+        second.problemId,
+      ]);
+    });
+
+    it.each([['INVALID_RESPONSE'], ['UPSTREAM_REJECTED_REQUEST']] as const)(
+      'refuses to call %s a degraded stage',
+      async (failure) => {
+        const owner = await makeActor();
+        const first = await seed(owner);
+        const second = await seed(owner);
+        const broken: StructuralReranker = {
+          rerank: () => Promise.reject(new RetrievalProviderCallError(failure)),
+        };
+
+        const rerank = serviceFor(owner, broken).rerank({
+          currentFeatures: asFeatures(),
+          candidates: [asCandidate(first, 0), asCandidate(second, 1)],
+        });
+
+        // An unusable answer and a refused request are integration failures.
+        // Returning the first stage's order under `RERANKER_UNAVAILABLE` would
+        // publish an ordering nobody computed as though a reranker had simply
+        // been quiet.
+        await expect(rerank).rejects.toBeInstanceOf(RetrievalProviderCallError);
+        await expect(rerank).rejects.toMatchObject({ failure });
+      },
+    );
+
     it('degrades to the first stage’s order when it cannot be reached', async () => {
       const owner = await makeActor();
       const first = await seed(owner);

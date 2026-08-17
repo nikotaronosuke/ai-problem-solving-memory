@@ -43,7 +43,13 @@ import type {
   RetrievalSearchOutcome,
 } from '../app/index.js';
 import { SEMANTIC_CHANNEL_STATUSES } from '../app/index.js';
-import { CONFIDENCES, FIX_KINDS, FRESHNESSES, PROBLEM_STATUSES } from '../domain/enums.js';
+import {
+  CONFIDENCES,
+  FIX_KINDS,
+  FRESHNESSES,
+  PROBLEM_STATUSES,
+  VERIFICATION_TYPES,
+} from '../domain/enums.js';
 import type { ConflictContext, Contradiction } from '../domain/retrieval-conflict.js';
 import type { DeadEndWarning } from '../domain/retrieval-dead-end.js';
 import { PROJECT_RELATIONS } from '../domain/retrieval-ranking.js';
@@ -151,7 +157,11 @@ const NULLABLE_TEXT = { type: ['string', 'null'] } as const;
 const VERIFICATION_EVIDENCE_SCHEMA = {
   type: 'object',
   properties: {
-    verification_type: { type: 'string' },
+    // Closed against the domain's own list. It was `type: 'string'`, which
+    // published a free-form field the server never accepts — and the client
+    // that generates from this document would have copied the loose version as
+    // its source of truth before anyone noticed the difference.
+    verification_type: { type: 'string', enum: [...VERIFICATION_TYPES] },
     // Both values are kept: a check that failed is evidence too, and a list
     // of only the passing ones would read as though everything tried worked.
     result: { type: 'boolean' },
@@ -207,10 +217,21 @@ const REVALIDATION_SCHEMA = {
     // schema the data does not have.
     historical_environment: { type: 'object', additionalProperties: true },
     evidence: { type: 'array', items: VERIFICATION_EVIDENCE_SCHEMA },
-    // Always the four, always all of them. A search result is a candidate
-    // rather than an answer, and this is how the server says so.
+    // Always the four, always all of them — and now the schema says so rather
+    // than merely permitting it. An `items` enum alone allowed a caller to read
+    // this as "zero or more of these", which is the opposite of the claim: a
+    // search result is a candidate rather than an answer, and the four checks
+    // are what makes that claim concrete.
+    //
+    // The bounds and the uniqueness together are what pin it. Four entries,
+    // no repeats, drawn from a four-value enum, is exactly the full set — with
+    // any one of the three constraints removed, a conforming document could
+    // carry a subset or the same check four times.
     required_checks: {
       type: 'array',
+      minItems: REVALIDATION_CHECKS.length,
+      maxItems: REVALIDATION_CHECKS.length,
+      uniqueItems: true,
       items: { type: 'string', enum: [...REVALIDATION_CHECKS] },
     },
   },

@@ -67,7 +67,7 @@ import {
   STRUCTURAL_FEATURE_SCHEMA_VERSION,
   type StructuralFeatures,
 } from '../../src/domain/retrieval-summary.js';
-import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { buildMemoryHttpApp, createLoggerOptions } from '../../src/http/index.js';
 import { resolveOwnerContextFor } from '../../src/owner/context.js';
 import { createConfiguredRetrievalProviders } from '../../src/providers/index.js';
 import type { FetchLike } from '../../src/providers/openai/index.js';
@@ -140,6 +140,9 @@ interface Actor {
   readonly artifacts: RetrievalArtifactRepository;
 }
 
+/** How one endpoint answers: a status and a body, or the good answer. */
+type EndpointAnswer = { readonly status: number; readonly body: string } | undefined;
+
 /**
  * A `fetch` that answers like the two endpoints the search path uses, and
  * counts.
@@ -152,8 +155,15 @@ interface Actor {
  * reranker invents opaque per-call keys and refuses an answer that omits one,
  * so a fixture with hard-coded keys would test the refusal rather than the
  * path.
+ *
+ * Either endpoint can be told to answer differently, which is how the failure
+ * matrix below is driven: the classification under test happens inside the real
+ * transport and the real adapters, so the only honest way to exercise it is to
+ * make a real provider response say the wrong thing.
  */
-function fakeOpenAi(): FetchLike & { paths: string[]; rerankInputs: unknown[] } {
+function fakeOpenAi(
+  failures: { readonly embeddings?: EndpointAnswer; readonly responses?: EndpointAnswer } = {},
+): FetchLike & { paths: string[]; rerankInputs: unknown[] } {
   const paths: string[] = [];
   const rerankInputs: unknown[] = [];
 
@@ -161,6 +171,16 @@ function fakeOpenAi(): FetchLike & { paths: string[]; rerankInputs: unknown[] } 
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.href : String(input);
     paths.push(url);
+
+    const scripted = url.endsWith('/embeddings') ? failures.embeddings : failures.responses;
+    if (scripted !== undefined) {
+      return Promise.resolve(
+        new Response(scripted.body, {
+          status: scripted.status,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }
 
     if (url.endsWith('/embeddings')) {
       return Promise.resolve(
@@ -275,6 +295,8 @@ describe.skipIf(databaseUrl === undefined)(
         readonly embeddingProvider?: EmbeddingProvider;
         readonly structuralReranker?: StructuralReranker;
       } = {},
+      /** Where the operational log goes, when a test needs to read it. */
+      lines?: string[],
     ): FastifyInstance {
       const configured = createConfiguredRetrievalProviders(
         fetch === undefined ? {} : { OPENAI_API_KEY: SYNTHETIC_API_KEY },
@@ -305,7 +327,19 @@ describe.skipIf(databaseUrl === undefined)(
         problemCloseService: createProblemCloseService(),
         problemDeleteService: createProblemDeleteService(),
         exportService: createExportService(),
-        logger: false,
+        logger:
+          lines === undefined
+            ? false
+            : {
+                // The production options, so what is swept is what a server
+                // would actually write.
+                ...createLoggerOptions('trace'),
+                stream: {
+                  write(line: string) {
+                    lines.push(line);
+                  },
+                },
+              },
       });
       appsCreated.push(app);
       return app;
@@ -580,6 +614,211 @@ describe.skipIf(databaseUrl === undefined)(
 
         expect(response.statusCode).toBe(500);
         expect(response.json<{ error: { code: string } }>().error.code).toBe('INTERNAL_ERROR');
+      });
+    });
+
+    describe('when the provider fails', () => {
+      /**
+       * The formal-review finding, as a matrix.
+       *
+       * Every row goes through the real transport and the real adapter, because
+       * the classification being tested lives there — a hand-built port throwing a
+       * hand-built error would prove the stage services branch correctly and
+       * nothing about whether production produces the right branch.
+       *
+       * The line is not "did it fail" but "can waiting fix it". A rate limit and a
+       * server error can; a body this system cannot read, and a request the
+       * provider refused, cannot — and reporting those two as a quiet channel is
+       * exactly how a broken integration stays broken behind an answer that looks
+       * complete.
+       */
+      it('fails the search when the embedding answer is unusable', async () => {
+        const actor = await makeActor();
+        const { current } = await seedSearchable(actor);
+        const app = makeApp(
+          actor,
+          // HTTP 200, and a body that is not the document. This is the case that
+          // used to come back as a lexical-only 200 with the semantic channel
+          // reported unavailable.
+          fakeOpenAi({ embeddings: { status: 200, body: JSON.stringify({ data: 'nonsense' }) } }),
+        );
+
+        const response = await search(app, current.problemId);
+
+        expect(response.statusCode).toBe(500);
+        expect(response.json<{ error: { code: string } }>().error.code).toBe('INTERNAL_ERROR');
+        // Emphatically not a 200 carrying a channel status: a broken integration
+        // must not be able to hide inside an ordinary answer.
+        expect(response.body.includes('semantic_status')).toBe(false);
+        expect(response.body.includes('PROVIDER_UNAVAILABLE')).toBe(false);
+      });
+
+      it('fails the search when the embedding is right-shaped but the wrong width', async () => {
+        const actor = await makeActor();
+        const { current } = await seedSearchable(actor);
+        const app = makeApp(
+          actor,
+          fakeOpenAi({
+            embeddings: {
+              status: 200,
+              body: JSON.stringify({ model: EMBEDDING_MODEL, data: [{ embedding: [1, 0, 0] }] }),
+            },
+          }),
+        );
+
+        // A vector of another width is not a point in the space the artifacts
+        // were embedded in. The adapter knows that; the stage above must not
+        // translate the knowledge into "the provider was quiet".
+        expect((await search(app, current.problemId)).statusCode).toBe(500);
+      });
+
+      it('fails the search when the reranker answer is unusable', async () => {
+        const actor = await makeActor();
+        const { current } = await seedSearchable(actor);
+        const app = makeApp(
+          actor,
+          fakeOpenAi({
+            responses: { status: 200, body: JSON.stringify({ status: 'completed', output: {} }) },
+          }),
+        );
+
+        const response = await search(app, current.problemId);
+
+        expect(response.statusCode).toBe(500);
+        expect(response.body.includes('RERANKER_UNAVAILABLE')).toBe(false);
+      });
+
+      it.each([[429], [500], [503]])(
+        'degrades the semantic channel when the embedding endpoint answers %i',
+        async (status) => {
+          const actor = await makeActor();
+          const { current, first } = await seedSearchable(actor);
+          const app = makeApp(actor, fakeOpenAi({ embeddings: { status, body: '{}' } }));
+
+          const response = await search(app, current.problemId);
+
+          // Temporarily unable to answer. The lexical half is a real answer, and
+          // the status says which half is missing.
+          expect(response.statusCode).toBe(200);
+          const body = response.json<SearchResponse>();
+          expect(body.kind).toBe('SEARCHED');
+          expect(body.semantic_status).toBe('PROVIDER_UNAVAILABLE');
+          expect((body.candidates ?? []).map((c) => c.ranking.problem_id)).toContain(
+            first.problemId,
+          );
+        },
+      );
+
+      it.each([[400], [401], [403], [404]])(
+        'fails the search when the embedding endpoint refuses the request with %i',
+        async (status) => {
+          const actor = await makeActor();
+          const { current } = await seedSearchable(actor);
+          const app = makeApp(
+            actor,
+            fakeOpenAi({
+              embeddings: {
+                status,
+                body: JSON.stringify({
+                  error: { message: 'Incorrect API key provided: sk-live-x' },
+                }),
+              },
+            }),
+          );
+
+          const response = await search(app, current.problemId);
+
+          // A rejected credential is an operator's problem, not a quiet channel
+          // and not the caller's fault — and never a 400, because the caller's
+          // search had no part in it.
+          expect(response.statusCode).toBe(500);
+          expect(response.json<{ error: { code: string } }>().error.code).toBe('INTERNAL_ERROR');
+        },
+      );
+
+      it.each([[429], [500]])(
+        'degrades the structural stage when the rerank endpoint answers %i',
+        async (status) => {
+          const actor = await makeActor();
+          const { current } = await seedSearchable(actor);
+          const app = makeApp(actor, fakeOpenAi({ responses: { status, body: '{}' } }));
+
+          const response = await search(app, current.problemId);
+
+          expect(response.statusCode).toBe(200);
+          const body = response.json<SearchResponse>();
+          // The semantic half still ran: one endpoint failing does not take the
+          // other with it.
+          expect(body.semantic_status).toBe('USED');
+          expect(body.structural_status).toBe('RERANKER_UNAVAILABLE');
+        },
+      );
+
+      it.each([[400], [401], [404]])(
+        'fails the search when the rerank endpoint refuses the request with %i',
+        async (status) => {
+          const actor = await makeActor();
+          const { current } = await seedSearchable(actor);
+          const app = makeApp(actor, fakeOpenAi({ responses: { status, body: '{}' } }));
+
+          expect((await search(app, current.problemId)).statusCode).toBe(500);
+        },
+      );
+
+      it('says nothing about the provider in the response or the log', async () => {
+        const actor = await makeActor();
+        const { current } = await seedSearchable(actor);
+        const lines: string[] = [];
+        const app = makeApp(
+          actor,
+          fakeOpenAi({
+            embeddings: {
+              status: 401,
+              body: JSON.stringify({
+                error: {
+                  message: 'Incorrect API key provided: sk-live-leak-marker',
+                  type: 'invalid_request_error',
+                  code: 'invalid_api_key',
+                },
+              }),
+            },
+          }),
+          {},
+          lines,
+        );
+
+        const response = await search(app, current.problemId);
+        expect(response.statusCode).toBe(500);
+
+        // Everything an operator gets is the closed failure word and a request
+        // id. The upstream body quoted a credential back at us; the request that
+        // produced it carried somebody's Memory and the real key.
+        const written = `${response.body} ${lines.join('\n')}`;
+        for (const forbidden of [
+          'sk-live-leak-marker',
+          'Incorrect API key',
+          'invalid_api_key',
+          'invalid_request_error',
+          'api.openai.com',
+          'openai',
+          'text-embedding',
+          // The upstream status, in every shape it could be written. Not the
+          // bare number: a millisecond timestamp and a UUID both contain digit
+          // runs, and a sweep that fails on those is a sweep nobody can keep.
+          '"status":401',
+          '"statusCode":401',
+          'status=401',
+          SEARCH_BODY.lexical_text,
+          SEARCH_BODY.semantic_text,
+          'symptom_patterns',
+        ]) {
+          expect(`${forbidden} leaked:${written.includes(forbidden)}`).toBe(
+            `${forbidden} leaked:false`,
+          );
+        }
+        // And what the log does say is the closed pair the policy allows.
+        expect(lines.some((line) => line.includes('UNHANDLED_REQUEST_FAILURE'))).toBe(true);
+        expect(lines.some((line) => line.includes('"failure":"UNEXPECTED"'))).toBe(true);
       });
     });
 

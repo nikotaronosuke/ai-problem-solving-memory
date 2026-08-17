@@ -1198,6 +1198,78 @@ describe('the search path', () => {
   });
 });
 
+describe('the provider failure classification', () => {
+  it('keeps the vendor’s own failure words inside the provider directory', async () => {
+    const modules = await readModules(SRC);
+
+    // The general vendor guard already refuses the string `openai` outside
+    // `providers/`, which covers the class names. This says the same thing from
+    // the other direction and about the thing that matters: an HTTP status from
+    // a provider must not exist above the boundary that translates it.
+    for (const { path, source } of modules) {
+      if (path.startsWith('providers/')) {
+        continue;
+      }
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      for (const forbidden of ['OpenAiRequestError', 'OpenAiResponseError', 'HTTP_ERROR']) {
+        expect(`${path} names ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} names ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
+  it('carries nothing but a kind out of a provider failure', async () => {
+    const source = await readFile(join(SRC, 'domain', 'retrieval-provider-failure.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // A provider error travels into logs, and the request that produced it held
+    // somebody's Memory rendered as text along with the credential. So the
+    // classified failure has one field, and the constructor takes one argument.
+    for (const forbidden of ['status', 'cause', 'body', 'url', 'openai']) {
+      expect(`${forbidden}:${code.toLowerCase().includes(forbidden)}`).toBe(`${forbidden}:false`);
+    }
+  });
+
+  it('routes both search-path adapters through the one translation', async () => {
+    for (const file of ['embedding-provider.ts', 'structural-reranker.ts']) {
+      const source = await readFile(join(SRC, 'providers', 'openai', file), 'utf8');
+      // Wrapping the whole call, not each throw: a check added inside an
+      // adapter is classified without anyone remembering to classify it.
+      expect(source, file).toContain('withClassifiedOpenAiFailures(');
+    }
+  });
+
+  it.each([
+    ['retrieval-vector-search-service.ts', 'embeddingProvider.embed'],
+    ['retrieval-structural-rerank-service.ts', 'reranker.rerank'],
+  ])('makes %s ask before it degrades', async (file, call) => {
+    const source = await readFile(join(SRC, 'app', file), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // The finding this guard exists for: both used to catch every throw and
+    // report the channel unavailable, so a provider that answered unusably was
+    // indistinguishable from one that was never configured.
+    expect(code, file).toContain('isRetrievalProviderIntegrationFailure(');
+
+    // And the catch around the *port call* must bind what it caught. A bare
+    // `catch {` there discards the very thing the branch is decided from, and
+    // it is what both of these used to have. Other bare catches in these files
+    // are fine and deliberate — a local parse failure carries no classification
+    // to read.
+    const callAt = code.indexOf(`await ${call}(`);
+    expect(callAt, `${file} does not call the port`).toBeGreaterThan(-1);
+    const afterTheCall = code.slice(callAt, callAt + 200);
+
+    expect(`${file} binds the failure:${afterTheCall.includes('} catch (')}`).toBe(
+      `${file} binds the failure:true`,
+    );
+    expect(`${file} discards the failure:${afterTheCall.includes('} catch {')}`).toBe(
+      `${file} discards the failure:false`,
+    );
+  });
+});
+
 describe('the retry queue is not part of the server', () => {
   it('is imported by nothing the server runs', async () => {
     const modules = (await readModules(SRC)).filter(
