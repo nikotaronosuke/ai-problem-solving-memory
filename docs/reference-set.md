@@ -41,7 +41,7 @@ authentication, a protocol, a provider's capabilities or a product's current
 behaviour. For those, the official source is checked fresh — the whole point of
 step 2.
 
-Captured/curated: **2026-08-17**. Nothing here is asserted as currently true.
+Captured/curated: **2026-08-18**. Nothing here is asserted as currently true.
 Where a status says fresh verification is required, that is a precondition rather
 than a caution.
 
@@ -233,6 +233,126 @@ to a pinned source, and none is invented here.
 | A Memory credential and an external tool credential are separate things                   | `REFLECTED` — D-374                                                                                                                                                |
 | Memory records its own history and is not a global audit or approval layer                | `REFLECTED` — D-081                                                                                                                                                |
 
+## Family I — Execution assurance patterns
+
+**Source** — `REFERENCE IMPLEMENTATION`. A small set of published implementations
+of the patterns below, read read-only during this maintenance pass on 2026-08-18.
+
+**The sources are deliberately not named here.** They are individuals' own
+repositories and this document lives in a public one; an account name, a
+repository name and a URL are not what makes a reference note useful, and
+recording somebody else's identity in this project's history is not something to
+do casually. What is worth keeping is the shape of the ideas, which is what is
+below.
+
+The consequence is worth stating rather than hiding: nobody can re-open those
+sources from this document. That is not the `UNPINNED` case — the sources were
+pinned and read fresh — but the practical effect on step 2 of the promotion rule
+is the same and slightly stronger. A future task that wants any of this looks for
+current implementations of the _pattern_ rather than reading these notes back,
+which is what the promotion rule asks for in any case.
+
+**What we retained.** Six patterns, each about the same underlying question: what
+counts as evidence that something was actually done.
+
+### 1. An execution ledger, rather than an assistant's own account of events
+
+Recording, in a structured form, what was attempted, what failed, what turned out
+to be a dead end, what is still waiting to be verified, and whether the goal was
+in fact reached — instead of relying on a summary written by whatever did the
+work.
+
+The sharp end of it is the observation that a rule an agent is asked to _remember_
+is a suggestion, and only a rule something outside the agent enforces is a
+constraint. That is a comparison worth keeping when a future design is tempted to
+solve a problem by adding an instruction.
+
+`FUTURE_CANDIDATE`, with a boundary attached. This Memory records its own history
+and is deliberately not a global audit layer (D-081), and nothing in this pattern
+changes that: the module boundary is older than the comparison and outranks it.
+
+### 2. Detecting drift is a different job from repairing it
+
+Comparing a declared correspondence against actual state with deterministic code,
+and reporting where the two have diverged — while leaving which side is wrong,
+whether to add or remove, and how to reconcile, as separate judgements made by
+somebody who can see both.
+
+`REFERENCE_ONLY`. It is a useful lens for any future lifecycle maintenance —
+knowledge, skills, indexes, documentation — and this project's nearest existing
+shape is _not_ an example of it: artifact reconciliation detects staleness and
+then repairs it automatically, because absence is the only dirty state and
+regenerating is unambiguous (D-399). The contrast is the interesting part, not a
+finding that either is wrong.
+
+### 3. A postcondition, not an exit code
+
+Not treating "the command exited zero" or "the assistant said it worked" as
+evidence. Comparing observable state before and after, and refusing to count a
+change that did not happen — a no-op, or something plausible that had no effect —
+as a success.
+
+`REFLECTED`, and among the oldest rules here. Recording a Verification decides
+nothing on its own (D-065); a Problem reaches `VERIFIED` only with its own
+successful Verification (D-068); a recorded fix is not a verified one, which is
+why no `FIX` Event travels as a success (D-352). The reference is a note that
+somebody else arrived at the same rule from the other direction.
+
+### 4. Execute → Verify → Repair as a loop
+
+Where a verification can fail, having a defined next step rather than an error
+path: apply, read the effect back, and route what did not take effect to a repair
+attempt.
+
+`REFERENCE_ONLY`. The nearest existing shape is the artifact maintenance loop,
+where a failed generation leaves absence and a later sweep repairs it (D-417) —
+which is the same loop with the repair deferred rather than immediate. Adding a
+repair engine to the Memory is not what this records.
+
+### 5. Plan → Review → Apply for anything destructive or long-lived
+
+Separating a computed desired state from a persisted plan, the plan from its
+review, and the review from an explicit apply — with a dry run as the default, a
+guard against irreversible operations, thresholds on how much a single apply may
+change, a check that what was applied is what was reviewed, and an append-only
+record of what happened.
+
+`FUTURE_CANDIDATE`, with a boundary and a tension both worth recording. The
+boundary: this does not make the Memory an approval engine, which is already
+listed as not adopted. The tension: this project deliberately refused a
+server-side confirmation flag on its most destructive operation, because any
+client able to send the delete can send the flag, so the field would only record
+that the client knew the field existed — the intent is the responsibility of
+whatever is talking to the person (D-140). So a plan-and-review shape here would
+have to live where the person is rather than in the Memory API, which is a real
+design constraint rather than a reason to dismiss the pattern.
+
+### 6. Structured record and human-readable view are different layers
+
+Projecting a structured ledger into something a person can read, while keeping
+the projection strictly a presentation of records held elsewhere — the view is
+never the source of truth.
+
+`REFERENCE_ONLY`. Consistent with this project's existing position that nothing
+here is a logging backend, a log store or a dashboard (D-191), and with the export
+being a portable document produced from the tables rather than a second copy of
+them. An operations dashboard is not a deliverable this records.
+
+### Cross-references rather than new principles
+
+Two ideas from this family are already cross-cutting principles, and are
+deliberately not duplicated as new ones:
+
+- **Promoting repeated, verified behaviour into deterministic helpers.** Where an
+  operation has succeeded repeatedly and its effect can be checked, moving it out
+  of free generation and into a reusable, pre-tested form is safer and cheaper.
+  That is cross-cutting principles 2 and 4, and Family B's progressive-disclosure
+  and portable-Skill material. It does **not** mean adding automatic Skill
+  generation to the MVP, which is already listed as not adopted.
+- **Enforcement in a harness rather than an instruction.** The same distinction as
+  cross-cutting principle 4, and as the division between lifecycle facts and
+  judgement (D-366).
+
 ---
 
 ## Cross-cutting principles
@@ -284,3 +404,6 @@ freeze and an explicit Decision.
 - A heavy Agent SDK or headless wrapper around the interactive session
 - A dependency on a local model
 - A compute router
+- An enforcement harness that blocks what an assistant may do
+- A repair engine inside the Memory
+- An operations dashboard as a deliverable
