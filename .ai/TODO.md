@@ -857,13 +857,17 @@ The contract is mirrored in the client and joined to the server's own constants 
 
 Its formal review found one thing: the public type said `schema_version: string` while the validator required the mirrored constant exactly, so a wrong version compiled and failed at run time. The field is now typed from that same constant, with a compile-time witness — `expectTypeOf` equality plus `@ts-expect-error` on wrong versions — because every runtime test still passed under the defect. Putting `string` back leaves the runtime suite green and breaks the witness in six places.
 
-### P5-03 — DONE
+### P5-03 — DONE after formal-review correction
 
 Project auto-detection.
 
 A detector, a remote canonicaliser and a conservative resolver in the adapter, plus `listProjects` on the common client. The project root is an argument that will be `CLAUDE_PROJECT_DIR`, never the working directory (D-441). Identity is one remote — `origin`, or the single distinct canonical one — and a secondary match, a repository two Projects claim, and a bare name match are each `AMBIGUOUS` rather than a silent false merge (D-442). A raw remote URL dies in the canonicaliser, which is where a configured credential would otherwise travel from (D-443). Canonicalising is idempotent, without which the feature would have worked exactly once per repository — a test found that (D-444). No absolute path leaves the detector and no candidate shows a stored repository unconverted (D-445). The monorepo split stays the owner's question (D-446). `createProject` was not added, because nothing calls one (D-447).
 
-4246 tests across 139 files; twenty-three mutations, all killed. Three survived a first run: one was semantically unreachable and was re-aimed, and two were real fixture gaps — a default-port case that used the one scheme `URL` normalises itself, and an order fixture that happened to already be in the order it was ruling out.
+Twenty-three mutations, all killed. Three survived a first run: one was semantically unreachable and was re-aimed, and two were real fixture gaps — a default-port case that used the one scheme `URL` normalises itself, and an order fixture that happened to already be in the order it was ruling out.
+
+**The formal review then found one thing.** `RESOLVED` was passing the server's whole `ProjectResource` through while every other outcome carried an adapter-owned shape. It is now `{ kind: 'RESOLVED', projectId }`, which supersedes D-445's exception and leaves the candidate policy alone (D-449). Six further mutations, all killed.
+
+4253 tests across 139 files, measured after the correction.
 
 #### NEXT — P5-04, NOT STARTED
 

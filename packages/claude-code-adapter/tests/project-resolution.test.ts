@@ -77,22 +77,40 @@ describe('a repository the Memory already knows', () => {
 
     // The stored value and the detected one are different spellings of one
     // repository, which is exactly what canonicalisation is for.
-    expect(resolution).toEqual({ kind: 'RESOLVED', project: known });
+    expect(resolution).toEqual({ kind: 'RESOLVED', projectId: known.project_id });
   });
 
-  it('hands back the server’s own record unchanged', async () => {
+  it('answers with an identity and nothing else', async () => {
     const known = project({ platform: 'typescript', repo: 'https://github.com/acme/widget.git' });
     const client = reader([known]);
 
     const resolution = await resolveProject(client, signals());
 
-    // Not a rebuilt object: the caller needs the `project_id` and everything
-    // else the server said, and editing it here would make this a second
-    // description of what a Project is.
-    expect(resolution).toMatchObject({ kind: 'RESOLVED' });
-    if (resolution.kind === 'RESOLVED') {
-      expect(resolution.project).toBe(known);
-    }
+    // Exact, so a field added here has to be a deliberate edit somebody makes
+    // while thinking about whether it should travel. The first version passed
+    // the server's whole record through on the grounds that a caller might want
+    // it; formal review rejected that, because "might want" is not a requirement
+    // and a passthrough is the widest possible answer to a narrow question.
+    expect(Object.keys(resolution).sort()).toEqual(['kind', 'projectId']);
+    expect(resolution).toEqual({ kind: 'RESOLVED', projectId: known.project_id });
+  });
+
+  it.each([
+    ['a name', 'project_name', 'widget'],
+    ['an owner', 'owner_id', '99999999-8888-4777-8666-555555555555'],
+    ['a platform', 'platform', 'typescript'],
+    ['a creation time', 'created_at', '2026-01-01T00:00:00.000Z'],
+  ])('does not carry %s out of the Project it matched', async (_case, field, value) => {
+    const known = project({ [field]: value, project_id: 'the-one' });
+    const client = reader([known]);
+
+    const resolution = await resolveProject(client, signals());
+
+    // The whole resolution, serialised: a field that reached the output through
+    // any route at all shows up here, not only one added to the type.
+    const serialised = JSON.stringify(resolution);
+    expect(`${field} travelled:${serialised.includes(value)}`).toBe(`${field} travelled:false`);
+    expect(serialised.includes('the-one')).toBe(true);
   });
 
   it('ignores Projects with no repository recorded', async () => {
@@ -100,10 +118,22 @@ describe('a repository the Memory already knows', () => {
 
     const resolution = await resolveProject(client, signals());
 
-    expect(resolution).toMatchObject({ kind: 'RESOLVED' });
-    if (resolution.kind === 'RESOLVED') {
-      expect(resolution.project.project_id).toBe('second');
-    }
+    expect(resolution).toEqual({ kind: 'RESOLVED', projectId: 'second' });
+  });
+
+  it('carries no repository out, credential-bearing or otherwise', async () => {
+    const stored = `https://x-access-token:${FAKE_TOKEN}@github.com/acme/widget.git`;
+    const client = reader([project({ project_id: 'the-one', repo: stored })]);
+
+    const resolution = await resolveProject(client, signals());
+
+    expect(resolution).toEqual({ kind: 'RESOLVED', projectId: 'the-one' });
+    // Booleans, so a failure does not print what it found. A stored `repo` is
+    // free-form text somebody may have typed a token into, and a resolution has
+    // no reason to carry it in any form — canonical or otherwise.
+    const serialised = JSON.stringify(resolution);
+    expect(`token travelled:${serialised.includes(FAKE_TOKEN)}`).toBe('token travelled:false');
+    expect(`repo travelled:${serialised.includes('github.com')}`).toBe('repo travelled:false');
   });
 });
 
@@ -209,10 +239,7 @@ describe('a fork whose upstream the Memory knows', () => {
     );
 
     // A secondary match is only interesting when the primary found nothing.
-    expect(resolution).toMatchObject({ kind: 'RESOLVED' });
-    if (resolution.kind === 'RESOLVED') {
-      expect(resolution.project.project_id).toBe('mine');
-    }
+    expect(resolution).toEqual({ kind: 'RESOLVED', projectId: 'mine' });
   });
 });
 
