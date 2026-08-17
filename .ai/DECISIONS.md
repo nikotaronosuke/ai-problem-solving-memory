@@ -4051,3 +4051,27 @@ Six mutations, all killed: passing the record through beside the identity, addin
 **Counts, measured after this correction.** 4253 tests across 139 files. The two figures around D-448 disagreed — 4246 in the Decision, 4248 in the report — because they were taken at different points during that task; this is the count after the full suite ran on the corrected tree. D-448 is history and is not rewritten.
 
 Nothing else moved: no Memory Server change, no API or schema or migration change, no change to the `listProjects` contract, no dependency, no MCP. API 0.5.0 / 28 operations, migrations 16, dependencies 3/0/1-workspace, client methods 3.
+
+## D-450 — A task prompt is checked rather than obeyed, and provenance is not the same thing as a principle (development workflow)
+
+Not a product decision. It is about how work arrives here and what a commit is allowed to carry, and it is recorded because both were previously held only in whoever happened to be paying attention.
+
+**Two readers, not one reader trusted twice.** A task prompt is written by somebody who checked scope, boundaries, secrets and intent — and `CLAUDE.md` now says so, so that check is a stated responsibility rather than a habit. It also says that Claude Code runs its own preflight regardless of how carefully a prompt was written. The point is not that either reader is unreliable; it is that a single point of attention fails silently, and two passes by different readers with the same checklist do not fail in the same place. A prompt is an input to check, not an authority to obey: where it disagrees with the private specification or an existing Decision, the work stops and the conflict is stated rather than resolved in the prompt's favour by default.
+
+**Research provenance is off-repo by default.** Reading somebody else's published work is a legitimate and useful way to find a design idea, and the idea is what belongs in a public repository. The individual's name, account handle, repository name and URL are not: they are a record of a private person's work kept in somebody else's public history, and they contribute nothing to a generalized principle's usefulness. So a public tracked artifact keeps the principle and drops the provenance.
+
+This is deliberately not a rule against naming sources. Official vendor documentation, published standards and this project's own repositories are named freely, because source identity is part of what makes those citable at all — and public attribution is right when attribution is what was asked for. The distinction is between a source whose identity is the point and a private individual whose identity is incidental to the idea.
+
+The cost is stated where it applies rather than hidden: a note without its source cannot be re-opened from the note, so a future task looks for current work on the pattern instead. That is what the promotion rule already requires, so the cost is small and the record is honest about it.
+
+**The pre-commit check for that boundary is dynamic, and stays dynamic.** When a task involved reading an external individual's repositories, the account, repository and URL identifiers learned in that session are used as task-local search terms — a literal `git grep` over the tracked files, confirming none of them appears as design provenance — and are then discarded with the session.
+
+They are not written down anywhere. A fixed denylist in the repository, or a person's name baked into a test or a guard, would be a permanent record of exactly the names the rule exists to keep out, published in the same public history and harder to remove than the mention it was meant to prevent. A check that has to be re-derived each time is the right shape here, and it is the only place in this repository where a guard is deliberately *not* made permanent.
+
+**Reference, Decision and Adoption stay three things** (D-439, D-440). The preflight names that explicitly, because the failure it guards against is quiet: a reference read during a task drifting into the task's scope on the strength of having been interesting.
+
+**An explicit instruction to push is approval, and asking again is not caution.** The standing rule — no push unless asked — is unchanged. What is added is that a task saying "push", "push to origin/main" or "commit and push" *is* the asking, so the work finishes in one pass: validate, commit, fast-forward push, report. Stopping to re-confirm an instruction already given is not safety; it is a second question about a decision somebody already made, and it makes the rule feel negotiable in both directions.
+
+Force push, rebase and history rewrite are outside that approval and are never implied by it. Each needs its own instruction, and that separation is the reason ordinary pushing can be settled once.
+
+Nothing in the product moved: this task changed `CLAUDE.md`, this file and one paragraph of `.ai/CURRENT.md`, and touched no code, test, schema, dependency or roadmap entry.
