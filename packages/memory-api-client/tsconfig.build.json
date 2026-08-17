@@ -1,8 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    // The server's own build resolves nothing to a workspace source tree. It
-    // does not import one, and clearing this means it could not start.
+    // No build resolves anything to a sibling's source tree. This package
+    // imports nothing at all, and clearing the mapping is what keeps that a
+    // fact about the build rather than about today's imports.
     "paths": {},
     "noEmit": false,
     "rootDir": "src",

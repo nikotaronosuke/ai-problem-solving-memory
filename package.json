@@ -9,11 +9,14 @@
     "node": ">=22.12.0"
   },
   "main": "dist/index.js",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && npm run build -w @ai-problem-solving-memory/api-client && npm run build -w @ai-problem-solving-memory/claude-code-adapter",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck -w @ai-problem-solving-memory/api-client && npm run typecheck -w @ai-problem-solving-memory/claude-code-adapter",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
