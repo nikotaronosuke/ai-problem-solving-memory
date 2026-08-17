@@ -847,16 +847,27 @@ API 0.5.0 / 28 operations. Twenty-eight mutations killed across behaviour and fo
 
 3971 tests across 132 files; eighteen further mutations, all killed.
 
-#### NEXT — P5-02c-impl-2, NOT STARTED
+#### P5-02c-impl-2 — DONE
 
-The common client's `search()` method. impl-1 is done and its formal review is answered.
+The common client's `search()` method. **P5-02c and P5-02 are implementation-complete.**
 
-The client is deliberately untouched by impl-1, and a guard fails if any shipped client module mentions `/search` or `searchProblemMemory`. Two things have to be decided rather than copied (D-427):
+The contract is mirrored in the client and joined to the server's own constants and route schemas by drift tests in this repository's suite (D-432). `search(problemId, request)` sends the four wire fields unchanged, refuses an invalid request before spending one, and returns the body it validated without transforming it (D-433, D-435). Three server outcomes are returned as they arrive and a `404 NOT_FOUND` becomes `CURRENT_PROBLEM_NOT_AVAILABLE`; everything else keeps the existing error hierarchy, `500` included (D-434). A search gets its own longer finite default ceiling while an explicit `timeoutMs` still overrides every operation (D-436). Nothing is retried, faked, or judged (D-437). The Claude adapter is unchanged and guarded against growing search policy (D-438).
 
-- **The timeout.** `MEMORY_API_REQUEST_TIMEOUT_MS` is 10 s; the provider transport behind this route has a far longer deadline, and a cold search runs an embedding call and a rerank call in series. A method inheriting the client default would abort searches the server was about to answer. Per-call override, a longer default for this one method, or a documented expectation — but a decision.
-- **The three-branch answer.** `SEARCHED`, `MEMORY_READ_DISABLED` and `CURRENT_SOURCE_CHANGED` are all 200, so status alone cannot distinguish them; the typed union has to reach the caller intact and the two non-search kinds must not be flattened into an empty result.
+4109 tests across 134 files; thirty-three mutations, all killed — one of them only after the lossless fixture grew a second candidate, because a one-candidate witness cannot see a reordering.
+
+#### NEXT — P5-03, NOT STARTED
+
+Project auto-detection. Not to be started before P5-02's formal review.
+
+Two things belong to later adapter tasks and must not be taken on early: when to search at all, and what to do when the Memory is unavailable. The client returns facts and raises failures; deciding to carry on without memory, choosing a `source_ai`, and presenting a result are each somebody else's task (D-437, D-438).
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
+
+## RESOLVED NOTE — the client's search timeout
+
+A standing handoff recorded that the client's single ten-second ceiling was shorter than the deadline the provider calls sit behind, so a `search()` inheriting it would abort searches the server was about to answer — and that the decision was impl-2's to make rather than to copy.
+
+Closed by D-436: defaults are per operation, the ordinary constant keeps its name and meaning, a search has its own longer one, both are finite, and an explicit `timeoutMs` still overrides every operation. A guard reads which constant each method reaches for, so a search inheriting the ordinary ceiling fails by name.
 
 ## RESOLVED NOTE — malformed and unreachable are two signals now
 

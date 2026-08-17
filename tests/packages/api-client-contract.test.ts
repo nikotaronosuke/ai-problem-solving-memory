@@ -24,13 +24,52 @@ import {
   FIX_KINDS as CLIENT_FIX_KINDS,
   FRESHNESSES as CLIENT_FRESHNESSES,
   MEMORY_API_ERROR_CODES,
+  MEMORY_SEARCH_CANDIDATE_FIELDS,
+  MEMORY_SEARCH_COMPARISON_DIMENSIONS,
+  MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH,
+  MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH,
+  MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_ITEMS,
+  MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH,
+  MEMORY_SEARCH_PROJECT_RELATIONS,
+  MEMORY_SEARCH_REQUEST_FIELDS,
+  MEMORY_SEARCH_REVALIDATION_CHECKS,
+  MEMORY_SEARCH_SEMANTIC_STATUSES,
+  MEMORY_SEARCH_STRUCTURAL_FEATURE_FIELDS,
+  MEMORY_SEARCH_STRUCTURAL_FEATURE_LISTS,
+  MEMORY_SEARCH_STRUCTURAL_FEATURE_SCHEMA_VERSION,
+  MEMORY_SEARCH_STRUCTURAL_STATUSES,
+  MEMORY_SEARCH_VERIFICATION_TYPES,
   PROBLEM_RESOURCE_FIELDS,
   PROBLEM_STATUSES as CLIENT_PROBLEM_STATUSES,
 } from '@ai-problem-solving-memory/api-client';
 
-import { CONFIDENCES, FIX_KINDS, FRESHNESSES, PROBLEM_STATUSES } from '../../src/domain/enums.js';
+import { SEMANTIC_CHANNEL_STATUSES } from '../../src/app/index.js';
+import {
+  CONFIDENCES,
+  FIX_KINDS,
+  FRESHNESSES,
+  PROBLEM_STATUSES,
+  VERIFICATION_TYPES,
+} from '../../src/domain/enums.js';
+import { PROJECT_RELATIONS } from '../../src/domain/retrieval-ranking.js';
+import { REVALIDATION_CHECKS } from '../../src/domain/retrieval-revalidation.js';
+import {
+  MAX_SEARCH_TEXT_LENGTH,
+  MAX_VECTOR_SEARCH_TEXT_LENGTH,
+} from '../../src/domain/retrieval-search.js';
+import {
+  STRUCTURAL_COMPARISON_DIMENSIONS,
+  STRUCTURAL_RERANK_STATUSES,
+} from '../../src/domain/retrieval-structural-rerank.js';
+import {
+  MAX_STRUCTURAL_FEATURE_ITEMS,
+  MAX_STRUCTURAL_FEATURE_LENGTH,
+  STRUCTURAL_FEATURE_LISTS,
+  STRUCTURAL_FEATURE_SCHEMA_VERSION,
+} from '../../src/domain/retrieval-summary.js';
 import { ERROR_CODES } from '../../src/http/errors.js';
 import { PROBLEM_RESOURCE_SCHEMA } from '../../src/http/resources.js';
+import { SEARCH_REQUEST_SCHEMA, SEARCH_RESPONSE_SCHEMA } from '../../src/http/search-resources.js';
 
 describe('the value sets the client mirrors', () => {
   it('names the same Problem statuses as the domain', () => {
@@ -70,5 +109,113 @@ describe('the Problem the client expects', () => {
     for (const field of PROBLEM_RESOURCE_FIELDS) {
       expect(`${field}:${described.includes(field)}`).toBe(`${field}:true`);
     }
+  });
+});
+
+describe('the search vocabulary the client mirrors', () => {
+  it('names the same semantic channel statuses', () => {
+    // Not cosmetic: a status the client has never heard of makes it reject the
+    // whole answer as malformed — a search that worked, reported as a protocol
+    // failure, with the candidates thrown away.
+    expect([...MEMORY_SEARCH_SEMANTIC_STATUSES]).toEqual([...SEMANTIC_CHANNEL_STATUSES]);
+  });
+
+  it('names the same structural stage statuses', () => {
+    expect([...MEMORY_SEARCH_STRUCTURAL_STATUSES]).toEqual([...STRUCTURAL_RERANK_STATUSES]);
+  });
+
+  it('names the same project relations', () => {
+    expect([...MEMORY_SEARCH_PROJECT_RELATIONS]).toEqual([...PROJECT_RELATIONS]);
+  });
+
+  it('names the same comparison dimensions', () => {
+    expect([...MEMORY_SEARCH_COMPARISON_DIMENSIONS]).toEqual([...STRUCTURAL_COMPARISON_DIMENSIONS]);
+  });
+
+  it('names the same revalidation checks, in the same order', () => {
+    // The order matters here in a way it does not elsewhere: the client returns
+    // the list as it arrived, and a caller comparing it to its own copy would
+    // find them equal only if both are the server's order.
+    expect([...MEMORY_SEARCH_REVALIDATION_CHECKS]).toEqual([...REVALIDATION_CHECKS]);
+  });
+
+  it('names the same verification kinds', () => {
+    expect([...MEMORY_SEARCH_VERIFICATION_TYPES]).toEqual([...VERIFICATION_TYPES]);
+  });
+});
+
+describe('the search request the client builds', () => {
+  it('speaks the structural feature vocabulary the server accepts', () => {
+    expect(MEMORY_SEARCH_STRUCTURAL_FEATURE_SCHEMA_VERSION).toBe(STRUCTURAL_FEATURE_SCHEMA_VERSION);
+    expect([...MEMORY_SEARCH_STRUCTURAL_FEATURE_LISTS]).toEqual([...STRUCTURAL_FEATURE_LISTS]);
+  });
+
+  it('holds the same bounds the server enforces', () => {
+    // A client bound that is too loose sends a request the server refuses, for a
+    // reason the caller cannot see. One that is too tight refuses a request the
+    // server would have accepted. Both are silent until somebody hits them.
+    expect(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_ITEMS).toBe(MAX_STRUCTURAL_FEATURE_ITEMS);
+    expect(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH).toBe(MAX_STRUCTURAL_FEATURE_LENGTH);
+    expect(MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH).toBe(MAX_SEARCH_TEXT_LENGTH);
+    expect(MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH).toBe(MAX_VECTOR_SEARCH_TEXT_LENGTH);
+  });
+
+  it('sends exactly the fields the route accepts, and no others', () => {
+    // Compared against the schema the route validates with, which is also what
+    // the OpenAPI document is assembled from — one source, and the client
+    // measured against it.
+    expect([...MEMORY_SEARCH_REQUEST_FIELDS].sort()).toEqual(
+      [...SEARCH_REQUEST_SCHEMA.required].sort(),
+    );
+    expect([...MEMORY_SEARCH_REQUEST_FIELDS].sort()).toEqual(
+      Object.keys(SEARCH_REQUEST_SCHEMA.properties).sort(),
+    );
+    expect(SEARCH_REQUEST_SCHEMA.additionalProperties).toBe(false);
+  });
+
+  it('describes the current Problem with exactly the eight fields', () => {
+    const features = SEARCH_REQUEST_SCHEMA.properties.current_features;
+
+    expect([...MEMORY_SEARCH_STRUCTURAL_FEATURE_FIELDS].sort()).toEqual(
+      [...features.required].sort(),
+    );
+    expect([...MEMORY_SEARCH_STRUCTURAL_FEATURE_FIELDS].sort()).toEqual(
+      Object.keys(features.properties).sort(),
+    );
+  });
+});
+
+describe('the search answer the client expects', () => {
+  /** The `SEARCHED` branch of the published `oneOf`. */
+  const searched = SEARCH_RESPONSE_SCHEMA.oneOf[0];
+
+  it('reads the same three kinds the server answers with', () => {
+    const kinds = SEARCH_RESPONSE_SCHEMA.oneOf.map(
+      (variant) => (variant.properties.kind.enum as readonly string[])[0],
+    );
+
+    // The client's own union is a type rather than a constant, so the check is
+    // that the server publishes exactly these three — the fourth outcome a
+    // caller sees is this client's naming of a 404 and is deliberately not here.
+    expect(kinds).toEqual(['SEARCHED', 'MEMORY_READ_DISABLED', 'CURRENT_SOURCE_CHANGED']);
+  });
+
+  it('expects a candidate to carry exactly the five kinds of material', () => {
+    const candidate = searched.properties.candidates.items;
+
+    expect([...MEMORY_SEARCH_CANDIDATE_FIELDS].sort()).toEqual([...candidate.required].sort());
+    expect([...MEMORY_SEARCH_CANDIDATE_FIELDS].sort()).toEqual(
+      Object.keys(candidate.properties).sort(),
+    );
+    // Which is why the client checks for exact keys rather than for the ones it
+    // needs: the server promised there would be no others.
+    expect(candidate.additionalProperties).toBe(false);
+  });
+
+  it('reads the statuses from the same lists the response publishes', () => {
+    expect(searched.properties.semantic_status.enum).toEqual([...MEMORY_SEARCH_SEMANTIC_STATUSES]);
+    expect(searched.properties.structural_status.enum).toEqual([
+      ...MEMORY_SEARCH_STRUCTURAL_STATUSES,
+    ]);
   });
 });

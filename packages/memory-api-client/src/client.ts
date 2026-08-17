@@ -38,6 +38,12 @@ import {
   MemoryApiUnreachableError,
 } from './errors.js';
 import { isProblemResource, type ProblemResource } from './problem.js';
+import {
+  isMemorySearchRequest,
+  isMemorySearchResponse,
+  type MemorySearchOutcome,
+  type MemorySearchRequest,
+} from './search.js';
 
 /**
  * How long a single request may take before it is abandoned.
@@ -49,6 +55,28 @@ import { isProblemResource, type ProblemResource } from './problem.js';
  * rather than be defended.
  */
 export const MEMORY_API_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * How long a search may take before it is abandoned.
+ *
+ * Longer than an ordinary read, and it has to be. A cold search embeds the
+ * query, searches, asks a model to compare structure, then reads five kinds of
+ * material for every candidate — two provider calls in series, each with its own
+ * ceiling on the server side. A client that gave up after the ordinary timeout
+ * would abandon searches the server was about to answer, every time, and the
+ * caller would learn nothing except that the Memory is unreachable, which would
+ * not be true.
+ *
+ * Still finite, and deliberately: an unbounded request is a hung caller, and
+ * there is no version of "wait forever" that a person watching an assistant
+ * work would prefer.
+ *
+ * The number is an implementation constant, like its ordinary counterpart. What
+ * is worth recording is that a search has its own longer default; the value
+ * belongs to whatever the slowest configured stack actually does, and should
+ * move when that moves rather than be defended.
+ */
+export const MEMORY_API_SEARCH_TIMEOUT_MS = 300_000;
 
 /**
  * The shape of `fetch`, so a test can supply one.
@@ -68,7 +96,16 @@ export interface MemoryApiClientOptions {
   /** Substitute transport. Production uses the platform's `fetch`. */
   readonly fetch?: FetchLike;
 
-  /** Per-request ceiling. Defaults to `MEMORY_API_REQUEST_TIMEOUT_MS`. */
+  /**
+   * Per-request ceiling, for every operation.
+   *
+   * Left unset, each operation uses its own default:
+   * `MEMORY_API_REQUEST_TIMEOUT_MS` for an ordinary read and
+   * `MEMORY_API_SEARCH_TIMEOUT_MS` for a search. Set, it applies to all of them
+   * — one knob rather than one per method, because a caller that wants a ceiling
+   * wants a ceiling, and a second option would only create a precedence
+   * question for somebody to get wrong.
+   */
   readonly timeoutMs?: number;
 }
 
@@ -82,6 +119,33 @@ export interface MemoryApiClient {
    * to tell them apart.
    */
   getProblem(problemId: string): Promise<ProblemResource>;
+
+  /**
+   * Finds past memory worth reading for the Problem being worked on.
+   *
+   * Searches every Project this owner has and returns candidates with the
+   * material to judge them — what each was true of, where it did and did not
+   * lead, and what contradicts it. Never a recommendation: what the material
+   * means for the situation in front of the caller is the caller's to decide,
+   * and nothing here reads it.
+   *
+   * Four outcomes, all returned rather than raised. Three are the server's:
+   * candidates (possibly none), reading turned off for this Problem, and a
+   * Problem that changed while the search ran. The fourth is this client's
+   * naming of a `404` — for a search the Problem is the *context*, and losing
+   * the context is something a caller handles rather than an exception to its
+   * plan.
+   *
+   * Everything else raises, unchanged in meaning: a refusal is a
+   * `MemoryApiError` — including a `500`, which may mean the server's provider
+   * integration is broken and never means the request was wrong — an
+   * unanswerable request is a `MemoryApiUnreachableError`, and an answer this
+   * contract cannot read is a `MemoryApiProtocolError`.
+   *
+   * Nothing is retried, nothing is judged, nothing is transformed. The body that
+   * passes validation is the body that is returned.
+   */
+  search(problemId: string, request: MemorySearchRequest): Promise<MemorySearchOutcome>;
 }
 
 /**
@@ -124,7 +188,11 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
   const baseUrl = normalizeBaseUrl(options.baseUrl ?? DEFAULT_MEMORY_API_BASE_URL);
   const credential = requireCredential(options.credential);
   const transport = options.fetch ?? globalThis.fetch;
-  const timeoutMs = options.timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS;
+  // Left as the caller gave it — `undefined` included — because "no ceiling was
+  // asked for" is what selects the per-operation default below. Collapsing it to
+  // one number here is what made a search inherit an ordinary read's ten
+  // seconds.
+  const timeoutMs = options.timeoutMs;
 
   /**
    * One request, one response, and every failure turned into one of the three
@@ -135,17 +203,28 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
    * the server; not the body, where it would be echoed by anything that logs
    * requests; not the URL, which is printed by every HTTP client's own error.
    */
-  async function send(path: string): Promise<{ status: number; body: unknown }> {
+  async function send(
+    path: string,
+    options: {
+      readonly method: 'GET' | 'POST';
+      readonly body?: string;
+      readonly timeoutMs: number;
+    },
+  ): Promise<{ status: number; body: unknown }> {
     let response: Response;
     try {
       response = await transport(`${baseUrl}${path}`, {
-        method: 'GET',
+        method: options.method,
         headers: {
           authorization: `Bearer ${credential}`,
           accept: 'application/json',
+          // Only when there is one. A `Content-Type` on a request with no body
+          // describes something that is not there.
+          ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
         },
+        ...(options.body === undefined ? {} : { body: options.body }),
         // Built-in, so nothing is added to make a request finite.
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(options.timeoutMs),
       });
     } catch (error) {
       // Deliberately not inspected further. Whatever this is, no answer came
@@ -177,14 +256,20 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
   }
 
   /**
-   * Turns a non-2xx answer into the right kind of failure.
+   * Reads a non-2xx answer as the refusal it claims to be.
    *
-   * A refusal this contract describes becomes `MemoryApiError`. Anything else
-   * — an envelope with no `error`, a code nobody has heard of, a proxy's own
-   * JSON — becomes a protocol failure, because it did not come from a server
-   * implementing this contract and should not be reported as though it had.
+   * Returns the error rather than throwing it, because one caller needs to look
+   * at it first: a search turns a `NOT_FOUND` into a typed outcome, and it can
+   * only do that by knowing the code. Everything that is *not* a refusal this
+   * contract describes still leaves from here — an envelope with no `error`, a
+   * code nobody has heard of, a proxy's own JSON — because none of that came
+   * from a server implementing this contract, and reporting it as though it had
+   * would tell a caller the Memory refused something it never saw.
+   *
+   * One copy, deliberately. Envelope validation duplicated per method is
+   * envelope validation that drifts per method.
    */
-  function refuse(status: number, body: unknown): never {
+  function readApiError(status: number, body: unknown): MemoryApiError {
     const envelope = body as Record<string, unknown>;
     const error = envelope['error'];
     const requestId = envelope['request_id'];
@@ -205,7 +290,7 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
       throw new MemoryApiProtocolError('ERROR_CODE_UNKNOWN', status);
     }
 
-    throw new MemoryApiError(status, code, requestId);
+    return new MemoryApiError(status, code, requestId);
   }
 
   return {
@@ -216,14 +301,64 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
         throw new MemoryApiArgumentError('problem id');
       }
 
-      const { status, body } = await send(`/v1/problems/${problemId}`);
+      const { status, body } = await send(`/v1/problems/${problemId}`, {
+        method: 'GET',
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
 
       if (status < 200 || status >= 300) {
-        refuse(status, body);
+        throw readApiError(status, body);
       }
 
       if (!isProblemResource(body)) {
         throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body;
+    },
+
+    async search(problemId, request): Promise<MemorySearchOutcome> {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError('problem id');
+      }
+      if (!isMemorySearchRequest(request)) {
+        // Before the request, and without the request in the message. A search
+        // is made of somebody's own words about their own problem, and the
+        // argument's name is the whole of what is safe to say.
+        throw new MemoryApiArgumentError('search request');
+      }
+
+      const { status, body } = await send(`/v1/problems/${problemId}/search`, {
+        method: 'POST',
+        // Written out field by field rather than serialising the caller's
+        // object, so an extra property on it cannot travel even if validation
+        // one day stopped noticing.
+        body: JSON.stringify({
+          source_ai: request.source_ai,
+          lexical_text: request.lexical_text,
+          semantic_text: request.semantic_text,
+          current_features: request.current_features,
+        }),
+        timeoutMs: timeoutMs ?? MEMORY_API_SEARCH_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        const error = readApiError(status, body);
+
+        // Only this exact pairing. A `404` whose envelope is malformed, or whose
+        // code is something else, has already left through `readApiError` or
+        // falls through to be raised — because deciding from the status alone
+        // would turn any 404-shaped answer, including a proxy's, into "your
+        // Problem is gone".
+        if (status === 404 && error.code === 'NOT_FOUND') {
+          return { kind: 'CURRENT_PROBLEM_NOT_AVAILABLE' };
+        }
+
+        throw error;
+      }
+
+      if (!isMemorySearchResponse(body)) {
+        throw new MemoryApiProtocolError('SEARCH_RESPONSE_MALFORMED', status);
       }
 
       return body;

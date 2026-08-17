@@ -133,6 +133,15 @@ export const MEMORY_API_PROTOCOL_FAILURES = [
   'ERROR_CODE_UNKNOWN',
   /** A success whose body is not the resource it should be. */
   'RESOURCE_MALFORMED',
+  /**
+   * A search that answered with something other than one of its three outcomes.
+   *
+   * Its own failure rather than `RESOURCE_MALFORMED`, because they are two
+   * different success contracts: one is a resource with a fixed field list, the
+   * other is a three-way union whose largest branch nests five kinds of material.
+   * A caller told only "malformed" could not tell which of its calls to look at.
+   */
+  'SEARCH_RESPONSE_MALFORMED',
 ] as const;
 
 export type MemoryApiProtocolFailure = (typeof MEMORY_API_PROTOCOL_FAILURES)[number];
