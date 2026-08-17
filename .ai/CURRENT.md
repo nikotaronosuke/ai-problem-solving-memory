@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02c-impl-2)
+Updated: 2026-08-17 (P5-02 milestone closeout)
 
 ## Current phase
 
@@ -15,16 +15,15 @@ Implementation Phase 4 — Retrieval: **COMPLETE** (P4-01 … P4-15)
 Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
 
 - P5-01 — connection capability audit: **DONE**
-- P5-02 — adapter package / boundary: **IN PROGRESS**, split into three parts (D-378)
+- P5-02 — adapter package / boundary: **DONE**, split into three parts (D-378)
   - P5-02a — package boundary and common Memory API client: **DONE**
   - P5-02b — production retrieval runtime: investigation and design freeze **DONE**
     - P5-02b-impl-1 — RetrievalArtifact lifecycle correctness: **DONE**
     - P5-02b-impl-2a — OpenAI production provider adapters: **DONE**
-    - P5-02b-impl-2b — production runtime wiring: **DONE** — P5-02b is implementation-complete
-  - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **implementation complete**
+    - P5-02b-impl-2b — production runtime wiring: **DONE**
+  - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **DONE**
     - P5-02c-impl-1 — Search JSON API and owner-scoped search composition: **DONE after formal-review correction**
-    - P5-02c-impl-2 — the common client's `search()` method: **DONE**
-  - P5-02 is implementation-complete, pending formal review
+    - P5-02c-impl-2 — the common client's `search()` method: **DONE after formal-review correction**
 - P5-03 — Project auto-detection: **NEXT / NOT STARTED**
 
 ## Source of truth
@@ -34,6 +33,10 @@ Private specification repository `nikotaronosuke/ai-problem-solving-memory-spec`
 - `docs/spec/mvp-os-boundary-addendum.md`
 - `docs/implementation/mvp-roadmap.md`
 - `docs/implementation/phase2-task-breakdown.md`
+
+`docs/reference-set.md` is **not** part of this chain. It holds external ideas so
+they are not lost, and it overrides nothing (D-439). Using anything in it requires
+the promotion rule (D-440).
 
 ## What exists now — HTTP (P2-01)
 
@@ -1176,6 +1179,10 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 ## Immediate objective
 
 P5-03 — Project auto-detection.
+
+P5-02 is **complete**: implemented, formally reviewed, and its two review findings
+corrected. An assistant can now reach the whole Memory — including the search —
+through the common client.
 
 **NOT STARTED**, and not to be started before P5-02's formal review. P5-02 is implementation-complete: an assistant can now reach the whole Memory through the common client, including the search.
 
