@@ -105,7 +105,20 @@ export const MEMORY_SEARCH_REQUEST_FIELDS = [
 
 /** How the current Problem is described so candidates can be compared to it. */
 export interface MemorySearchStructuralFeatures {
-  readonly schema_version: string;
+  /**
+   * The vocabulary version, and only this one.
+   *
+   * `typeof` the constant rather than the literal spelled again: the runtime
+   * check below compares against that same constant, so the type a caller
+   * compiles against and the value the client will accept cannot come apart. A
+   * second copy of `'1'` here would be a second place to update, and the one
+   * that was forgotten would be the type — which fails last and least visibly.
+   *
+   * It was `string` until P5-02c-impl-2's formal review, which meant a caller
+   * could write `schema_version: '999'`, compile, and learn at runtime that the
+   * client mirrors a contract its own types did not describe.
+   */
+  readonly schema_version: typeof MEMORY_SEARCH_STRUCTURAL_FEATURE_SCHEMA_VERSION;
   readonly problem_domain: string | null;
   readonly symptom_patterns: readonly string[];
   readonly suspected_boundaries: readonly string[];
