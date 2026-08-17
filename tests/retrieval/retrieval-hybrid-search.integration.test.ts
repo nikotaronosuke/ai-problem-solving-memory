@@ -43,6 +43,7 @@ import { generateOwnerId, type OwnerContext, type OwnerId } from '../../src/doma
 import type { ProblemId } from '../../src/domain/problem.js';
 import type { ProjectId } from '../../src/domain/project.js';
 import type { EmbeddingProvider } from '../../src/domain/retrieval-embedding.js';
+import { RetrievalProviderCallError } from '../../src/domain/retrieval-provider-failure.js';
 import { resolveOwnerContextFor } from '../../src/owner/context.js';
 import {
   createMemoryRepository,
@@ -507,6 +508,91 @@ describe.skipIf(databaseUrl === undefined)('hybrid candidate retrieval', () => {
       expect(JSON.stringify(result).includes('Pp6Bj1U'), 'the result carried the credential').toBe(
         false,
       );
+    });
+
+    /** A semantic port that fails one way, on demand. */
+    function portFailing(error: Error): EmbeddingProvider {
+      return {
+        modelId: MODEL.id,
+        modelVersion: MODEL.version,
+        dimensions: MODEL.dimensions,
+        embed: () => Promise.reject(error),
+      };
+    }
+
+    it('degrades only for a failure that says the provider could not answer', async () => {
+      const owner = await makeActor();
+      const marker = `classifiedmarker${randomUUID().slice(0, 8)}`;
+      const seeded = await seed(owner, {
+        summary: `a summary about ${marker}`,
+        keywords: [marker],
+        embedding: [1, 0, 0],
+      });
+
+      const result = await createRetrievalHybridSearchService(
+        owner.lexical,
+        createRetrievalVectorSearchService(
+          portFailing(new RetrievalProviderCallError('UNAVAILABLE')),
+          createRetrievalVectorSearchReader(pool, owner.context),
+        ),
+      ).search({ lexicalText: marker, semanticText: 'anything' });
+
+      // A rate limit, a server error, a timeout: the provider was temporarily
+      // unable to answer and the lexical half is the right answer to give.
+      expect(result.semanticStatus).toBe('PROVIDER_UNAVAILABLE');
+      expect(result.candidates.map((c) => c.problemId)).toEqual([seeded.problemId]);
+    });
+
+    it.each([['INVALID_RESPONSE'], ['UPSTREAM_REJECTED_REQUEST']] as const)(
+      'refuses to call %s a degraded channel',
+      async (failure) => {
+        const owner = await makeActor();
+        const marker = `integrationmarker${randomUUID().slice(0, 8)}`;
+        await seed(owner, {
+          summary: `a summary about ${marker}`,
+          keywords: [marker],
+          embedding: [1, 0, 0],
+        });
+
+        const search = createRetrievalHybridSearchService(
+          owner.lexical,
+          createRetrievalVectorSearchService(
+            portFailing(new RetrievalProviderCallError(failure)),
+            createRetrievalVectorSearchReader(pool, owner.context),
+          ),
+        ).search({ lexicalText: marker, semanticText: 'anything' });
+
+        // The integration is broken, and no amount of waiting fixes it.
+        // Reporting it as `PROVIDER_UNAVAILABLE` would make it look exactly
+        // like a deployment that configured no provider on purpose — which is
+        // how it could stay broken for as long as nobody read a log.
+        await expect(search).rejects.toBeInstanceOf(RetrievalProviderCallError);
+        await expect(search).rejects.toMatchObject({ failure });
+      },
+    );
+
+    it('still degrades for a port that throws without saying anything', async () => {
+      const owner = await makeActor();
+      const marker = `genericmarker${randomUUID().slice(0, 8)}`;
+      const seeded = await seed(owner, {
+        summary: `a summary about ${marker}`,
+        keywords: [marker],
+        embedding: [1, 0, 0],
+      });
+
+      const result = await createRetrievalHybridSearchService(
+        owner.lexical,
+        createRetrievalVectorSearchService(
+          portFailing(new Error('something went wrong')),
+          createRetrievalVectorSearchReader(pool, owner.context),
+        ),
+      ).search({ lexicalText: marker, semanticText: 'anything' });
+
+      // The P4 contract, unbroken. A port is free to throw anything, a plain
+      // throw has always meant "no vector came back", and adding a way to say
+      // more did not change what saying nothing means.
+      expect(result.semanticStatus).toBe('PROVIDER_UNAVAILABLE');
+      expect(result.candidates.map((c) => c.problemId)).toEqual([seeded.problemId]);
     });
 
     it('degrades to lexical-only when the provider cannot be reached', async () => {

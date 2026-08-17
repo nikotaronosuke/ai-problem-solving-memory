@@ -6,10 +6,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { toProviderEmbedding } from '../../src/domain/retrieval-embedding.js';
+import { RetrievalProviderCallError } from '../../src/domain/retrieval-provider-failure.js';
 import {
   createOpenAiEmbeddingProvider,
   createOpenAiTransport,
-  OpenAiRequestError,
   OPENAI_EMBEDDING_DIMENSIONS,
   OPENAI_EMBEDDING_MODEL,
   type FetchLike,
@@ -42,6 +42,24 @@ function urlOf(input: Parameters<FetchLike>[0]): string {
 
 function bodyOf(init: RequestInit | undefined): string {
   return typeof init?.body === 'string' ? init.body : '';
+}
+
+/**
+ * Asserts a rejection classified as the provider having answered unusably.
+ *
+ * The kind is asserted, not merely the class: the whole point of the P5-02c
+ * correction is that `INVALID_RESPONSE` and `UNAVAILABLE` mean different things
+ * one layer up, so a test that accepted either would pass for the wrong reason.
+ */
+async function expectInvalidResponse(call: Promise<unknown>): Promise<void> {
+  await expect(call).rejects.toBeInstanceOf(RetrievalProviderCallError);
+  await expect(call).rejects.toMatchObject({ failure: 'INVALID_RESPONSE' });
+}
+
+/** A provider whose transport answers with one status and an empty body. */
+function providerAnswering(status: number) {
+  const fetch: FetchLike = () => Promise.resolve(new Response('{}', { status }));
+  return createOpenAiEmbeddingProvider(createOpenAiTransport(API_KEY, fetch));
 }
 
 function harness(answer: () => unknown) {
@@ -98,7 +116,7 @@ describe('the OpenAI embedding provider', () => {
       embeddingsBody({ data: [{ embedding: VECTOR.slice(0, 512) }] }),
     );
 
-    await expect(provider.embed({ text: SUMMARY })).rejects.toBeInstanceOf(OpenAiRequestError);
+    await expectInvalidResponse(provider.embed({ text: SUMMARY }));
   });
 
   it('refuses non-finite values', async () => {
@@ -106,7 +124,7 @@ describe('the OpenAI embedding provider', () => {
       const withBad = [...VECTOR];
       withBad[3] = bad as never;
       const { provider } = harness(() => embeddingsBody({ data: [{ embedding: withBad }] }));
-      await expect(provider.embed({ text: SUMMARY })).rejects.toBeInstanceOf(OpenAiRequestError);
+      await expectInvalidResponse(provider.embed({ text: SUMMARY }));
     }
   });
 
@@ -123,7 +141,7 @@ describe('the OpenAI embedding provider', () => {
   it('refuses empty, plural or malformed data', async () => {
     for (const data of [[], [{}, {}], [{ embedding: 'not-a-list' }], 'nonsense', undefined]) {
       const { provider } = harness(() => embeddingsBody({ data }));
-      await expect(provider.embed({ text: SUMMARY })).rejects.toBeInstanceOf(OpenAiRequestError);
+      await expectInvalidResponse(provider.embed({ text: SUMMARY }));
     }
   });
 
@@ -132,7 +150,7 @@ describe('the OpenAI embedding provider', () => {
     // another model stored under this identity would poison the space.
     const { provider } = harness(() => embeddingsBody({ model: 'text-embedding-ada-002' }));
 
-    await expect(provider.embed({ text: SUMMARY })).rejects.toBeInstanceOf(OpenAiRequestError);
+    await expectInvalidResponse(provider.embed({ text: SUMMARY }));
   });
 
   it('refuses a different identifier that merely starts with the configured one', async () => {
@@ -145,7 +163,80 @@ describe('the OpenAI embedding provider', () => {
       embeddingsBody({ model: `${OPENAI_EMBEDDING_MODEL}-something-else` }),
     );
 
-    await expect(provider.embed({ text: SUMMARY })).rejects.toBeInstanceOf(OpenAiRequestError);
+    await expectInvalidResponse(provider.embed({ text: SUMMARY }));
+  });
+
+  it.each([
+    // Both are the provider temporarily unable to answer. Nothing is wrong with
+    // the integration, so the semantic channel degrades and the search answers.
+    [429, 'UNAVAILABLE'],
+    [500, 'UNAVAILABLE'],
+    [503, 'UNAVAILABLE'],
+    // Every other refusal is the request being rejected — a bad body, a
+    // rejected key, a forbidden or absent endpoint. None of them improve by
+    // waiting, and a caller's search had no part in any of them.
+    [400, 'UPSTREAM_REJECTED_REQUEST'],
+    [401, 'UPSTREAM_REJECTED_REQUEST'],
+    [403, 'UPSTREAM_REJECTED_REQUEST'],
+    [404, 'UPSTREAM_REJECTED_REQUEST'],
+  ])('classifies HTTP %i as %s', async (status, failure) => {
+    const provider = providerAnswering(status);
+
+    const call = provider.embed({ text: SUMMARY });
+    await expect(call).rejects.toBeInstanceOf(RetrievalProviderCallError);
+    await expect(call).rejects.toMatchObject({ failure });
+  });
+
+  it('classifies an unreachable provider as unavailable', async () => {
+    const fetch: FetchLike = () => Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:443'));
+    const provider = createOpenAiEmbeddingProvider(createOpenAiTransport(API_KEY, fetch));
+
+    const call = provider.embed({ text: SUMMARY });
+    await expect(call).rejects.toBeInstanceOf(RetrievalProviderCallError);
+    await expect(call).rejects.toMatchObject({ failure: 'UNAVAILABLE' });
+  });
+
+  it('classifies a success whose body is not JSON as an unusable answer', async () => {
+    const fetch: FetchLike = () =>
+      Promise.resolve(new Response('not json at all', { status: 200 }));
+    const provider = createOpenAiEmbeddingProvider(createOpenAiTransport(API_KEY, fetch));
+
+    await expectInvalidResponse(provider.embed({ text: SUMMARY }));
+  });
+
+  it('says nothing about the provider in what it raises', async () => {
+    const fetch: FetchLike = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: { message: 'Incorrect API key provided: sk-live-x' } }),
+          {
+            status: 401,
+          },
+        ),
+      );
+    const provider = createOpenAiEmbeddingProvider(createOpenAiTransport(API_KEY, fetch));
+
+    const error = await provider.embed({ text: SUMMARY }).catch((raised: unknown) => raised);
+
+    // A classified failure carries a kind chosen in this repository and nothing
+    // else. The upstream message quoted a credential back; an error travels
+    // into logs, so none of it may be attached.
+    //
+    // The stack is swept too, for everything the *provider* said. It is not
+    // swept for the vendor's name: a stack trace names the source files it
+    // passed through and one of them is `providers/openai/failure.ts`, which is
+    // this repository's own path rather than anything the provider supplied.
+    const attached = `${(error as Error).message} ${JSON.stringify(error)}`;
+    const withStack = `${attached} ${String((error as Error).stack)}`;
+    for (const supplied of ['sk-live-x', 'Incorrect API key', 'api.openai.com', '401']) {
+      expect(`${supplied} leaked:${withStack.includes(supplied)}`).toBe(`${supplied} leaked:false`);
+    }
+    expect(`vendor named:${attached.toLowerCase().includes('openai')}`).toBe('vendor named:false');
+    expect((error as { cause?: unknown }).cause).toBeUndefined();
+    // And the whole message is the fixed sentence, not a wrapped one.
+    expect((error as Error).message).toBe(
+      'A retrieval provider call failed: UPSTREAM_REJECTED_REQUEST.',
+    );
   });
 
   it('makes exactly one request per embedding', async () => {

@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02c-impl-1)
+Updated: 2026-08-17 (P5-02c-impl-1, after formal-review correction)
 
 ## Current phase
 
@@ -22,8 +22,8 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
     - P5-02b-impl-2a — OpenAI production provider adapters: **DONE**
     - P5-02b-impl-2b — production runtime wiring: **DONE** — P5-02b is implementation-complete
   - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **IN PROGRESS**
-    - P5-02c-impl-1 — Search JSON API and owner-scoped search composition: **DONE**
-    - P5-02c-impl-2 — the common client's `search()` method: **NOT STARTED**
+    - P5-02c-impl-1 — Search JSON API and owner-scoped search composition: **DONE after formal-review correction**
+    - P5-02c-impl-2 — the common client's `search()` method: **NEXT / NOT STARTED**
 - P5-03 — Project auto-detection: **NOT STARTED**
 
 ## Source of truth
@@ -1144,9 +1144,13 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **Three outcomes are ordinary 200s; one is the ordinary 404** (D-422). Zero candidates, reading turned off and a Problem that moved mid-search are answers, not faults. A Problem this owner cannot read is the same 404 as one that never existed. No 409 — a search writes nothing to the Problem. A refused search reuses the existing application-rejection branch for its 400; a broken pipeline stays a 500.
 
+**Two schemas were tightened to match what the server sends** (D-430). `required_checks` gained `minItems` / `maxItems` / `uniqueItems`, so the contract says "all four" instead of permitting none; `verification_type` is closed against `VERIFICATION_TYPES` instead of being free text. Neither is a version change — nothing was added, removed or renamed.
+
 **Material, never an answer** (D-423). Every field of all five kinds travels, written out by hand rather than spread, with nothing sorted, deduplicated, truncated or renumbered and `structural_score` null rather than zero when nothing scored it. No recommendation, verdict, winner, should-retry, cache hit or provider identity anywhere in the nested schema — a contract test sweeps the serialised whole for each word.
 
-**A missing provider is a smaller answer, not a missing route** (D-424). Both ports are optional at the two stage services; with neither configured the lexical channel answers, the two statuses name themselves, and a database-backed test proves the platform `fetch` is never called. No stand-in provider exists anywhere in `src/`, and a guard scans for one by name. A port that *answers unusably* is an internal failure rather than a degraded channel — with one recorded limitation about the OpenAI adapters' own pre-validation, and a named follow-up.
+**A missing provider is a smaller answer, not a missing route** (D-424). Both ports are optional at the two stage services; with neither configured the lexical channel answers, the two statuses name themselves, and a database-backed test proves the platform `fetch` is never called. No stand-in provider exists anywhere in `src/`, and a guard scans for one by name.
+
+**A provider failure says which of three things happened** (D-428, added by the formal review). `UNAVAILABLE` — unreachable, timed out, rate limited, server error — degrades the channel and the search answers. `INVALID_RESPONSE` and `UPSTREAM_REJECTED_REQUEST` are integration failures: they leave the stage services, become a 500, and are never converted into a complaint about the caller's query. The translation from any vendor's own words happens once, at `src/providers/openai/failure.ts`, which is the last place an HTTP status exists; the classified error carries the kind and nothing else. The P4 contract is intact — a port that throws a plain `Error` still degrades — and the production matrix is driven through the real transport (D-429).
 
 **Transport asks for a service and never assembles one** (D-425). `RetrievalSearchServiceResolver` is the seam; `src/http/` still holds no pool and no repository, and only `src/index.ts` knows both the runtime and the transport. The owner comes from `context.repository.ownerId`, is cross-checked against the artifact repository's, and is resolved through `resolveOwnerContextFor` — never cast. The service graph is request-scoped because the usage-log writer inside it belongs to that request; the rerank cache is process-wide because the owner is inside its key. The resolver is a *required* dependency of `buildMemoryHttpApp`, so a wiring slip cannot quietly shrink the contract.
 
@@ -1156,13 +1160,14 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 P5-02c-impl-2 — the common client's `search()` method.
 
-**NOT STARTED**, pending formal review of P5-02c-impl-1. The server publishes the route; nothing calls it yet. What remains:
+**NOT STARTED.** impl-1 is done, its formal review is answered, and the server publishes the route; nothing calls it yet. What remains:
 - **`search()` on `packages/memory-api-client`.** The client is deliberately untouched by impl-1, and a guard fails if any shipped client module so much as mentions `/search` or `searchProblemMemory` — a half-written method is worse than none, because a caller cannot tell which it has
 - **A timeout decision, which is why this is a separate task** (D-427). The client's default is `MEMORY_API_REQUEST_TIMEOUT_MS = 10_000`; the provider transport behind the route has a far longer deadline, and a cold search runs an embedding call and a rerank call in series. Inheriting the 10 s default would abort searches the server was about to answer. A per-call override, a longer default for this one method, or a documented expectation — but a decision, not a copy of `getProblem`
 - **The three-branch answer must reach the caller intact.** `SEARCHED`, `MEMORY_READ_DISABLED` and `CURRENT_SOURCE_CHANGED` are all 200, so status alone cannot distinguish them, and the two non-search kinds must not be flattened into an empty result
+- **A 500 from this route may mean the provider integration is broken** (D-428). It is not the caller's request being wrong, and a client must not present it as one
 
 Notes for whoever picks this up:
-- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix, and now the production wiring end to end. Read D-393 to D-427 before touching any of it
+- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix, and now the production wiring end to end. Read D-393 to D-431 before touching any of it
 - **The specification's minimum API is now fully routed.** The cross-project similarity search was the only item in that list without a route, and impl-1 published it (D-357, D-376, D-420)
 - **An adapter must not import the internal service** (D-363), and the common client must stay free of any assistant, host or protocol (D-382). Both are guarded in `tests/packages/boundary.test.ts`
 - **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look details up fresh from the official documentation rather than from anything recorded here

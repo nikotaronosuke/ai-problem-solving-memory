@@ -285,6 +285,15 @@ export {
   type EmbeddingProvider,
   type EmbeddingProviderInput,
 } from '../domain/retrieval-embedding.js';
+// The vendor-neutral failure vocabulary the two search ports speak. Exported so
+// a composition and a test can name a classification; the translation from any
+// vendor's own words happens at the provider boundary and nowhere else.
+export {
+  isRetrievalProviderIntegrationFailure,
+  RETRIEVAL_PROVIDER_CALL_FAILURES,
+  RetrievalProviderCallError,
+  type RetrievalProviderCallFailure,
+} from '../domain/retrieval-provider-failure.js';
 // Generation only: it produces a draft and stores nothing. There is no route
 // to it, deliberately — what a client may ask of a search belongs to the task
 // that has a search to expose.

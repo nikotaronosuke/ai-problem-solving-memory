@@ -51,6 +51,7 @@
 import type { ProblemId } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
 import type { HybridCandidate } from '../domain/retrieval-hybrid-search.js';
+import { isRetrievalProviderIntegrationFailure } from '../domain/retrieval-provider-failure.js';
 import {
   MAX_STRUCTURAL_RERANK_CANDIDATES,
   orderStructuralCandidates,
@@ -247,9 +248,24 @@ export function createRetrievalStructuralRerankService(
       let answered: unknown;
       try {
         answered = await reranker.rerank(rerankerInput);
-      } catch {
+      } catch (error) {
+        // An answer this system cannot use, and a request the provider refused,
+        // are integration failures rather than infrastructure ones: no waiting
+        // fixes either, and reporting them as `RERANKER_UNAVAILABLE` would make
+        // a broken integration look exactly like a deployment that configured
+        // no reranker on purpose. They leave, and the search fails.
+        //
+        // Note what this means: a malformed answer is refused twice on this
+        // path. Here, when the port classified it, and below at
+        // `parseStructuralRerankerOutput` when the port merely returned it. The
+        // parser remains the authority on whether a returned judgement is a
+        // rerank; this only stops a port that already knew from being misread.
+        if (isRetrievalProviderIntegrationFailure(error)) {
+          throw error;
+        }
         // Unreachable is infrastructure, and a Memory failure must not stop
-        // ordinary work. Whatever it threw stops here.
+        // ordinary work. Whatever else it threw stops here — including a plain
+        // throw from a port written before there was a way to say more.
         return degraded(present, ranks, resolved.limit, 'RERANKER_UNAVAILABLE');
       }
 

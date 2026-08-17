@@ -39,6 +39,7 @@ import {
   type RequestContextService,
 } from '../../src/app/index.js';
 import { SEMANTIC_CHANNEL_STATUSES } from '../../src/app/index.js';
+import { VERIFICATION_TYPES } from '../../src/domain/enums.js';
 import { PROJECT_RELATIONS } from '../../src/domain/retrieval-ranking.js';
 import { REVALIDATION_CHECKS } from '../../src/domain/retrieval-revalidation.js';
 import {
@@ -932,12 +933,43 @@ describe('the search contract', () => {
       property(searched, 'candidates')['items'] as JsonObject,
       'revalidation',
     );
+    const checks = property(revalidation, 'required_checks');
 
     // A search result is a candidate rather than an answer, and this is how the
     // server says so — in the contract, not only in a document.
-    expect((property(revalidation, 'required_checks')['items'] as JsonObject)['enum']).toEqual([
-      ...REVALIDATION_CHECKS,
-    ]);
+    //
+    // The `items` enum alone said "zero or more of these", which is the
+    // opposite claim: a generated client could conform while asking for none.
+    // Four entries, no repeats, drawn from a four-value enum is the only way to
+    // spell "all four" in JSON Schema, and removing any one of the three
+    // constraints puts a subset back inside the contract.
+    expect((checks['items'] as JsonObject)['enum']).toEqual([...REVALIDATION_CHECKS]);
+    expect(checks['minItems']).toBe(REVALIDATION_CHECKS.length);
+    expect(checks['maxItems']).toBe(REVALIDATION_CHECKS.length);
+    expect(checks['uniqueItems']).toBe(true);
+    expect(REVALIDATION_CHECKS.length).toBe(4);
+  });
+
+  it('names the verification kinds a candidate’s evidence can be', async () => {
+    const searched = (
+      responseSchema(await documentPromise, 'searchProblemMemory', '200')['oneOf'] as JsonObject[]
+    )[0]!;
+    const revalidation = property(
+      property(searched, 'candidates')['items'] as JsonObject,
+      'revalidation',
+    );
+    const evidence = property(revalidation, 'evidence')['items'] as JsonObject;
+
+    // It was `type: 'string'`, which published a free-form field the server
+    // never produces. The client generated from this document would have taken
+    // the loose version as its source of truth, and a caller branching on a
+    // verification kind would have had no list to branch on.
+    expect(property(evidence, 'verification_type')['enum']).toEqual([...VERIFICATION_TYPES]);
+    // And the same list one hop out, on a contradiction's evidence.
+    const conflict = property(property(searched, 'candidates')['items'] as JsonObject, 'conflict');
+    const other = property(property(conflict, 'contradictions')['items'] as JsonObject, 'other');
+    const otherEvidence = property(other, 'evidence')['items'] as JsonObject;
+    expect(property(otherEvidence, 'verification_type')['enum']).toEqual([...VERIFICATION_TYPES]);
   });
 
   it('documents no conflict status, and no version to re-read', async () => {
