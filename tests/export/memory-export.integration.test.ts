@@ -66,6 +66,7 @@ import {
 import { MEMORY_EXPORT_SCHEMA_VERSION } from '../../src/domain/memory-export.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp, createLoggerOptions } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -106,6 +107,7 @@ describe.skipIf(databaseUrl === undefined)('exporting an owner’s memory', () =
 
   function buildApp(lines: string[]): FastifyInstance {
     return buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,

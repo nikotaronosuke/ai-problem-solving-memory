@@ -162,12 +162,15 @@ export interface StructuralReranker {
 }
 
 /** How a rerank ended, and therefore how much its scores mean. */
-export type StructuralRerankStatus =
-  | 'USED'
-  | 'NOT_NEEDED'
-  | 'SKIPPED_SENSITIVE_INPUT'
-  | 'RERANKER_UNAVAILABLE'
-  | 'STRUCTURAL_DATA_UNAVAILABLE';
+export const STRUCTURAL_RERANK_STATUSES = [
+  'USED',
+  'NOT_NEEDED',
+  'SKIPPED_SENSITIVE_INPUT',
+  'RERANKER_UNAVAILABLE',
+  'STRUCTURAL_DATA_UNAVAILABLE',
+] as const;
+
+export type StructuralRerankStatus = (typeof STRUCTURAL_RERANK_STATUSES)[number];
 
 /**
  * One reranked candidate.

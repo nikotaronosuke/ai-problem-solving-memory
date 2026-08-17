@@ -56,6 +56,7 @@ import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { generateProblemId } from '../../src/domain/problem.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -133,6 +134,7 @@ describe.skipIf(databaseUrl === undefined)('Phase 2, end to end', () => {
     // The only substitution is where the owner comes from, which is the one
     // thing a test must control to be self-contained.
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createFixedRequestContextService(pool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),

@@ -69,6 +69,7 @@ import { resolveOwnerContextFor } from '../../src/owner/context.js';
 import { createRetrievalArtifactRepository } from '../../src/repository/index.js';
 import { createArtifactInspectionPolicy, withSanitization } from '../../src/sanitization/index.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -109,6 +110,7 @@ describe.skipIf(databaseUrl === undefined)('deleting a problem permanently', () 
 
   function buildApp(): FastifyInstance {
     return buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,

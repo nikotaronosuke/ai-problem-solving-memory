@@ -98,6 +98,7 @@ export {
   parseStructuralRerankerOutput,
   resolveStructuralRerankRequest,
   STRUCTURAL_COMPARISON_DIMENSIONS,
+  STRUCTURAL_RERANK_STATUSES,
   type StructuralCandidate,
   type StructuralComparisonDimension,
   type StructuralRerankRequest,
@@ -235,6 +236,7 @@ export { resolveHybridSearchLimit } from './retrieval-hybrid-search-service.js';
 export { resolveStructuralRerankLimit } from '../domain/retrieval-structural-rerank.js';
 export {
   createRetrievalHybridSearchService,
+  SEMANTIC_CHANNEL_STATUSES,
   type HybridSearchRequest,
   type HybridSearchResult,
   type RetrievalHybridSearchService,
@@ -336,6 +338,7 @@ export {
   requestGenerationQuietly,
   type RetrievalArtifactMaintenance,
 } from './retrieval-artifact-maintenance.js';
+export type { RetrievalSearchServiceResolver } from './retrieval-search-resolver.js';
 export {
   createRetrievalGenerationCoordinator,
   DEFAULT_MAX_CONCURRENT_GENERATIONS,

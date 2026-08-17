@@ -67,6 +67,7 @@ import {
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp, createLoggerOptions } from '../../src/http/index.js';
 import { MEMORY_OWNER_ID_VAR } from '../../src/owner/context.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -88,6 +89,7 @@ describe.skipIf(databaseUrl === undefined)('authenticating a request', () => {
   /** The real server, wired exactly as `src/index.ts` wires it. */
   function buildApp(lines: string[]): FastifyInstance {
     const built = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,
