@@ -47,6 +47,7 @@ import {
   type FullTextCandidate,
   type ResolvedFullTextSearchQuery,
 } from '../domain/retrieval-search.js';
+import { RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX } from '../domain/retrieval-summary.js';
 import type { DatabaseExecutor } from './executor.js';
 
 interface CandidateRow {
@@ -87,6 +88,7 @@ export const FULL_TEXT_SEARCH_STATEMENT = `
      and pr.problem_id = ra.problem_id
    where ra.owner_id = $1
      and pr.memory_read_enabled
+     and starts_with(ra.source_fingerprint, $6)
      and ra.search_document @@ ${TSQUERY}
      and ($3::uuid is null or pr.project_id = $3::uuid)
      and ($4::uuid is null or ra.problem_id <> $4::uuid)
@@ -113,6 +115,12 @@ export async function searchArtifactsByText(
     query.projectId,
     query.excludeProblemId,
     query.limit,
+    // The source-schema gate. An artifact fingerprinted under another schema
+    // version renders a document this code no longer writes, and it stays
+    // out of every channel — not ranked lower, out — until regeneration
+    // replaces it. The prefix is the domain's constant, bound as a
+    // parameter, never caller text.
+    RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
   ]);
 
   return result.rows.map((row) => ({

@@ -30,6 +30,7 @@
 import type { OwnerContext } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
+import { RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX } from '../domain/retrieval-summary.js';
 import type { DatabaseExecutor } from './executor.js';
 
 /**
@@ -61,6 +62,7 @@ export const STRUCTURAL_ARTIFACT_STATEMENT = `
      and pr.problem_id = ra.problem_id
    where ra.owner_id = $1
      and pr.memory_read_enabled
+     and starts_with(ra.source_fingerprint, $3)
      and ra.problem_id = any($2::uuid[])`;
 
 /**
@@ -84,6 +86,10 @@ export async function readStructuralArtifacts(
   const result = await executor.query<Row>(STRUCTURAL_ARTIFACT_STATEMENT, [
     context.ownerId,
     [...problemIds],
+    // Source-schema gate. An incompatible artifact contributes no structural
+    // material, which downstream reads as data unavailable — the degraded
+    // path that already exists for a missing artifact.
+    RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
   ]);
 
   return result.rows.map((row) => ({

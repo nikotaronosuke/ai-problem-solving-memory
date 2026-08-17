@@ -327,3 +327,29 @@ export {
   type SanitizationPolicy,
   type SanitizationSite,
 } from '../sanitization/index.js';
+
+// The artifact lifecycle's liveness half: the doorbell a canonical write
+// rings, the scheduler that answers it, and the sweep that answers for both
+// when neither ran. Correctness — a stale artifact cannot be searched — is
+// the writes' own, and none of these are on that path.
+export {
+  requestGenerationQuietly,
+  type RetrievalArtifactMaintenance,
+} from './retrieval-artifact-maintenance.js';
+export {
+  createRetrievalGenerationCoordinator,
+  DEFAULT_MAX_CONCURRENT_GENERATIONS,
+  type RetrievalGenerationCoordinator,
+  type RetrievalGenerationCoordinatorOptions,
+  type RetrievalGenerationRequests,
+  type RetrievalGenerationRunOutcome,
+} from './retrieval-generation-coordinator.js';
+export {
+  createRetrievalArtifactReconciliationService,
+  type RetrievalArtifactReconciliationService,
+  type RetrievalReconciliationReport,
+} from './retrieval-artifact-reconciliation-service.js';
+export {
+  requireRetrievalGenerationProfile,
+  type RetrievalGenerationProfile,
+} from '../domain/retrieval-generation-profile.js';

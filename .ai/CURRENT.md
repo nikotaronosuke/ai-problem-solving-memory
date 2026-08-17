@@ -1,6 +1,6 @@
 # CURRENT
 
-Updated: 2026-08-17 (P5-02a)
+Updated: 2026-08-17 (P5-02b-impl-1)
 
 ## Current phase
 
@@ -17,7 +17,9 @@ Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
 - P5-01 — connection capability audit: **DONE**
 - P5-02 — adapter package / boundary: **IN PROGRESS**, split into three parts (D-378)
   - P5-02a — package boundary and common Memory API client: **DONE**
-  - P5-02b — production retrieval providers and artifact lifecycle, read-only investigation and design freeze: **NEXT / NOT STARTED**
+  - P5-02b — production retrieval runtime: investigation and design freeze **DONE**
+    - P5-02b-impl-1 — RetrievalArtifact lifecycle correctness: **DONE**
+    - P5-02b-impl-2 — production providers, configuration, runtime wiring: **NEXT / NOT STARTED**
   - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **NOT STARTED**
 - P5-03 — Project auto-detection: **NOT STARTED**
 
@@ -1107,26 +1109,33 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **What is deliberately absent.** No Search route and no API version change: every search channel reads a retrieval artifact, production generates none, and a route published now would answer correctly and uselessly (D-379). No provider stub standing in for one. No MCP dependency and no protocol code, so no SDK version is pinned against code that does not exist (D-388). No `bin`, no stdio bootstrap, no empty server. No project detection, no session handling, no hook, skill or plugin.
 
+## What exists now — the artifact lifecycle (P5-02b-impl-1)
+
+**The invariant.** A searchable artifact describes the current canonical source, or it does not exist (D-393). Every write that changes what a summary is generated from — an Event, a Verification, a canonical Problem field, a status, a conclusion — removes the stored artifact inside its own transaction, as a second statement rather than a CTE, because a CTE's snapshot cannot see an artifact committed while the write waited on the generation gate's lock — measured, and the reason the design moved (D-395). Replays, version conflicts and refused moves invalidate nothing (D-397); the read control gates visibility, never content (D-398); artifact staleness is not the Memory's `freshness` (D-393).
+
+**The gates.** Every artifact-backed read — lexical, vector, structural material, successful directions — accepts only fingerprints from the current source schema, as a bound-parameter `starts_with` with the separator included. Hard for source changes, soft for provider changes: an artifact from an outdated generation stack keeps serving the channels that can read it until regeneration replaces it (D-394).
+
+**The maintenance layer, vendor-neutral and unwired.** `RetrievalGenerationProfile` says which stack is current; one bounded reconciliation statement finds missing, schema-incompatible and profile-outdated artifacts over existing columns, with no migration, no dirty flag and no job table — absence is the only dirty state (D-399). A coordinator does single-flight per Problem, one pending bit for bursts, and a bounded pool (D-401). The write services ring an optional `RetrievalArtifactMaintenance` doorbell after commit; nothing stands behind it yet (D-402). Correctness never waits for any of this (D-400).
+
+**Handed to P5-02b-impl-2, by name.** The concrete providers, their configuration and credential, the startup and interval wiring of the sweep, and the per-owner dispatcher behind the doorbell. P5-02c stays behind that (D-403).
+
 ## Immediate objective
 
-P5-02b — the production retrieval runtime: provider ownership, and the artifact generation and freshness lifecycle.
+P5-02b-impl-2 — the production providers and the runtime wiring of the lifecycle.
 
-**NOT STARTED**, and read-only when it starts: it ends in a design freeze rather than in code (D-378).
+**NOT STARTED.** The lifecycle correctness underneath it is done and guarded; what remains is everything that makes a standard `npm start` server actually generate artifacts.
 
-What it has to settle, at minimum (D-380):
-- **Which concrete `RetrievalSummaryGenerator`, `EmbeddingProvider` and `StructuralReranker` production uses**, and where a provider's selection and configuration live. Nothing implements any of the three today, `src/index.ts` wires none of them, and no runtime dependency exists for one. The specification requires that the model not be a fixed part of the spec and that artifacts can be regenerated when it changes
-- **What triggers an artifact to be generated, and what triggers it to be regenerated.** `createRetrievalArtifactGenerationService` takes a Problem id and does the whole pipeline; `generateArtifact` has no caller in `src/` at all
-- **What happens to an artifact when the record it describes changes**, including after a close — a trigger that fires once at the end describes a lifecycle this system does not have
-- How a stale artifact is treated, how a provider failure is isolated, and whether any of this needs background work
-
-Why it comes before the route (D-379): every search channel, the lexical one included, reads a retrieval artifact. Until production can generate one, a published Search route answers every real search with nothing found — correctly, and uselessly.
+What it owns, by the impl-1 handoff (D-403):
+- **The three concrete providers** — summary generator, embedding provider, structural reranker — their configuration, their credential (server process env only, D-374 applies), and the identity values that feed `RetrievalGenerationProfile`
+- **The composition wiring**: build the coordinator and reconciliation per owner, run the sweep at startup and on an interval, and stand a dispatcher behind the services' `RetrievalArtifactMaintenance` doorbell
+- **Startup behaviour when unconfigured**: Memory CRUD runs, retrieval generation stays off, one safe line says so (frozen direction from the P5-02b investigation)
 
 Notes for whoever picks this up:
-- **The connection shape and the package boundary are settled; the retrieval contract is not.** D-361 to D-377 fix how the assistant reaches the Memory and D-378 to D-392 fix the packages. What a search route accepts and returns is P5-02c's, after P5-02b
-- **The search route is owed and was not cancelled.** The specification lists a cross-project similarity search among the minimum API surface, and it is the only item in that list without a route (D-357, D-376)
+- **The lifecycle rules are already enforced and tested** — atomic invalidation, replay safety, the source-schema gates, absence-as-dirty, the race matrix. Read D-393 to D-403 before touching any of it; the CTE-versus-second-statement history in D-395 is the one most likely to be re-litigated by accident
+- **The search route is owed and was not cancelled.** The specification lists a cross-project similarity search among the minimum API surface, and it is the only item in that list without a route (D-357, D-376). P5-02c stays behind impl-2
 - **An adapter must not import the internal service** (D-363), and the common client must stay free of any assistant, host or protocol (D-382). Both are guarded in `tests/packages/boundary.test.ts`
 - **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look details up fresh from the official documentation rather than from anything recorded here
-- `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide. It is the right thing to hand somebody before they design an adapter's presentation
+- `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide — including, since impl-1, what happens to a rendering when the record changes
 - **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been done once; the failure it fixed was a silent one and can recur
 
 ## Core MVP milestone

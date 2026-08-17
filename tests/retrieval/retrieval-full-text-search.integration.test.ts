@@ -523,12 +523,13 @@ describe.skipIf(databaseUrl === undefined)('lexical search over retrieval artifa
       expect(await found(actor, marker)).toContain(seeded.problemId);
     });
 
-    it('still returns an artifact built from a source that has since moved', async () => {
+    it('cannot return an artifact built from a source that has since moved', async () => {
       const marker = 'stalenessmarker';
       const seeded = await seed(actor, {
         summary: `a summary mentioning ${marker}`,
         keywords: [marker],
       });
+      expect(await found(actor, marker)).toContain(seeded.problemId);
 
       await actor.memory.appendEvent({
         problemId: seeded.problemId,
@@ -537,11 +538,36 @@ describe.skipIf(databaseUrl === undefined)('lexical search over retrieval artifa
         clientEventId: randomUUID() as never,
       });
 
-      // The artifact's fingerprint no longer describes the Problem. Nothing
-      // here recomputes it — that would mean reading every candidate's whole
-      // source during a search — and nothing deletes it. Telling a caller that
-      // a memory is historical is a separate contract.
+      // The append removed the artifact in its own statement, so there is no
+      // stale rendering left for this search to find. Nothing here recomputes
+      // a fingerprint — that would mean reading every candidate's whole
+      // source during a search — and nothing needs to: a rendering of a
+      // source that no longer exists is not degraded or demoted, it is
+      // absent, and the Problem returns to the results when regeneration
+      // writes a current one.
+      expect(await found(actor, marker)).not.toContain(seeded.problemId);
+    });
+
+    it('never sees an artifact fingerprinted under another source schema', async () => {
+      const marker = 'schemagatemarker';
+      const seeded = await seed(actor, {
+        summary: `a summary mentioning ${marker}`,
+        keywords: [marker],
+      });
       expect(await found(actor, marker)).toContain(seeded.problemId);
+
+      // A lower-layer write plants what a future deployment would leave
+      // behind: a row whose fingerprint names a schema this code no longer
+      // writes. The reader's gate — not anything about this row's content —
+      // is what keeps it out of the results until regeneration replaces it.
+      await pool.query(
+        `update public.retrieval_artifacts
+            set source_fingerprint = 'retrieval-source-v0:legacy'
+          where owner_id = $1 and problem_id = $2`,
+        [actor.ownerId, seeded.problemId],
+      );
+
+      expect(await found(actor, marker)).not.toContain(seeded.problemId);
     });
   });
 

@@ -27,6 +27,10 @@
 
 import { ResourceNotFoundError } from './errors.js';
 import type { AuthenticatedRequestContext } from './request-context.js';
+import {
+  requestGenerationQuietly,
+  type RetrievalArtifactMaintenance,
+} from './retrieval-artifact-maintenance.js';
 import { toClientEventId } from '../domain/client-event-id.js';
 import type { VerificationType } from '../domain/enums.js';
 import { toProblemId, type ProblemId } from '../domain/problem.js';
@@ -74,7 +78,9 @@ function asProblemId(value: string): ProblemId {
   }
 }
 
-export function createVerificationService(): VerificationService {
+export function createVerificationService(
+  retrievalMaintenance?: RetrievalArtifactMaintenance,
+): VerificationService {
   async function requireProblem(
     context: AuthenticatedRequestContext,
     problemId: ProblemId,
@@ -101,15 +107,27 @@ export function createVerificationService(): VerificationService {
       // The verification id and the timestamp are the server's. A caller
       // supplies what was checked and what came of it, never when or under
       // which identity.
-      return context.repository.appendVerification({
-        problemId: problem,
-        verificationType: command.verificationType,
-        result: command.result,
-        summary: command.summary,
-        clientEventId,
-        ...(command.evidenceRef !== undefined ? { evidenceRef: command.evidenceRef } : {}),
-        ...(command.verifiedBy !== undefined ? { verifiedBy: command.verifiedBy } : {}),
-      });
+      //
+      // In a transaction since the lifecycle work, for the same reason as the
+      // Event append: the write and the invalidation it implies are two
+      // statements made one atom.
+      const verification = await context.runInTransaction((repository) =>
+        repository.appendVerification({
+          problemId: problem,
+          verificationType: command.verificationType,
+          result: command.result,
+          summary: command.summary,
+          clientEventId,
+          ...(command.evidenceRef !== undefined ? { evidenceRef: command.evidenceRef } : {}),
+          ...(command.verifiedBy !== undefined ? { verifiedBy: command.verifiedBy } : {}),
+        }),
+      );
+
+      // After the append is committed; a replay costs at worst one identical
+      // regeneration, the same trade the Event path makes.
+      requestGenerationQuietly(retrievalMaintenance, context, problem);
+
+      return verification;
     },
 
     async listVerifications(context, problemId) {
