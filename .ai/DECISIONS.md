@@ -3704,3 +3704,49 @@ New: the invalidation module (the only file besides the delete path allowed to d
 Counts, measured: API 0.4.0 / 27 operations, migrations 16, tables 12, FKs 13 all RESTRICT, DOMAINs 8, triggers 0, `MemoryRepository` 25, server runtime dependencies 3, client 0, adapter 0, MCP 0. 3726 tests across 121 files. Twenty-eight mutations killed by a named test or guard — twenty-four behavioural, four boundary — after three survivors exposed real test gaps: the close test's review Events were invalidating before the conclusion could prove it does too, and the vector and successful-direction gates had no test of their own. The race suite measures all three generation-versus-write interleavings on a real database, and Case A is the one that redesigned the mechanism (D-395).
 
 Deliberately absent, named for the next task: no concrete provider, no provider configuration or credential, no startup or interval wiring for the sweep, no per-owner maintenance dispatcher behind the doorbell. P5-02b-impl-2 owns all of it, and P5-02c stays blocked behind that.
+
+## D-404 — The initial provider is OpenAI; the ports never learned that (P5-02b-impl-2a)
+
+The three retrieval ports now have production implementations, all under `src/providers/openai/` and nowhere else — a guard scans every other source file for the vendor's name and for a provider import, and finds neither. The domain, application, storage and transport layers are exactly as vendor-neutral as they were when no vendor existed, which is the property that makes "initial" a true word: swapping the stack is writing another provider directory and changing the composition edge, not touching anything that outlives a vendor.
+
+The three ports also stayed three. One credential and one transport serve all of them, but there is no `OpenAIProvider` umbrella interface — a summary extraction, a vector transform and a structural judgement are different contracts that happen to share a wire today.
+
+## D-405 — Terra for judgement, and not forever (P5-02b-impl-2a)
+
+The generative calls use `gpt-5.6-terra`, verified available with the Responses API and strict structured outputs on the official model page at implementation time. The reasoning is recorded so it can be re-argued: summarisation is semantic extraction and reranking is cross-technology structural judgement — neither is string processing — while the family's cost-optimised tier is aimed at high-volume work this personal system does not have, and the flagship tier is more model than a background retrieval loop justifies. Embeddings use `text-embedding-3-large` at 1024 dimensions, the width being a deliberate initial choice whose change is an ordinary identity change.
+
+None of this is a permanent best. The evaluation corpus can compare family members against real fixtures later; the models are code constants, not configuration knobs, precisely so that changing one is a visible identity change that reconciliation turns into regeneration — there are deliberately no model environment variables to drift silently.
+
+## D-406 — The alias limitation, recorded rather than papered over (P5-02b-impl-2a)
+
+OpenAI publishes no dated snapshots for the 5.6 family or the embedding model — the alias is the only identifier that exists, and this codebase invents no other. Two consequences are accepted in writing. The generator id and the embedding identity name the alias, so an upstream change *behind* the same alias — a quiet model revision, a shifted embedding space — is not detectable from the identity columns, and this system does not pretend otherwise. And the embedding `modelVersion` equals its `modelId`, because the only honest version string is the name itself. Should dated snapshots appear, adopting them is an ordinary identity change, re-evaluated then rather than speculated about now.
+
+## D-407 — The generator identity carries the model; the version carries this repo's contract (P5-02b-impl-2a)
+
+`summary_generator_id` is `openai-responses:gpt-5.6-terra` — provider, API surface and model, the things on the other side of the wire. `summary_generator_version` is `retrieval-summary-v1` — the prompt and schema contract, the things on this side. Each moves for its own reason and either movement regenerates every artifact through reconciliation, which is exactly the pair of behaviours the two columns were kept for (D-399). The version never impersonates an upstream model version; a test pins that it contains no model name.
+
+## D-408 — One fixed host, one credential, one place that reads it (P5-02b-impl-2a)
+
+The transport posts to the official endpoint as a constant, and there is no parameter, environment variable or option that can move it: a configurable base URL is a surface that sends `OPENAI_API_KEY` to whatever host a configuration names, and the way to not have that mistake is for it to be unstateable. A guard asserts the provider directory contains exactly one URL and no base-URL configuration; a mutation that added the parameter was killed by it.
+
+The credential is read from one environment variable in one file, travels into the transport, and appears in exactly one place — the authorization header. Missing or blank means the retrieval stack is *disabled*, never that the server refuses to start: a Memory that cannot summarise itself yet is still a Memory, and impl-2b composes CRUD-only against exactly this answer. No failure, no log line, no error carries the key; the transport's failures carry a closed kind and at most an HTTP status.
+
+## D-409 — Native fetch, no SDK, no hidden retries (P5-02b-impl-2a)
+
+The provider family is plain `fetch` against documented REST endpoints: root runtime dependencies stay at three, and no SDK's default retry policy rides in unseen. Retries are deliberately zero at this layer — 429, 5xx, network failure and timeout each fail the one request — because a retry buried in a transport is invisible call amplification at exactly the moment a provider is least able to absorb it, and the lifecycle does not need it: a failed generation leaves absence, and reconciliation asks again. Every request carries an abort deadline as a named constant, recorded nowhere as an invariant.
+
+## D-410 — Strict structured output is an optimisation, not the boundary (P5-02b-impl-2a)
+
+Both generative calls request strict structured outputs with schemas mirroring the domain contracts' exact key sets — types, required fields, closed objects, and for the reranker an enum pinning the answer to this call's own candidate keys. What the schemas deliberately do not carry is bounds: lengths, counts and score ranges belong to the domain validators, which remain the sole authorities. Tests prove the order of authority directly — a well-shaped lie passes the adapter and dies at `toGeneratedRetrievalSummary`; an out-of-range score passes the adapter and dies at `parseStructuralRerankerOutput`. A refusal, an incomplete response, an empty output and unparseable text are each refused by kind, and there is no fallback to model prose.
+
+## D-411 — What travels is the minimum, and instructions are not reachable from data (P5-02b-impl-2a)
+
+The summary call sends the canonical source — the exact fingerprinted bytes — and nothing else. The embedding call sends the normalized summary verbatim. The rerank call sends structural features under per-call opaque keys (`candidate_1`, …) with the mapping held locally, so no Problem UUID reaches the provider; the model is never shown confidence, freshness, suppression, importance, project relations, hybrid ranks or scores, because those are other stages' decisions and a model that saw them could reproduce rankings it was never asked for. Requests are marked `store: false`, carry no tools, and attach no identifiers or metadata.
+
+The prompt-injection boundary is structural: instructions are fixed strings in this repository, source and features ride in the input field, and the instructions state in writing that the input is data whatever it contains. What a model does is not provable from here; what is provable — and tested — is that no caller byte can reach the instruction channel.
+
+## D-412 — Sending Memory to a provider is named in the public account (P5-02b-impl-2a)
+
+`docs/retrieval.md` now says plainly that generating an artifact sends the canonical source to a summary model, the summary to an embedding model, and features to a comparison model, once a credential is configured — and that no credential means nothing is sent. `store: false` is a request-level flag, not a zero-retention claim; the provider's own data controls govern what the API does, and their current stance (API content not used for training by default, bounded abuse-monitoring retention) is summarised in the investigation record rather than fixed here, where it would quietly go stale. The profile factory derives the reconciliation profile from the live provider objects rather than restating their constants, so the description of "the configured stack" cannot drift from the stack.
+
+What impl-2a deliberately did not do: no wiring in `src/index.ts`, no reconciliation timers, no doorbell dispatcher, no Search route, no new dependency anywhere, no migration. API 0.4.0 / 27 operations, migrations 16, tables 12, triggers 0, deps 3/0/0, MCP 0, SDK 0. 3766 tests across 125 files; twenty-three mutations killed, one after its duplicate-candidate fixture was rebuilt to stop hiding behind the coverage rule.

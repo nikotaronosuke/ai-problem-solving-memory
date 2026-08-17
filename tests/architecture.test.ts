@@ -668,6 +668,64 @@ describe('the delete path', () => {
     }
   });
 
+  it('confines the vendor to the provider directory', async () => {
+    // The ports are vendor-neutral and the composition edge chooses a
+    // concrete stack. Everything OpenAI-specific therefore lives under
+    // src/providers/openai and nowhere else — one directory to swap when the
+    // stack changes, and no vendor name quietly becoming a dependency of a
+    // layer that must outlive it.
+    const modules = await readModules(SRC);
+
+    for (const module of modules) {
+      if (module.path.startsWith('providers/')) {
+        continue;
+      }
+      const code = module.source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      expect(`${module.path}:${code.toLowerCase().includes('openai')}`).toBe(
+        `${module.path}:false`,
+      );
+      for (const specifier of importsOf(module.source)) {
+        expect(`${module.path} imports ${specifier}:${specifier.includes('providers/')}`).toBe(
+          `${module.path} imports ${specifier}:false`,
+        );
+      }
+    }
+  });
+
+  it('gives the provider transport one fixed host and no way to move it', async () => {
+    const providerModules = (await readModules(SRC)).filter((module) =>
+      module.path.startsWith('providers/openai/'),
+    );
+    expect(providerModules.length).toBeGreaterThan(0);
+
+    const urls = providerModules.flatMap(
+      (module) => module.source.match(/https?:\/\/[^\s'"`]+/g) ?? [],
+    );
+    // Exactly one network location in the whole family, the official one.
+    expect([...new Set(urls)]).toEqual(['https://api.openai.com/v1']);
+
+    for (const { path, source } of providerModules) {
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      // No configurable base URL, which is what would let a configuration
+      // send the credential to an arbitrary host.
+      expect(`${path}:${/baseurl/i.test(code)}`).toBe(`${path}:false`);
+    }
+  });
+
+  it('reads the provider credential variable in exactly one file', async () => {
+    const modules = await readModules(SRC);
+
+    // The quoted literal, not the constant's name: everything else refers to
+    // the variable through `OPENAI_API_KEY_ENV`, so the raw string existing
+    // twice would be two places that can disagree about which variable holds
+    // the credential.
+    const readers = modules
+      .filter((module) => module.source.includes(`'OPENAI_API_KEY'`))
+      .map((module) => module.path);
+
+    expect(readers).toEqual(['providers/openai/config.ts']);
+  });
+
   it('runs every canonical write that invalidates inside a transaction boundary', async () => {
     // The delete is a second statement, and the transaction is what makes it
     // one atom with the write. The Problem writers are wrapped by their
