@@ -827,13 +827,17 @@ The OpenAI production provider adapters, behind the vendor-neutral ports.
 
 3766 tests across 125 files; twenty-three mutations killed, one after its duplicate-candidate fixture was rebuilt to stop hiding behind the coverage rule.
 
-#### NEXT — P5-02b-impl-2b, NOT STARTED
+#### P5-02b-impl-2b — DONE
 
-The runtime wiring: compose config → transport → providers → profile in `src/index.ts`; per-owner coordinator and reconciliation; startup and interval sweeps; the dispatcher behind the maintenance doorbell; unconfigured startup behaviour (CRUD runs, generation off, one safe line). See D-403 and D-408.
+The production runtime wiring. P5-02b is implementation-complete.
 
-#### P5-02c — NOT STARTED
+With `OPENAI_API_KEY` set, a standard server runs the whole supply side: write → atomic invalidation → doorbell → owner-scoped generation through the configured providers → locked fingerprint gate → stored artifact, plus startup backfill and periodic recovery. Without it, the capability is disabled and nothing else changes (D-414). The composition root knows a stack exists, never whose (D-413); the runtime is vendor-neutral and owner-honest, with identifier-only discovery, resolved contexts, lazy evicting owner caches and a process-wide generation bound (D-415, D-416); sweeps run after the listener, never overlap, and are never awaited (D-417); stop is stop (D-418).
 
-The Search JSON API, the owner-scoped retrieval composition behind it, the client's search method, and the contract version that comes with them. After P5-02b-impl-2b, not before.
+3795 tests across 128 files. Twenty mutations killed — three exposed real guard holes (sweep-before-listen, a second discovery column, an `as unknown` context) now guarded by name. The first full-suite run also caught an unscoped sweep writing artifacts into other suites' fixtures on the shared test database; the discovery seam that fixes it is the production default plus injectable owners for tests (D-419).
+
+#### NEXT — P5-02c, NOT STARTED
+
+The Search JSON API: the route per the frozen investigation shape, the owner-scoped search composition (the configured reranker is already waiting), the common client's `search()`, API 0.5.0 / 28 operations, and the OpenAPI drift tests. Pending formal review of P5-02b.
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
 
