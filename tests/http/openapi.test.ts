@@ -38,10 +38,24 @@ import {
   type HealthService,
   type RequestContextService,
 } from '../../src/app/index.js';
+import { SEMANTIC_CHANNEL_STATUSES } from '../../src/app/index.js';
+import { PROJECT_RELATIONS } from '../../src/domain/retrieval-ranking.js';
+import { REVALIDATION_CHECKS } from '../../src/domain/retrieval-revalidation.js';
+import {
+  MAX_SEARCH_TEXT_LENGTH,
+  MAX_VECTOR_SEARCH_TEXT_LENGTH,
+} from '../../src/domain/retrieval-search.js';
+import { STRUCTURAL_RERANK_STATUSES } from '../../src/domain/retrieval-structural-rerank.js';
+import {
+  MAX_STRUCTURAL_FEATURE_ITEMS,
+  STRUCTURAL_FEATURE_LISTS,
+  STRUCTURAL_FEATURE_SCHEMA_VERSION,
+} from '../../src/domain/retrieval-summary.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import { ERROR_CODES } from '../../src/http/errors.js';
 import { OPENAPI_PATH } from '../../src/http/openapi.js';
 import type { MemoryRepository } from '../../src/repository/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const OWNER_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 
@@ -57,6 +71,7 @@ const requestContextService: RequestContextService = {
 
 function buildApp() {
   return buildMemoryHttpApp({
+    retrievalSearchResolver: createUnusedSearchResolver(),
     healthService,
     requestContextService,
     projectEnvironmentService: createProjectEnvironmentService(),
@@ -224,6 +239,8 @@ const EXPECTED_OPERATIONS: readonly (readonly [string, string, string])[] = [
   ['updateMemoryControl', 'PATCH', '/v1/problems/{problem_id}/memory-control'],
 
   ['closeProblem', 'POST', '/v1/problems/{problem_id}/close'],
+
+  ['searchProblemMemory', 'POST', '/v1/problems/{problem_id}/search'],
 ] as const;
 
 describe('the document itself', () => {
@@ -242,7 +259,7 @@ describe('the document itself', () => {
     // Moved by P3-06: the surface gained the export. The export's own
     // `schema_version` is a different number for a different question and does
     // not move with this one.
-    expect(info.version).toBe('0.4.0');
+    expect(info.version).toBe('0.5.0');
   });
 
   it('says how a caller reaches it and what a 404 means', async () => {
@@ -279,8 +296,8 @@ describe('the operation inventory', () => {
     );
   });
 
-  it('counts twenty-seven operations', async () => {
-    expect(operations(await documentPromise)).toHaveLength(27);
+  it('counts twenty-eight operations', async () => {
+    expect(operations(await documentPromise)).toHaveLength(28);
   });
 
   it('gives every operation a unique name', async () => {
@@ -352,6 +369,7 @@ describe('the contract endpoint', () => {
     // A published contract is not anyone's memory, and a client that cannot
     // read it cannot learn how to establish an owner in the first place.
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService,
       requestContextService: {
         authenticate: () => Promise.reject(new Error('no owner')),
@@ -739,10 +757,231 @@ describe('the request contracts', () => {
     'createUsageLog',
     'updateMemoryControl',
     'closeProblem',
+    'searchProblemMemory',
   ])('%s refuses unknown fields', async (operationId) => {
     // An unexpected field is a mistake worth reporting, not something to drop
     // quietly. Documenting it keeps a generated client from sending one.
     expect(requestSchema(await documentPromise, operationId)['additionalProperties']).toBe(false);
+  });
+});
+
+describe('the search contract', () => {
+  it('accepts exactly four fields, all of them required', async () => {
+    const schema = requestSchema(await documentPromise, 'searchProblemMemory');
+
+    expect(Object.keys(properties(schema)).sort()).toEqual([
+      'current_features',
+      'lexical_text',
+      'semantic_text',
+      'source_ai',
+    ]);
+    // All four. There is no useful search with a missing half: without the
+    // lexical text there is no first stage, without the semantic text there is
+    // nothing to embed, and without the features there is nothing to compare.
+    expect([...(schema['required'] as string[])].sort()).toEqual([
+      'current_features',
+      'lexical_text',
+      'semantic_text',
+      'source_ai',
+    ]);
+  });
+
+  it.each([
+    // Ownership is the credential's, and a request that could name an owner
+    // would be a request that could name the wrong one.
+    'owner_id',
+    'client_id',
+    // A search is cross-project; the current Project comes from the Problem.
+    'project_id',
+    'environment_id',
+    // Stage bounds are the server's to tune, and a published knob is a
+    // published promise.
+    'hybrid_limit',
+    'rerank_limit',
+    'limit',
+    // A query vector must come from the space the artifacts were embedded in,
+    // so the server produces it and never accepts one.
+    'embedding',
+    'vector',
+    // No vendor, no model, no cache control: those are the server's, and a
+    // caller that could name one could name a different one than the corpus.
+    'model',
+    'provider',
+    'cache_control',
+    'session_id',
+    // And nothing that would make the caller's judgement for it.
+    'recommendation',
+    'action',
+  ])('refuses a %s field', async (field) => {
+    const schema = requestSchema(await documentPromise, 'searchProblemMemory');
+
+    expect(Object.keys(properties(schema))).not.toContain(field);
+  });
+
+  it('bounds both query texts, and the semantic one more loosely', async () => {
+    const schema = requestSchema(await documentPromise, 'searchProblemMemory');
+
+    // The two bounds come from the domain constants the pipeline enforces.
+    expect(property(schema, 'lexical_text')['maxLength']).toBe(MAX_SEARCH_TEXT_LENGTH);
+    expect(property(schema, 'semantic_text')['maxLength']).toBe(MAX_VECTOR_SEARCH_TEXT_LENGTH);
+    expect(MAX_VECTOR_SEARCH_TEXT_LENGTH).toBeGreaterThan(MAX_SEARCH_TEXT_LENGTH);
+  });
+
+  it('pins the structural vocabulary a caller must describe itself in', async () => {
+    const features = property(
+      requestSchema(await documentPromise, 'searchProblemMemory'),
+      'current_features',
+    );
+
+    // Exact version, not a minimum: a caller speaking a vocabulary this server
+    // does not is refused rather than reinterpreted.
+    expect(property(features, 'schema_version')['enum']).toEqual([
+      STRUCTURAL_FEATURE_SCHEMA_VERSION,
+    ]);
+    expect(Object.keys(properties(features)).sort()).toEqual(
+      ['schema_version', 'problem_domain', ...STRUCTURAL_FEATURE_LISTS].sort(),
+    );
+    expect(features['additionalProperties']).toBe(false);
+    for (const list of STRUCTURAL_FEATURE_LISTS) {
+      expect(property(features, list)['maxItems']).toBe(MAX_STRUCTURAL_FEATURE_ITEMS);
+    }
+  });
+
+  it('documents three ways to answer, discriminated by kind', async () => {
+    const schema = responseSchema(await documentPromise, 'searchProblemMemory', '200');
+    const variants = schema['oneOf'] as JsonObject[];
+
+    expect(variants.map((variant) => (property(variant, 'kind')['enum'] as string[])[0])).toEqual([
+      'SEARCHED',
+      // Both ordinary answers rather than faults: a setting being respected,
+      // and a race the pipeline noticed.
+      'MEMORY_READ_DISABLED',
+      'CURRENT_SOURCE_CHANGED',
+    ]);
+    for (const variant of variants) {
+      expect(variant['additionalProperties']).toBe(false);
+    }
+    // The two non-search outcomes carry the kind and nothing else. A field
+    // suggesting what to do about them would be the server deciding.
+    expect(Object.keys(properties(variants[1]!))).toEqual(['kind']);
+    expect(Object.keys(properties(variants[2]!))).toEqual(['kind']);
+  });
+
+  it('reports each channel by name, including every way it can be unavailable', async () => {
+    const searched = (
+      responseSchema(await documentPromise, 'searchProblemMemory', '200')['oneOf'] as JsonObject[]
+    )[0]!;
+
+    expect(Object.keys(properties(searched)).sort()).toEqual([
+      'candidates',
+      'kind',
+      'semantic_status',
+      'structural_status',
+    ]);
+    // Named statuses rather than a boolean: "the semantic channel was skipped
+    // because the query looked sensitive" and "there was no provider" are
+    // different facts, and a caller reading a result needs to know which.
+    expect(property(searched, 'semantic_status')['enum']).toEqual([...SEMANTIC_CHANNEL_STATUSES]);
+    expect(property(searched, 'structural_status')['enum']).toEqual([
+      ...STRUCTURAL_RERANK_STATUSES,
+    ]);
+    expect(SEMANTIC_CHANNEL_STATUSES).toContain('PROVIDER_UNAVAILABLE');
+    expect(STRUCTURAL_RERANK_STATUSES).toContain('RERANKER_UNAVAILABLE');
+  });
+
+  it('gives a candidate the five kinds of material and no verdict', async () => {
+    const searched = (
+      responseSchema(await documentPromise, 'searchProblemMemory', '200')['oneOf'] as JsonObject[]
+    )[0]!;
+    const candidate = property(searched, 'candidates')['items'] as JsonObject;
+
+    expect(Object.keys(properties(candidate)).sort()).toEqual([
+      'conflict',
+      'dead_end_warnings',
+      'ranking',
+      'revalidation',
+      'successful_directions',
+    ]);
+    expect(candidate['additionalProperties']).toBe(false);
+  });
+
+  it('keeps the ranking provenance a caller needs to see the gaps', async () => {
+    const searched = (
+      responseSchema(await documentPromise, 'searchProblemMemory', '200')['oneOf'] as JsonObject[]
+    )[0]!;
+    const ranking = property(property(searched, 'candidates')['items'] as JsonObject, 'ranking');
+
+    // Both placements travel. A gap between the hybrid rank and the ranking
+    // rank is the visible trace of a candidate dropped between the stages, and
+    // renumbering would hide it.
+    expect(property(ranking, 'hybrid_rank')['type']).toBe('integer');
+    expect(property(ranking, 'ranking_rank')['type']).toBe('integer');
+    // Null on every degraded path, never a filled-in number.
+    expect([...(property(ranking, 'structural_score')['type'] as string[])].sort()).toEqual([
+      'null',
+      'number',
+    ]);
+    expect(property(ranking, 'project_relation')['enum']).toEqual([...PROJECT_RELATIONS]);
+  });
+
+  it('always asks for all four revalidation checks', async () => {
+    const searched = (
+      responseSchema(await documentPromise, 'searchProblemMemory', '200')['oneOf'] as JsonObject[]
+    )[0]!;
+    const revalidation = property(
+      property(searched, 'candidates')['items'] as JsonObject,
+      'revalidation',
+    );
+
+    // A search result is a candidate rather than an answer, and this is how the
+    // server says so — in the contract, not only in a document.
+    expect((property(revalidation, 'required_checks')['items'] as JsonObject)['enum']).toEqual([
+      ...REVALIDATION_CHECKS,
+    ]);
+  });
+
+  it('documents no conflict status, and no version to re-read', async () => {
+    const operation = operationById(await documentPromise, 'searchProblemMemory');
+
+    // A search writes nothing to the Problem, so it takes no `expected_version`
+    // and has no conflict to report. Documenting a 409 would send a client
+    // looking for a version that has nothing to do with its search.
+    expect(Object.keys(operation.responses ?? {}).sort()).toEqual([
+      '200',
+      '400',
+      '401',
+      '404',
+      '500',
+    ]);
+    expect(
+      JSON.stringify(requestSchema(await documentPromise, 'searchProblemMemory')),
+    ).not.toContain('expected_version');
+  });
+
+  it.each([
+    // No answer, no ranking of the answers, no instruction.
+    'recommendation',
+    'verdict',
+    'winner',
+    'answer',
+    'should_retry',
+    'resolution',
+    'preferred',
+    // Nor anything about how the result was produced.
+    'cache_hit',
+    'cache_miss',
+    'provider',
+    'model',
+    'source_ai',
+  ])('never returns a %s anywhere in a search result', async (field) => {
+    const serialized = JSON.stringify(
+      responseSchema(await documentPromise, 'searchProblemMemory', '200'),
+    );
+
+    // Searched over the whole nested response rather than its top level: the
+    // material is five levels deep in places, and a verdict smuggled into a
+    // contradiction is still a verdict.
+    expect(serialized).not.toContain(field);
   });
 });
 

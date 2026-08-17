@@ -49,7 +49,15 @@ import {
   type ProjectRecord,
   type ProjectEnvironmentService,
   type RequestContextService,
+  type RetrievalSearchService,
+  type RetrievalSearchServiceResolver,
+  type RetrievalUsageLogFailure,
 } from '../../src/app/index.js';
+import type { OwnerId } from '../../src/domain/owner.js';
+import {
+  STRUCTURAL_FEATURE_LISTS,
+  STRUCTURAL_FEATURE_SCHEMA_VERSION,
+} from '../../src/domain/retrieval-summary.js';
 import { LOG_LEVELS } from '../../src/config/env.js';
 import {
   buildMemoryHttpApp,
@@ -61,10 +69,12 @@ import {
   type MemoryHttpAppDependencies,
 } from '../../src/http/index.js';
 import type { MemoryRepository } from '../../src/repository/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const OWNER_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 const CLIENT_ID = 'c0ffee00-0000-4000-8000-000000000001';
 const PROJECT_ID = '11111111-2222-4333-8444-555555555555';
+const PROBLEM_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 
 /**
  * Things that must never appear, and a place each of them comes from.
@@ -154,6 +164,54 @@ function echoingProjectService(): ProjectEnvironmentService {
   };
 }
 
+/**
+ * A resolver whose pipeline loses its usage record.
+ *
+ * The route hands the pipeline a reporter and never calls it itself, so this
+ * calls it during `resolve` — which is exactly the contract: the pipeline may
+ * report that a search it answered was not recorded. The search then succeeds,
+ * because that is the case worth logging. A failure the caller already sees
+ * needs no second channel.
+ *
+ * The failure carries a marker in a field the reporter is not allowed to pass
+ * on, so the sweep below has something to catch if the closed report ever stops
+ * being closed.
+ */
+function resolverLosingItsUsageRecord(): RetrievalSearchServiceResolver {
+  return {
+    resolve: (_context, failureReporter) => {
+      const failure: RetrievalUsageLogFailure = {
+        kind: 'SEARCH_USAGE_LOG_WRITE_FAILED',
+        attemptedRows: 3,
+      };
+      failureReporter.report(failure);
+
+      return Promise.resolve({
+        ownerId: OWNER_ID as OwnerId,
+        search: () =>
+          Promise.resolve({
+            kind: 'SEARCHED',
+            candidates: [],
+            semanticStatus: 'USED',
+            structuralStatus: 'USED',
+          } as const),
+      } as RetrievalSearchService);
+    },
+  };
+}
+
+/** A search body the route accepts, so the handler actually runs. */
+const SEARCH_PAYLOAD = {
+  source_ai: 'claude-code',
+  lexical_text: 'a query',
+  semantic_text: 'a longer description of the same question',
+  current_features: {
+    schema_version: STRUCTURAL_FEATURE_SCHEMA_VERSION,
+    problem_domain: null,
+    ...Object.fromEntries(STRUCTURAL_FEATURE_LISTS.map((list) => [list, []])),
+  },
+};
+
 interface Capture {
   app: ReturnType<typeof buildMemoryHttpApp>;
   /** Every physical line the logger wrote, in order. */
@@ -166,6 +224,7 @@ function capture(overrides: Partial<MemoryHttpAppDependencies> = {}): Capture {
   const raw: string[] = [];
 
   const app = buildMemoryHttpApp({
+    retrievalSearchResolver: createUnusedSearchResolver(),
     healthService: { check: () => Promise.resolve({ status: 'ok', latencyMs: 1 }) },
     requestContextService: contextServiceReturning(),
     projectEnvironmentService: echoingProjectService(),
@@ -680,6 +739,17 @@ describe('the closed events', () => {
         fields: ['event', 'failure'],
         overrides: { requestContextService: contextServiceRejecting(new Error('anything')) },
         request: { method: 'GET', url: '/v1/me', headers: { authorization: 'Bearer x' } },
+      },
+      {
+        event: 'SEARCH_USAGE_LOG_WRITE_FAILED',
+        fields: ['event', 'kind', 'attemptedRows'],
+        overrides: { retrievalSearchResolver: resolverLosingItsUsageRecord() },
+        request: {
+          method: 'POST',
+          url: `/v1/problems/${PROBLEM_ID}/search`,
+          headers: { authorization: 'Bearer x' },
+          payload: SEARCH_PAYLOAD,
+        },
       },
       {
         event: 'REQUEST_APPLICATION_REJECTED',

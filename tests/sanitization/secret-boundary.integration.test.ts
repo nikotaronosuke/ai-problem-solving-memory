@@ -46,6 +46,7 @@ import { closePool, createPool, type DatabasePool } from '../../src/db/pool.js';
 import { generateClientEventId } from '../../src/domain/client-event-id.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -153,6 +154,7 @@ describe.skipIf(databaseUrl === undefined)('secrets do not reach storage', () =>
     ownersCreated.push(owner);
 
     const built = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       // No policy argument: the default is what a production server runs, and
       // running the default here is what makes this a test of the server

@@ -62,6 +62,7 @@ import {
   type RetrievalRuntime,
 } from '../../src/runtime/retrieval-runtime.js';
 import { createArtifactInspectionPolicy, withSanitization } from '../../src/sanitization/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
 const API_KEY = 'sk-test-000000000000000000000000000000000000';
@@ -212,6 +213,7 @@ describe.skipIf(databaseUrl === undefined)('the production retrieval runtime', (
     const maintenance = runtime.maintenance;
 
     app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createRequestContextService(
         pool,

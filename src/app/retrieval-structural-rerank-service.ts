@@ -141,10 +141,20 @@ function degraded(
  * reranker" a default rather than a rule. It arrives from the sanitization
  * module rather than being assembled from a detector, so what a credential
  * looks like stays inside that boundary.
+ *
+ * The reranker may be absent, so a server with no configured retrieval stack
+ * still answers a search: the stage degrades to `RERANKER_UNAVAILABLE` with
+ * null scores and stage-one order — the same answer an outage produces. It is
+ * not a licence to skip the stage's own checks, and the code below does not:
+ * the candidates are re-read, their visibility re-established and their stored
+ * features validated *before* the absence is noticed, because a deleted or
+ * switched-off candidate must not survive on the grounds that nothing was
+ * going to rank it. A stand-in reranker returning invented scores was rejected
+ * for the reason a fake embedding provider was.
  */
 export function createRetrievalStructuralRerankService(
   reader: RetrievalStructuralReader,
-  reranker: StructuralReranker,
+  reranker: StructuralReranker | undefined,
 ): RetrievalStructuralRerankService {
   const inspectionPolicy = createStructuralRerankInspectionPolicy();
 
@@ -199,6 +209,17 @@ export function createRetrievalStructuralRerankService(
         // quietly missing a member. The candidates are all still returned —
         // there is nothing wrong with the Problems — in stage-one order.
         return degraded(present, ranks, resolved.limit, 'STRUCTURAL_DATA_UNAVAILABLE');
+      }
+
+      // After the re-read, the visibility check and the feature validation
+      // above, and before the inspection below. A candidate that is gone must
+      // be gone whether or not anything was going to rank it, and unreadable
+      // features are still unreadable — those two answers are this stage's
+      // regardless of the model. The inspection is skipped only because there
+      // is nothing to send: it exists to keep a credential from crossing a
+      // boundary that, here, is not going to be crossed.
+      if (reranker === undefined) {
+        return degraded(present, ranks, resolved.limit, 'RERANKER_UNAVAILABLE');
       }
 
       // Assembled once and used three times: inspected, sent, and validated

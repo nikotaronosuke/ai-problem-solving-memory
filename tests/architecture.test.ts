@@ -1040,6 +1040,164 @@ describe('the export path', () => {
   });
 });
 
+describe('the search path', () => {
+  it('serves exactly one search route, under the Problem it is a search for', async () => {
+    const modules = await readModules(SRC);
+
+    const declarations = modules.flatMap(({ path, source }) =>
+      [...source.matchAll(/scope\.(get|post|patch|delete)<?[^(]*\(\s*'([^']*search[^']*)'/g)].map(
+        (match) => `${path} ${match[1]} ${match[2]}`,
+      ),
+    );
+
+    // One route, one method, one path. A collection route would have to take
+    // the Problem in the body — the same fact with two possible sources — and a
+    // GET would put somebody's own description of their own problem into a query
+    // string, a proxy cache and an access log.
+    expect(declarations).toEqual(['http/search-routes.ts post /problems/:problem_id/search']);
+  });
+
+  it('takes the owner from the authenticated context and never from a request', async () => {
+    const source = await readFile(join(SRC, 'runtime', 'retrieval-search-runtime.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // Resolved, never asserted: an `OwnerContext` cast into existence is an
+    // owner nobody checked is still there. The call form is required, and both
+    // spellings of the escape hatch are refused — `as unknown as …` is exactly
+    // how a conjured context would be written.
+    expect(code).toContain('context.repository.ownerId');
+    expect(code).toContain('await resolveOwnerContextFor(');
+    expect(`cast:${/as\s+unknown/.test(code)}`).toBe('cast:false');
+    expect(`cast:${/as\s+OwnerContext\b/.test(code)}`).toBe('cast:false');
+
+    const routes = await readFile(join(SRC, 'http', 'search-routes.ts'), 'utf8');
+    const routeCode = routes.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    // Transport does not know an owner id at all. Not from a body, not from a
+    // header, not from the path — it hands over the context it authenticated.
+    expect(`ownerId:${routeCode.includes('ownerId')}`).toBe('ownerId:false');
+    expect(`owner_id:${routeCode.includes('owner_id')}`).toBe('owner_id:false');
+  });
+
+  it('keeps the search composition vendor-neutral and off the network', async () => {
+    const source = await readFile(join(SRC, 'runtime', 'retrieval-search-runtime.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // Two ports and a pool. It could not tell one provider from another, hold a
+    // credential, or reach anything itself.
+    for (const forbidden of [
+      'openai',
+      'OPENAI_API_KEY',
+      'fetch(',
+      'https://',
+      'http://',
+      'apiKey',
+    ]) {
+      expect(`${forbidden}:${code.includes(forbidden)}`).toBe(`${forbidden}:false`);
+    }
+  });
+
+  it('builds no stand-in provider anywhere in production', async () => {
+    const modules = await readModules(SRC);
+
+    // Both ports are optional and the two stage services own the degradation.
+    // An object whose only purpose is to fail would be a provider by type, so
+    // every later reader would have to know it was not one — and a zero vector
+    // or a constant score would be worse: a wrong answer rather than none.
+    for (const { path, source } of modules) {
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+      for (const forbidden of [
+        'AlwaysFail',
+        'alwaysFail',
+        'UnavailableProvider',
+        'unavailableProvider',
+        'NullProvider',
+        'nullProvider',
+        'DummyProvider',
+        'dummyProvider',
+        'FakeProvider',
+        'fakeProvider',
+        'NoopProvider',
+        'noopProvider',
+        'StubProvider',
+        'stubProvider',
+      ]) {
+        expect(`${path}:${code.includes(forbidden)}`).toBe(`${path}:false`);
+      }
+    }
+  });
+
+  it('lets a search neither generate an artifact nor wait behind one', async () => {
+    const source = await readFile(join(SRC, 'runtime', 'retrieval-search-runtime.ts'), 'utf8');
+
+    // A search reads. Generating on the way would turn a read into a write
+    // holding a model call, and reusing the maintenance permit gate would let a
+    // background sweep decide how long a person's search takes.
+    for (const specifier of importsOf(source)) {
+      for (const forbidden of [
+        'retrieval-runtime',
+        'retrieval-generation-coordinator',
+        'retrieval-artifact-generation-service',
+        'retrieval-artifact-maintenance',
+        'retrieval-summary-service',
+      ]) {
+        expect(`${specifier} pulls ${forbidden}:${specifier.includes(forbidden)}`).toBe(
+          `${specifier} pulls ${forbidden}:false`,
+        );
+      }
+    }
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    // And no gate of its own, either: a second one would be a second thing to
+    // reason about, protecting nothing a connection pool does not already bound.
+    for (const forbidden of ['semaphore', 'Semaphore', 'permit', 'waiters', 'setInterval']) {
+      expect(`${forbidden}:${code.includes(forbidden)}`).toBe(`${forbidden}:false`);
+    }
+  });
+
+  it('keeps one search cache for the process, created where it is shared', async () => {
+    const modules = await readModules(SRC);
+
+    const creators = modules
+      .filter(({ source }) => source.includes('createRetrievalSearchCache('))
+      .map(({ path }) => path)
+      .sort();
+
+    // Created in the module that outlives a request and nowhere else. A cache
+    // built inside `resolve` would be empty on arrival every time, which is the
+    // one thing a five-minute cache must not be — and no test would notice,
+    // because every result would still be correct.
+    expect(creators).toEqual([
+      'app/retrieval-search-cache.ts',
+      'runtime/retrieval-search-runtime.ts',
+    ]);
+  });
+
+  it('lets only the composition root know both the runtime and the transport', async () => {
+    const modules = await readModules(SRC);
+
+    for (const { path, source } of modules) {
+      if (path === 'index.ts') {
+        continue;
+      }
+      const specifiers = importsOf(source);
+      const reachesRuntime = specifiers.some((specifier) => specifier.includes('runtime/'));
+      // Transport asks for a service through a port and never assembles one, so
+      // `src/http/` still holds no pool and no repository — the layering that
+      // has held since Phase 2 must not end at the endpoint with the most
+      // machinery behind it.
+      if (path.startsWith('http/')) {
+        expect(`${path} reaches a runtime:${reachesRuntime}`).toBe(
+          `${path} reaches a runtime:false`,
+        );
+      }
+    }
+
+    const root = await readFile(join(SRC, 'index.ts'), 'utf8');
+    const rootImports = importsOf(root);
+    expect(rootImports).toContain('./runtime/retrieval-search-runtime.js');
+    expect(rootImports).toContain('./http/index.js');
+  });
+});
+
 describe('the retry queue is not part of the server', () => {
   it('is imported by nothing the server runs', async () => {
     const modules = (await readModules(SRC)).filter(
@@ -1444,6 +1602,10 @@ describe('the operational log', () => {
       'healthReason',
       'latencyMs',
       'signal',
+      // How many usage rows a search tried to write and lost. A number this
+      // codebase counted, and the only thing that makes the loss visible at
+      // all — the caller got its candidates and has no reason to know.
+      'attemptedRows',
     ]);
 
     const offenders: string[] = [];
@@ -1617,13 +1779,18 @@ describe('the operational log', () => {
     // logs at all — no service, no repository, no domain rule, and in
     // particular neither of the modules that own UsageLog and ChangeLog.
     //
+    // The search route is the second transport module, added by P5-02c. It is
+    // there for one line: a search that answered whose usage record was lost.
+    // The pipeline hands that failure up as a closed report rather than logging
+    // it itself, precisely so the writing stays at this boundary.
+    //
     // That is what keeps the two kinds of log apart without needing a rule
     // about it. UsageLog and ChangeLog are Memory data: rows an owner reads,
     // exports and deletes. Mirroring them into the process log would copy
     // Memory content somewhere none of those operations reach, and writing
     // process events into them would make Memory the place operations get
     // audited — the Global Audit warehouse this module is not.
-    expect(writers).toEqual(['http/app.ts', 'index.ts']);
+    expect(writers).toEqual(['http/app.ts', 'http/search-routes.ts', 'index.ts']);
 
     const memoryLogModules = modules.filter((module) =>
       /^(?:app|db|domain)\/(?:usage-logs?|change-logs?)\.ts$/.test(module.path),
@@ -4168,16 +4335,28 @@ describe('dead ends', () => {
     }
 
     // `DEAD_END` is already an Event type and the columns already exist, so
-    // there is nothing to migrate. Nor is any of this reachable over HTTP yet:
-    // what a client may ask of a search belongs to the task that exposes one.
-    // `deadEndSummary` on the close-problem route is a different thing and
-    // predates all of this: what a person writes when they close a Problem.
-    // What must not appear is the retrieval warning.
+    // there is nothing to migrate.
+    //
+    // P5-02c published this, and in exactly one place. The warning is part of
+    // what a search candidate carries — a direction that did not work, and
+    // under what conditions — so it belongs to the search surface and to no
+    // other route. `deadEndSummary` on the close-problem route is a different
+    // thing and predates all of this: what a person writes when they close a
+    // Problem.
     const routes = await readModules(join(SRC, 'http'));
-    for (const module of routes) {
-      for (const exposed of ['deadEndWarnings', 'DeadEndWarning', 'RetrievalDeadEnd']) {
-        expect(module.source.includes(exposed), `${module.path} exposes ${exposed}`).toBe(false);
-      }
+    // Where each may appear, written out rather than derived. `RetrievalDeadEnd`
+    // is the internal stage's name and stays internal.
+    const allowedIn: Record<string, readonly string[]> = {
+      deadEndWarnings: ['http/search-resources.ts'],
+      DeadEndWarning: ['http/search-resources.ts'],
+      RetrievalDeadEnd: [],
+    };
+    for (const [exposed, allowed] of Object.entries(allowedIn)) {
+      const found = routes
+        .filter((module) => module.source.includes(exposed))
+        .map((module) => module.path)
+        .sort();
+      expect(found, `where ${exposed} appears`).toEqual([...allowed].sort());
     }
 
     const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
@@ -4574,15 +4753,22 @@ describe('conflicts', () => {
       }
     }
 
-    // `CONTRADICTS` is already a relation type and every column already
-    // exists. Nor is any of this reachable over HTTP yet.
+    // `CONTRADICTS` is already a relation type and every column already exists.
+    //
+    // P5-02c published the shape, and in exactly one place: a candidate carries
+    // what contradicts it, because two memories that disagree are the case a
+    // reader most needs to see rather than have decided for them. No other
+    // route says any of it. Not the bare word either — `VERSION_CONFLICT` is
+    // the optimistic-lock message and predates all of this.
     const routes = await readModules(join(SRC, 'http'));
-    for (const module of routes) {
-      // Not the bare word: `VERSION_CONFLICT` is the optimistic-lock message
-      // and predates all of this. What must be absent is the retrieval shape.
-      for (const exposed of ['ConflictContext', 'Contradiction', 'contradictions']) {
-        expect(module.source.includes(exposed), `${module.path} exposes ${exposed}`).toBe(false);
-      }
+    for (const exposed of ['ConflictContext', 'Contradiction', 'contradictions']) {
+      const found = routes
+        .filter((module) => module.source.includes(exposed))
+        .map((module) => module.path)
+        .sort();
+      // One mapper, and no other route. A Problem read on its own says nothing
+      // about what contradicts it; that comparison is a search's answer.
+      expect(found, `where ${exposed} appears`).toEqual(['http/search-resources.ts']);
     }
 
     const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
@@ -4855,21 +5041,31 @@ describe('successful directions', () => {
       );
     }
 
-    // Phase 4 ends with the retrieval surface still internal. The
-    // specification lists a cross-project similarity search among the minimum
-    // API, and that transport is Phase 5's to compose alongside the client
-    // that will call it — publishing a route here would ship a contract no
-    // standard server composition can yet answer, because no concrete
-    // generator, embedding provider or reranker is wired into `src/index.ts`.
+    // Phase 4 ended with the retrieval surface still internal, because no
+    // concrete generator, embedding provider or reranker was wired into
+    // `src/index.ts` and a published route would have shipped a contract no
+    // standard composition could answer. P5-02b wired the stack; P5-02c
+    // published the route.
+    //
+    // So these are reachable now — through the search surface, and only there.
+    // The service type reaches `app.ts` as well, as the name of the port the
+    // route asks through: transport holds a resolver, never a pool.
     const routes = await readModules(join(SRC, 'http'));
-    for (const module of routes) {
-      for (const exposed of [
-        'successfulDirections',
-        'RetrievalSearchService',
-        'retrieval-search',
-      ]) {
-        expect(module.source.includes(exposed), `${module.path} exposes ${exposed}`).toBe(false);
-      }
+    // Where each may appear, written out. The candidate material lives in the
+    // one mapper; the service type is the name of the port the route asks
+    // through, so it reaches the route and the dependency list beside it and
+    // stops there.
+    const allowedIn: Record<string, readonly string[]> = {
+      successfulDirections: ['http/search-resources.ts'],
+      RetrievalSearchService: ['http/app.ts', 'http/search-routes.ts'],
+      'retrieval-search': ['http/search-resources.ts'],
+    };
+    for (const [exposed, allowed] of Object.entries(allowedIn)) {
+      const found = routes
+        .filter((module) => module.source.includes(exposed))
+        .map((module) => module.path)
+        .sort();
+      expect(found, `where ${exposed} appears`).toEqual([...allowed].sort());
     }
 
     const manifest = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {

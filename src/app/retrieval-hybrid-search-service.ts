@@ -96,7 +96,13 @@ export interface HybridSearchRequest {
  * There is no lexical status. The lexical channel either succeeds or the whole
  * search fails, so a status could only ever read `USED`.
  */
-export type SemanticChannelStatus = 'USED' | 'SKIPPED_SENSITIVE_QUERY' | 'PROVIDER_UNAVAILABLE';
+export const SEMANTIC_CHANNEL_STATUSES = [
+  'USED',
+  'SKIPPED_SENSITIVE_QUERY',
+  'PROVIDER_UNAVAILABLE',
+] as const;
+
+export type SemanticChannelStatus = (typeof SEMANTIC_CHANNEL_STATUSES)[number];
 
 export interface HybridSearchResult {
   readonly candidates: readonly HybridCandidate[];

@@ -38,6 +38,7 @@ import { generateEnvironmentId } from '../../src/domain/environment.js';
 import { generateOwnerId, type OwnerId } from '../../src/domain/owner.js';
 import { generateProjectId } from '../../src/domain/project.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
+import { createUnusedSearchResolver } from '../support/search-resolver.js';
 
 const databaseUrl = readDatabaseUrl();
 
@@ -58,6 +59,7 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
     ownersCreated.push(ownerId);
 
     const app = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
       healthService: createHealthService(pool),
       requestContextService: createFixedRequestContextService(pool, ownerId),
       projectEnvironmentService: createProjectEnvironmentService(),
