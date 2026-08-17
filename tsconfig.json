@@ -18,7 +18,19 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
 
-    "noEmit": true
+    "noEmit": true,
+
+    // Workspace packages resolve to their sources here, so a typecheck, a
+    // lint and a test run all work on a clean checkout with nothing built.
+    // The build configurations clear this and resolve through `node_modules`
+    // instead, which is what makes a built package depend on a built package
+    // rather than on a sibling's source tree.
+    "paths": {
+      "@ai-problem-solving-memory/api-client": ["./packages/memory-api-client/src/index.ts"],
+      "@ai-problem-solving-memory/claude-code-adapter": [
+        "./packages/claude-code-adapter/src/index.ts"
+      ]
+    }
   },
   "include": ["src", "tests", "vitest.config.ts"]
 }

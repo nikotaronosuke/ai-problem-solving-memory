@@ -1,8 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    // The server's own build resolves nothing to a workspace source tree. It
-    // does not import one, and clearing this means it could not start.
+    // A built adapter depends on the built client, through the workspace link
+    // like any other dependency — not on the client's source tree, which
+    // would land a second copy of it in this package's `dist`.
     "paths": {},
     "noEmit": false,
     "rootDir": "src",

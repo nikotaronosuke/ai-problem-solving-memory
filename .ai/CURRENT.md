@@ -12,7 +12,14 @@ Implementation Phase 3 — Privacy / Security / Reliability: **COMPLETE** (P3-01
 
 Implementation Phase 4 — Retrieval: **COMPLETE** (P4-01 … P4-15)
 
-Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS** — P5-01 **DONE**, P5-02 **NEXT / NOT STARTED**
+Implementation Phase 5 — Claude Code Adapter: **IN PROGRESS**
+
+- P5-01 — connection capability audit: **DONE**
+- P5-02 — adapter package / boundary: **IN PROGRESS**, split into three parts (D-378)
+  - P5-02a — package boundary and common Memory API client: **DONE**
+  - P5-02b — production retrieval providers and artifact lifecycle, read-only investigation and design freeze: **NEXT / NOT STARTED**
+  - P5-02c — Search JSON API, owner-scoped retrieval composition, client search method: **NOT STARTED**
+- P5-03 — Project auto-detection: **NOT STARTED**
 
 ## Source of truth
 
@@ -1086,23 +1093,41 @@ P5-01 was a read-only audit of what the assistant officially offers today, and i
 
 **Not depended on:** preview features, delegation as a transport, deferred tool loading as a precondition, and any programmatic wrapper of the interactive session (D-370, D-373, D-361).
 
-**Transient, and deliberately not a Decision.** The audit found the local assistant installation in a broken state — the launcher shim pointed at an executable that was not there — and read-only work did not repair it. Before the first real integration run, the tooling should verify the installation is in a supported working state and repair or update it automatically; a user should not be asked to fix it by hand. The version number involved is not recorded anywhere as an invariant, and neither is the event catalogue, the command list, current flags, preview syntax, timeout defaults or any configuration path (D-377). Those are looked up fresh from the official documentation whenever they are needed.
+**Transient, and deliberately not a Decision.** The audit found the local assistant installation broken — the launcher pointed at an executable that was not there, left behind by an update that reported success without replacing it. **A readiness preflight has since been run and the installation is in a supported working state again**, through the officially supported reinstall and nothing else. The standing operational habit is what remains: before an integration run, check that the ordinary `claude --version` succeeds, since the same failure can recur silently. No version number, path or repair step is recorded as an invariant, and neither is the event catalogue, the command list, current flags, preview syntax or timeout defaults (D-377). Those are looked up fresh from the official documentation whenever they are needed.
+
+## What exists now — the adapter boundary and the common client (P5-02a)
+
+**Two private workspace packages, and the server did not move.** `packages/memory-api-client/` speaks the Memory JSON API; `packages/claude-code-adapter/` holds what is particular to this host. `src/`, `tests/` and `supabase/` are exactly where they were, because moving four completed phases to make room for two packages that needed none of it would have rewritten several hundred imports and every path-reading guard (D-381).
+
+**The dependency direction, declared rather than described.** The server keeps its three runtime dependencies; the client has none at all; the adapter has one, the client. A guard reads all three from the manifests, because a package that does not declare a dependency cannot import it — and scans the sources as well, because npm hoists and a relative import can escape a package without naming anything (D-389).
+
+**The client.** `createMemoryApiClient({ baseUrl?, credential, fetch?, timeoutMs? })`, the platform's `fetch`, and one method: `getProblem` (D-382, D-383). It returns the wire shape unchanged rather than a second domain model, and validates what arrives rather than trusting a type annotation. Failures come in three kinds — refused, unreachable, unreadable — and no message carries a value that caused it, not the base URL, not the body, not the server's own message, not the transport error and not a `cause` (D-384). No retries at all, and a deadline so nothing hangs (D-385). The credential is presented as a bearer token and appears nowhere else, including in anything the client can be serialised into (D-386).
+
+**The adapter.** `createClaudeCodeMemoryClient(env?, fetch?)` reads `MEMORY_API_TOKEN` and `MEMORY_API_URL` and returns a client. It applies one rule of its own — whether the credential variable is set — and leaves what the values mean to the client (D-387). `CLAUDE_CODE_SOURCE_AI` is `'claude-code'`, with no version, session or path in it, and the model never supplies it.
+
+**What is deliberately absent.** No Search route and no API version change: every search channel reads a retrieval artifact, production generates none, and a route published now would answer correctly and uselessly (D-379). No provider stub standing in for one. No MCP dependency and no protocol code, so no SDK version is pinned against code that does not exist (D-388). No `bin`, no stdio bootstrap, no empty server. No project detection, no session handling, no hook, skill or plugin.
 
 ## Immediate objective
 
-P5-02 — the adapter boundary, the common Memory API client, and the search transport.
+P5-02b — the production retrieval runtime: provider ownership, and the artifact generation and freshness lifecycle.
 
-**NOT STARTED.** P5-01 is done and produced decisions only; no Phase 5 code exists. See the private Phase 5 breakdown for the task itself.
+**NOT STARTED**, and read-only when it starts: it ends in a design freeze rather than in code (D-378).
+
+What it has to settle, at minimum (D-380):
+- **Which concrete `RetrievalSummaryGenerator`, `EmbeddingProvider` and `StructuralReranker` production uses**, and where a provider's selection and configuration live. Nothing implements any of the three today, `src/index.ts` wires none of them, and no runtime dependency exists for one. The specification requires that the model not be a fixed part of the spec and that artifacts can be regenerated when it changes
+- **What triggers an artifact to be generated, and what triggers it to be regenerated.** `createRetrievalArtifactGenerationService` takes a Problem id and does the whole pipeline; `generateArtifact` has no caller in `src/` at all
+- **What happens to an artifact when the record it describes changes**, including after a close — a trigger that fires once at the end describes a lifecycle this system does not have
+- How a stale artifact is treated, how a provider failure is isolated, and whether any of this needs background work
+
+Why it comes before the route (D-379): every search channel, the lexical one included, reads a retrieval artifact. Until production can generate one, a published Search route answers every real search with nothing found — correctly, and uselessly.
 
 Notes for whoever picks this up:
-- **The connection shape is settled and the contract is not.** D-361 to D-377 fix how the assistant reaches the Memory. What the adapter's tools are called, what they accept and return, and what the search route looks like are all open, and they are what P5-02 decides
-- **The search transport is owed.** The specification lists a cross-project similarity search among the minimum API surface; every other item in that list is already a route. Phase 4 left it internal deliberately (D-357), because no concrete generator, embedding provider or reranker is wired behind the three ports and because how an assistant identifies itself is a Phase 5 question. P5-02 builds the common Memory API client, and the route belongs with it (D-376)
-- **An adapter must not import the internal service.** The common JSON API is the contract and adapters sit on top of it (D-363). A library-direct shortcut would make the Memory dependent on which process happens to host it
-- **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look the details up fresh from the official documentation rather than from anything recorded here
-- The three ports are `RetrievalSummaryGenerator`, `EmbeddingProvider` and `StructuralReranker`. Nothing concrete implements any of them, `src/index.ts` wires none of them, and no runtime dependency has been added for one
-- Nothing triggers artifact generation automatically. `createRetrievalArtifactGenerationService` takes a Problem id and does the whole pipeline; when to call it is an open question P5 will have an opinion about
+- **The connection shape and the package boundary are settled; the retrieval contract is not.** D-361 to D-377 fix how the assistant reaches the Memory and D-378 to D-392 fix the packages. What a search route accepts and returns is P5-02c's, after P5-02b
+- **The search route is owed and was not cancelled.** The specification lists a cross-project similarity search among the minimum API surface, and it is the only item in that list without a route (D-357, D-376)
+- **An adapter must not import the internal service** (D-363), and the common client must stay free of any assistant, host or protocol (D-382). Both are guarded in `tests/packages/boundary.test.ts`
+- **Check the host before building anything** (D-371), and use the lightest mechanism that is actually sufficient (D-372). Look details up fresh from the official documentation rather than from anything recorded here
 - `docs/retrieval.md` is the public account of what a search returns and what the server deliberately does not decide. It is the right thing to hand somebody before they design an adapter's presentation
-- **Before the first real integration run, check that the local assistant installation is in a supported working state, and repair or update it automatically if it is not.** This is a preflight the tooling performs; it is not a manual repair asked of the user. See the standing note in `.ai/TODO.md` for what was observed during the audit
+- **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been done once; the failure it fixed was a silent one and can recur
 
 ## Core MVP milestone
 
