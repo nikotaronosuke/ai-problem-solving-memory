@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import type { AuthenticatedRequestContext } from '../../src/app/index.js';
 import type { OwnerId } from '../../src/domain/owner.js';
 import {
+  createGenerationGate,
   createRetrievalRuntime,
   DEFAULT_PROCESS_GENERATION_BOUND,
   type RetrievalRuntimeScheduler,
@@ -109,6 +110,150 @@ function runtimeWith(overrides: Partial<RetrievalRuntimeDependencies> = {}) {
 }
 
 const drain = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/**
+ * The generation gate's fairness, measured directly.
+ *
+ * The bound is proven through the runtime further down — two owners racing,
+ * peak in-flight one. Fairness cannot be, because it is a property of a
+ * window one microtask wide, and the runtime's DB reads sit between a request
+ * and the gate. So these test the permit itself.
+ *
+ * Neither test counts microtask hops. The distinguishing scenario is "a
+ * newcomer arrives exactly at the handoff", and rather than guessing which
+ * hop that is, each test lets a newcomer arrive on *every* hop across the
+ * whole release path: whichever one the handoff lands on, an arrival is there
+ * to try to take the permit. Under free-then-wake, that arrival finds the
+ * slot free and starts ahead of the waiter that queued before it. Under
+ * permit handoff, there is nothing to take.
+ */
+describe('the process-wide generation gate', () => {
+  /** Runs `count` microtask hops, letting `onHop` act on each boundary. */
+  async function acrossReleaseHops(count: number, onHop: (hop: number) => void): Promise<void> {
+    for (let hop = 0; hop < count; hop += 1) {
+      await Promise.resolve();
+      onHop(hop);
+    }
+  }
+
+  it('hands a released permit to the queued waiter, not to a late arrival', async () => {
+    const gate = createGenerationGate(1);
+    const started: string[] = [];
+    let releaseA = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+
+    // A holds; everything else is instant, so the order they start in is the
+    // order the gate admitted them in.
+    const running = [
+      gate(async () => {
+        started.push('A');
+        await held;
+      }),
+    ];
+    await drain();
+    expect(started).toEqual(['A']);
+
+    // B queues while A is still holding: it is the rightful next holder.
+    running.push(
+      gate(() => {
+        started.push('B');
+        return Promise.resolve();
+      }),
+    );
+    await drain();
+    expect(started).toEqual(['A']);
+
+    releaseA();
+    await acrossReleaseHops(6, (hop) => {
+      running.push(
+        gate(() => {
+          started.push(`C${String(hop)}`);
+          return Promise.resolve();
+        }),
+      );
+    });
+    await Promise.all(running);
+
+    // B second, and the latecomers behind it in arrival order. Under
+    // free-then-wake the hop that coincides with the handoff overtakes B,
+    // and B — re-testing admission on resume — goes to the back.
+    expect(started).toEqual(['A', 'B', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5']);
+  });
+
+  it('does not let a burst of late arrivals starve a queued waiter', async () => {
+    // The same property at a bound above one, where two holders release
+    // independently and there are more windows to slip through.
+    const gate = createGenerationGate(2);
+    const started: string[] = [];
+    const releases: (() => void)[] = [];
+    const holder = (name: string) =>
+      gate(async () => {
+        started.push(name);
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+      });
+
+    const running = [holder('A'), holder('B')];
+    await drain();
+    expect(started).toEqual(['A', 'B']);
+
+    // Queued before any latecomer exists.
+    running.push(
+      gate(() => {
+        started.push('C');
+        return Promise.resolve();
+      }),
+    );
+    await drain();
+    expect(started).toEqual(['A', 'B']);
+
+    releases.shift()?.();
+    await acrossReleaseHops(6, (hop) => {
+      running.push(
+        gate(() => {
+          started.push(`D${String(hop)}`);
+          return Promise.resolve();
+        }),
+      );
+    });
+    releases.shift()?.();
+    await Promise.all(running);
+
+    // C is next after the two holders, and nobody who arrived later is
+    // stranded: everyone runs, in the order they asked.
+    expect(started).toEqual(['A', 'B', 'C', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5']);
+  });
+
+  it('never exceeds the bound while handing permits over', async () => {
+    const gate = createGenerationGate(2);
+    let inFlight = 0;
+    let peak = 0;
+    const releases: (() => void)[] = [];
+
+    const running = Array.from({ length: 6 }, () =>
+      gate(async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+        inFlight -= 1;
+      }),
+    );
+
+    for (let step = 0; step < 6; step += 1) {
+      await drain();
+      releases.shift()?.();
+    }
+    await Promise.all(running);
+
+    expect(peak).toBe(2);
+    expect(inFlight).toBe(0);
+  });
+});
 
 describe('the retrieval runtime', () => {
   it('defaults the process-wide bound to one', () => {
