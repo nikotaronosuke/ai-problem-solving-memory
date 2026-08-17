@@ -216,7 +216,7 @@ describe('credential', () => {
     // The methods, and nothing beside them — no configuration object, no
     // options, nowhere the credential could be read back from. `search` joined
     // in P5-02c-impl-2; the list stays exact rather than becoming a minimum.
-    expect(Object.keys(built)).toEqual(['getProblem', 'search']);
+    expect(Object.keys(built)).toEqual(['getProblem', 'listProjects', 'search']);
   });
 });
 

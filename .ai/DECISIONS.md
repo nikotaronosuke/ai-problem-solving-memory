@@ -3969,3 +3969,69 @@ Six steps, and the order matters: a future task that genuinely needs the thing; 
 The second step is the one the rule exists for. Everything in the reference set was captured on one day, and a captured fact about somebody else's product decays without announcing it — which is why P5-01 deliberately refused to pin versions, event catalogues, command lists, flags and file locations (D-377), and why this document repeats that refusal instead of undoing it.
 
 Secondary and social sources are legitimate ways to *find* something and are never the final basis for anything about security, authentication, a protocol, a provider's capabilities or a product's current behaviour. An item whose original source could not be recovered is marked `UNPINNED` and cannot support an implementation at all until it is — a concept remembered from a conversation is a reason to go looking, not evidence. Guessing a title or reconstructing a URL to fill the gap would convert an honest absence into a false citation, which is worse than the gap.
+
+## D-441 — A Project is anchored on the project root, never on the working directory (P5-03)
+
+The root arrives as an argument to `detectProjectSignals`. It will be `CLAUDE_PROJECT_DIR`, which the host documents as the stable project root that does not move when working directories are added or removed mid-session — and reading it from the environment belongs to the composition that has an MCP server, not to a function a test drives and a second assistant reuses.
+
+Three things are deliberately not the anchor. The shell's working directory, because it moves: `cd packages/api` and then `cd /tmp` would otherwise change which Project a session belongs to, and the Problem being worked on would follow it. Every directory the session can read, because `--add-dir` grants access and says nothing about whether a directory is this Project, a library being read, or somebody else's repository opened for comparison. And the git repository root when the two differ, because the repository is *evidence* about identity while the root is where the session is anchored; both are read and they are kept apart.
+
+A guard reads the detector for `process.cwd` and `process.env` and finds neither, and a mutation that swapped the argument for `process.cwd()` dies against it. What `/cd` does to `CLAUDE_PROJECT_DIR` is not stated in the official documentation, so nothing here assumes an answer — P5-04 measures it, which is D-375 applied to the next unknown.
+
+## D-442 — Identity comes from one remote, and a second one is only evidence (P5-03)
+
+The primary remote is `origin` when it exists and is usable, otherwise the single distinct canonical remote when there is exactly one, otherwise nothing. There is no third rule and no tie-break by name: `upstream` is not more authoritative than `fork`, and choosing between them would be this code deciding where somebody's Memory is filed on the strength of a naming convention.
+
+Everything else is supporting evidence, and **a secondary match never resolves**. A checkout of a fork has both the fork and the upstream as remotes; if a Project records the upstream, matching on any remote would file this session's Problems under the upstream's Project — and the failure is invisible, because everything keeps working and the Memory is simply attached to the wrong long-term unit of work. So that case is `AMBIGUOUS`: somebody who can see both repositories decides once, instead of this code deciding wrongly every time.
+
+The same refusal applies twice more. Two Projects recording one repository is `AMBIGUOUS` rather than the first or the newest — the owner split a monorepo deliberately or a duplicate exists, both are real, and neither is visible from here. And with no usable remote, an exact name match is `AMBIGUOUS` rather than resolved, because a name is a label somebody chose and two unrelated directories called `api` are not one Project. A single hit is the most tempting version of that mistake, which is why the rule is about the kind of evidence rather than about how many candidates there are.
+
+Four outcomes: `RESOLVED`, `UNREGISTERED`, `AMBIGUOUS` with a closed reason, `NO_PROJECT_SIGNAL`. Nothing sorts a candidate list into an answer, and a guard says so alongside the tests.
+
+## D-443 — A raw remote URL dies in the function that canonicalises it (P5-03)
+
+`git remote get-url` returns what is configured, verbatim, and what is configured may be `https://x-access-token:TOKEN@host/org/repo.git` — which is what several CI systems write into a checkout. So the credential is not redacted downstream, filtered before logging or masked on display: it is dropped in the one conversion this design performs, and the raw string is bound to nothing that outlives the expression that reads it.
+
+The canonical form is `host/path` plus a non-default port. What is dropped is what varies without the repository varying — the scheme, the userinfo, a default port, a trailing `.git`, a trailing slash, a query, a fragment. The host is folded because hostnames are case-insensitive by specification; **the path is not**, because some hosts are case-sensitive about paths and this code cannot tell which one it is talking to. Folding would merge two repositories a case-sensitive host keeps apart; not folding costs a comparison that surfaces as a question. That is the trade D-279 already made for technology labels, and it points the same way: a missed match costs a comparison, an invented one asserts something nobody claimed.
+
+`stderr` is discarded everywhere, because git writes remote URLs into its own error messages. Nothing on this path builds a shell string: `execFile` with an argument array, a timeout, an output bound, and every failure — git missing, not a repository, a timeout, a non-zero exit — collapsing to one result, because the caller's next step is the same for all of them and collapsing them is what keeps this from being a place where a diagnostic gets attached.
+
+Guards pin all of it: only the detector may name `get-url`, nothing may read `stderr`, and mutations that keep the userinfo in either branch, or report the raw remote, die against boolean-comparing tests that never print what they found.
+
+## D-444 — Canonicalising is idempotent, and a test is what found that it was not (P5-03)
+
+The first version read a scheme form and the scp-like form and nothing else. Every unit test passed. The resolver's tests then failed against a fixture whose stored `repo` was `github.com/acme/widget` — a canonical form, which is exactly what this design writes into a Project it suggests.
+
+That is the round trip the whole feature rests on: a Project is created with a canonical `repo`, and every later session canonicalises the stored value to compare it against a freshly read remote. Without idempotency the comparison fails for precisely the Projects this design creates, and Project detection would have worked exactly once per repository — silently producing `UNREGISTERED` forever after.
+
+So a third form is read: the bare `host[:port]/path` this module itself produces. It overlaps with the scp-like form in one spelling, `host:2222/a/b`, which is both "a port" and "a path beginning 2222". The bare reader runs first and wins, which costs almost nothing: the scp-like form carries a user in practice, a user puts `@` in the authority, and the bare reader refuses those. What is left is a remote written with no user and a numeric first path segment, which git would not read as a port either. Recorded as a known limit rather than hidden.
+
+## D-445 — An absolute path never leaves the detector (P5-03)
+
+A path on this machine carries a user name, sometimes an employer's or a client's, and sometimes the name of something private. None of it is Memory and none of it is needed to decide which Project a session is in — so absolute paths exist inside the detector and stop there.
+
+`ProjectSignals` carries five fields and no path among them: a directory *name* for display and for a suggestion, whether the root is inside git, the primary canonical remote, the secondary canonical remotes, and the repository-relative subpath. The subpath is safe for a reason worth stating: it names a directory inside a tree anybody with the repository can see, which an absolute path does not. A test serialises the whole result and sweeps it for the temporary directory's own path, and the field list is asserted exactly so that adding one is a deliberate edit somebody makes while thinking about this.
+
+A candidate shown to somebody is built rather than passed through, and its repository is **canonicalised before it is shown** — the stored `repo` is free-form text a person may have typed, and a person may have typed a URL with a token in it. `RESOLVED` is the exception and carries the server's record unchanged: the caller needs the `project_id` and everything else the server said, and editing it would make this a second description of what a Project is.
+
+## D-446 — The monorepo question is the owner's, so identity does not answer it (P5-03)
+
+One repository launched from `apps/web` and from `apps/mobile` is one Project or two, and only the owner knows which. So the subpath is not part of identity: with it, every subdirectory would silently become its own Project; without it, an owner who has deliberately split a repository sees two Projects matching one remote — and that is `AMBIGUOUS`, which is a question rather than a wrong answer.
+
+The subpath travels as display and supporting evidence, which is what somebody needs in order to answer that question once.
+
+## D-447 — `listProjects` and nothing else (P5-03)
+
+The client gains one method. `createProject` is deliberately absent: P5-03 resolves and reports, and `UNREGISTERED` is a typed outcome carrying a safe suggestion rather than an instruction to act on. Creating a Project is a long-lived record and asking a question interrupts somebody; both belong to whatever consumes these outcomes, and adding the method now would be writing the shape of a call nobody makes — which is D-383, and the guard that fails on `createProject` in either package is what keeps it true.
+
+The list is returned as the server sent it: the envelope's single field unwrapped, order preserved, elements unchanged, and one malformed Project making the whole answer a protocol failure rather than being skipped — because a list quietly missing a Project reads as an owner who does not have it, and the next thing that happens is a Project created because none was found. An unreachable Memory raises for the same reason: an empty list would be the same lie.
+
+The Project resource is mirrored like every other contract in that package and compared against the server's own schema in the server's suite (D-390, D-432), including that `repo` and `platform` may be absent — a client that required a repository would reject every Project without one as malformed.
+
+## D-448 — What P5-03 changed, and what it left for later (P5-03)
+
+Three adapter modules, one client resource mirror and one client method, and nothing else. No migration, no schema change, no Memory Server change, no API version change, no MCP SDK, no hook, no Skill, no UI, no local path mapping, no durable locator, and no new dependency anywhere — the detector uses `node:child_process` and `node:path`, both built in. API 0.5.0 / 28 operations, migrations 16, root dependencies 3, client external dependencies 0, adapter dependencies the workspace client alone, client methods 3.
+
+4246 tests across 139 files. Twenty-three mutations, all killed; three survived a first run and each was a different kind: a `URL` that already folds a hostname made one mutation semantically unreachable, so the fold is kept as the contract and the mutation was re-aimed at the bare-form reader where it is load-bearing; a default-port fixture used `https`, where `URL` strips the port itself, so `ssh:22` and `git:9418` cases were added; and an order fixture happened to list Projects in name order, so a mutation that sorted by name changed nothing until the fixture was made to contradict it.
+
+Handed to P5-04, by name: measure what `/cd` does to `CLAUDE_PROJECT_DIR` rather than assuming; decide where Project resolution sits in the session lifecycle and where the root is actually read; decide how much of an `AMBIGUOUS` or `UNREGISTERED` answer is worth remembering, and in terms of what — a canonical repository rather than a path, most likely; add `createProject` when something creates a Project, and re-evaluate the concurrent-first-use race at that point. That race is real and is deliberately not settled here: `POST /v1/projects` has no idempotency key and `projects` has no uniqueness on `repo`, so two sessions starting in one new repository at the same moment could each create a Project. Nothing in P5-03 can trigger it, because P5-03 creates nothing.

@@ -38,6 +38,7 @@ import {
   MemoryApiUnreachableError,
 } from './errors.js';
 import { isProblemResource, type ProblemResource } from './problem.js';
+import { isProjectListBody, type ProjectResource } from './project.js';
 import {
   isMemorySearchRequest,
   isMemorySearchResponse,
@@ -119,6 +120,21 @@ export interface MemoryApiClient {
    * to tell them apart.
    */
   getProblem(problemId: string): Promise<ProblemResource>;
+
+  /**
+   * Lists every Project this owner has.
+   *
+   * Returns them in the order the server sent, which is deterministic and is
+   * the server's — nothing here sorts, filters or de-duplicates. The list
+   * envelope's single field is unwrapped and nothing else about the answer
+   * changes; every element is validated, and one malformed Project makes the
+   * whole answer a protocol failure rather than being skipped, because a list
+   * quietly missing a Project reads as an owner who does not have it.
+   *
+   * An owner with no Projects gets an empty array, which is an answer rather
+   * than a fault.
+   */
+  listProjects(): Promise<readonly ProjectResource[]>;
 
   /**
    * Finds past memory worth reading for the Problem being worked on.
@@ -315,6 +331,23 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
       }
 
       return body;
+    },
+
+    async listProjects(): Promise<readonly ProjectResource[]> {
+      const { status, body } = await send('/v1/projects', {
+        method: 'GET',
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (!isProjectListBody(body)) {
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body.projects;
     },
 
     async search(problemId, request): Promise<MemorySearchOutcome> {

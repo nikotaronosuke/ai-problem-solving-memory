@@ -857,12 +857,27 @@ The contract is mirrored in the client and joined to the server's own constants 
 
 Its formal review found one thing: the public type said `schema_version: string` while the validator required the mirrored constant exactly, so a wrong version compiled and failed at run time. The field is now typed from that same constant, with a compile-time witness — `expectTypeOf` equality plus `@ts-expect-error` on wrong versions — because every runtime test still passed under the defect. Putting `string` back leaves the runtime suite green and breaks the witness in six places.
 
-#### NEXT — P5-03, NOT STARTED
+### P5-03 — DONE
 
-Project auto-detection. P5-02 is complete and formally reviewed; this is the next
-roadmap task and has not been started.
+Project auto-detection.
 
-Two things belong to later adapter tasks and must not be taken on early: when to search at all, and what to do when the Memory is unavailable. The client returns facts and raises failures; deciding to carry on without memory, choosing a `source_ai`, and presenting a result are each somebody else's task (D-437, D-438).
+A detector, a remote canonicaliser and a conservative resolver in the adapter, plus `listProjects` on the common client. The project root is an argument that will be `CLAUDE_PROJECT_DIR`, never the working directory (D-441). Identity is one remote — `origin`, or the single distinct canonical one — and a secondary match, a repository two Projects claim, and a bare name match are each `AMBIGUOUS` rather than a silent false merge (D-442). A raw remote URL dies in the canonicaliser, which is where a configured credential would otherwise travel from (D-443). Canonicalising is idempotent, without which the feature would have worked exactly once per repository — a test found that (D-444). No absolute path leaves the detector and no candidate shows a stored repository unconverted (D-445). The monorepo split stays the owner's question (D-446). `createProject` was not added, because nothing calls one (D-447).
+
+4246 tests across 139 files; twenty-three mutations, all killed. Three survived a first run: one was semantically unreachable and was re-aimed, and two were real fixture gaps — a default-port case that used the one scheme `URL` normalises itself, and an order fixture that happened to already be in the order it was ruling out.
+
+#### NEXT — P5-04, NOT STARTED
+
+Current Problem detection: holding and retrieving an active `problem_id` so a Problem survives a session boundary.
+
+Carried in from P5-03 (D-448):
+
+- **Measure what `/cd` does to `CLAUDE_PROJECT_DIR`.** The official documentation does not say, and D-375 is the standing answer to that shape of question.
+- **Decide where Project resolution sits in the session lifecycle**, and where the project root is actually read — that is the task with an MCP server in it.
+- **Decide how much of an `AMBIGUOUS` or `UNREGISTERED` answer is worth remembering**, and in terms of what. A canonical repository rather than a path, most likely; a local path map would be a second source of truth beside the Memory Server.
+- **Add `createProject` when something creates a Project**, and re-evaluate the concurrent first-use race then. `POST /v1/projects` has no idempotency key and `projects` has no uniqueness on `repo`, so two sessions starting in one new repository at once could each create one. P5-03 cannot trigger it because P5-03 creates nothing.
+- **Decide how often a non-git project should be re-asked about.** Without a repository there is no durable identity, so every session looks the same as the first.
+
+Still not the adapter's, and guarded: when to search, what `source_ai` to send, how to present a result, and how to carry on when the Memory is unavailable (D-437, D-438).
 
 **Before an integration run, check that the ordinary `claude --version` succeeds.** The readiness preflight has been carried out and the installation is in a supported working state; the failure it fixed was silent — an update reported success without replacing the executable — so it can recur. No version number, path or repair step is an invariant of this system (D-377).
 
