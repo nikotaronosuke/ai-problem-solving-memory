@@ -145,27 +145,59 @@ interface OwnerRuntime {
   readonly reconciliation: RetrievalArtifactReconciliationService;
 }
 
-/** A plain counting semaphore: FIFO, bounded, nothing else. */
-function createGenerationGate(bound: number) {
-  let active = 0;
+/**
+ * A plain FIFO bounded permit. No priorities, no cancellation, no timeouts,
+ * no identifiers — the only thing it is for is holding provider generations
+ * to a bound without letting the queue starve.
+ *
+ * ## Why a release hands the permit over instead of freeing it
+ *
+ * The obvious implementation decrements a counter and then wakes the head of
+ * the queue. Between those two steps the permit is *free*, and waking is only
+ * a promise resolution — the woken waiter resumes a microtask later. A caller
+ * arriving inside that window finds the counter free, takes the permit, and
+ * the waiter who had been queued first resumes to find the gate busy and goes
+ * to the back of the queue. The bound still holds. The order does not, and
+ * under a steady arrival rate the first waiter can be passed indefinitely.
+ *
+ * So a release never returns the permit to the pool while anyone is waiting:
+ * it transfers the permit to the head of the queue, and **being woken is
+ * holding the permit** — a woken waiter re-tests nothing. The fast path is
+ * correspondingly narrow: a newcomer may take a permit only when one is free
+ * *and* nobody is queued, which is what makes overtaking unstateable rather
+ * than merely unlikely.
+ *
+ * The invariant, either way round: holders + available === bound.
+ *
+ * Exported for the fairness witness in this module's tests, and internal to
+ * the runtime otherwise — a guard keeps it from becoming a general-purpose
+ * semaphore somewhere else.
+ */
+export function createGenerationGate(bound: number) {
+  let available = bound;
   const waiters: (() => void)[] = [];
 
   return async function gated<T>(work: () => Promise<T>): Promise<T> {
-    // A loop, not an if: a caller arriving exactly as a waiter wakes could
-    // otherwise slip past the woken waiter and both would take the slot.
-    // Re-checking makes over-admission unwriteable; the shift below wakes
-    // one waiter per release, so nobody waits forever.
-    while (active >= bound) {
+    if (available > 0 && waiters.length === 0) {
+      available -= 1;
+    } else {
+      // Nothing is re-checked when this resolves: the wake *is* the permit.
       await new Promise<void>((resolve) => {
         waiters.push(resolve);
       });
     }
-    active += 1;
+
     try {
       return await work();
     } finally {
-      active -= 1;
-      waiters.shift()?.();
+      const next = waiters.shift();
+      if (next === undefined) {
+        available += 1;
+      } else {
+        // Handed over, not freed. There is no window for a late arrival to
+        // take because the permit is never unheld.
+        next();
+      }
     }
   };
 }
