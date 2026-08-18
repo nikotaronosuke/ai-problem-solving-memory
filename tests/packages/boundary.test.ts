@@ -716,6 +716,39 @@ describe('the Claude adapter, still', () => {
     }
   });
 
+  it('decides what a resume is from the one list that says so', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const lifecycle = shipped.find((file) => file.path === 'src/problem-lifecycle.ts');
+    const code = codeOnly(lifecycle?.source ?? '');
+
+    // The subset is checked at runtime and not merely declared, because the
+    // type does not survive to the boundary where a status arrives as text —
+    // and the two states this refuses are *legal* moves from PAUSED, so nothing
+    // downstream would have stopped one. Closing a Problem and calling the
+    // result a resume is the failure, and it is silent.
+    expect(code).toContain('function isResumeProblemTargetStatus');
+    expect(code).toContain('RESUME_PROBLEM_TARGET_STATUSES as readonly string[]');
+
+    // Derived from that list rather than written beside it: each name appears
+    // exactly once in the module, in the constant, so a second condition
+    // listing them again would fail here rather than drift from it.
+    for (const status of ['INVESTIGATING', 'FIX_CANDIDATE']) {
+      expect(`${status} appears ${String(code.split(status).length - 1)} times`).toBe(
+        `${status} appears 1 times`,
+      );
+    }
+
+    // And it reuses the one definition of what a missing Problem looks like.
+    // Two copies of "404 and NOT_FOUND" would be two places to widen it into
+    // treating an outage as a Problem that no longer exists.
+    expect(code).toContain('isProblemGone(error)');
+    for (const forbidden of ['404', 'NOT_FOUND', 'error.status', 'error.code']) {
+      expect(`the lifecycle reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the lifecycle reaches for ${forbidden}:false`,
+      );
+    }
+  });
+
   it('checks a start-new decision against every continuable Problem', async () => {
     const shipped = await sourcesOf('claude-code-adapter');
     const lifecycle = shipped.find((file) => file.path === 'src/problem-lifecycle.ts');

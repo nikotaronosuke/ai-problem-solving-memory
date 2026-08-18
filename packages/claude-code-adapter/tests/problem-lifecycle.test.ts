@@ -30,6 +30,7 @@ import {
   CLAUDE_CODE_SOURCE_AI,
   continueProblem,
   ProblemBindingArgumentError,
+  ProblemLifecycleArgumentError,
   ProblemLifecycleInvariantError,
   RESUME_PROBLEM_TARGET_STATUSES,
   resolveProblemForSession,
@@ -40,6 +41,7 @@ import {
   type ProblemBindingWrite,
   type ProblemBindingWriter,
   type ResumeProblemClient,
+  type ResumeProblemTargetStatus,
   type StartNewProblemClient,
   type StartProblemInput,
 } from '../src/index.js';
@@ -702,6 +704,62 @@ describe('resuming a paused Problem', () => {
       ),
     ).rejects.toBeInstanceOf(ProblemLifecycleInvariantError);
     expect(bindings.log.writes).toEqual([]);
+  });
+
+  it.each([
+    // The load-bearing one. `PAUSED → CLOSED_UNRESOLVED` is a *legal* move on
+    // the server, and the client accepts any canonical status because
+    // transition legality is not its business — so nothing downstream of here
+    // would have refused it. It would have closed the Problem, bound the
+    // session to it, and returned a result whose word for what happened is
+    // "resumed".
+    ['closing it', 'CLOSED_UNRESOLVED'],
+    ['declaring it verified', 'VERIFIED'],
+    ['pausing an already paused Problem', 'PAUSED'],
+    // Not a special case against three names: a value from outside the status
+    // vocabulary altogether is refused by the same subset check.
+    ['a status nobody published', 'REOPENED'],
+    ['nothing at all', ''],
+  ])('refuses %s as a resume, before it does anything', async (_name, target) => {
+    const memory = client({ get: paused(), transition: problem({ status: 'PAUSED' }) });
+    const bindings = store({});
+
+    await expect(
+      resumeProblem(
+        memory.client,
+        bindings.store,
+        SESSION_ID,
+        PROJECT_ID,
+        PROBLEM_ID,
+        // Deliberately past the type, because the type is exactly what does not
+        // survive to the boundary this guard exists for.
+        target as ResumeProblemTargetStatus,
+      ),
+    ).rejects.toBeInstanceOf(ProblemLifecycleArgumentError);
+
+    // Nothing read, nothing moved, nothing noted — not even the binding-key
+    // preflight. A refused resume costs nothing and leaves nothing to explain.
+    expect(memory.log.order).toEqual([]);
+    expect(memory.log.transitions).toEqual([]);
+    expect(bindings.log.reads).toEqual([]);
+    expect(bindings.log.writes).toEqual([]);
+  });
+
+  it('names the argument it refused and never the value', async () => {
+    const memory = client({ get: paused() });
+    const bindings = store({});
+    const raised = await resumeProblem(
+      memory.client,
+      bindings.store,
+      SESSION_ID,
+      PROJECT_ID,
+      PROBLEM_ID,
+      'CLOSED_UNRESOLVED' as ResumeProblemTargetStatus,
+    ).catch((error: unknown) => error);
+
+    expect(raised).toBeInstanceOf(ProblemLifecycleArgumentError);
+    expect((raised as ProblemLifecycleArgumentError).argument).toBe('resume target status');
+    expect(String((raised as Error).message).includes('CLOSED_UNRESOLVED')).toBe(false);
   });
 
   it('stops before the transition when the binding key is unusable', async () => {

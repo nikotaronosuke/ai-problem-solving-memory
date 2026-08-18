@@ -175,6 +175,24 @@ describe('what a transition will ask for', () => {
     }
   });
 
+  it('will still ask to close a Problem, because that is not its judgement', async () => {
+    // Named on its own because it is the one an adapter policy restricts. This
+    // client is transport: `CLOSED_UNRESOLVED` is a canonical status and a
+    // legal move from several states, so refusing it here would put a lifecycle
+    // rule in the layer with no record to check it against. Whether *this*
+    // Problem may be closed is the server's answer, and whether a "resume"
+    // means it is the adapter's.
+    const { memory, calls } = answering(200, transitionedTo('CLOSED_UNRESOLVED'));
+
+    await expect(
+      memory.transitionProblemStatus(PROBLEM_ID, {
+        ...RESUME,
+        target_status: 'CLOSED_UNRESOLVED',
+      }),
+    ).resolves.toMatchObject({ status: 'CLOSED_UNRESOLVED' });
+    expect(bodyOf(calls[0])).toMatchObject({ target_status: 'CLOSED_UNRESOLVED' });
+  });
+
   it('refuses a target status the contract does not have', async () => {
     const { memory, calls } = answering(200, transitionedTo('INVESTIGATING'));
     const request = {
@@ -298,6 +316,14 @@ describe('what a transition accepts back', () => {
 
   it('refuses a Problem that did not move at all', async () => {
     const { memory } = answering(200, { ...PAUSED });
+
+    await expect(memory.transitionProblemStatus(PROBLEM_ID, RESUME)).rejects.toBeInstanceOf(
+      MemoryApiProtocolError,
+    );
+  });
+
+  it('refuses a transitioned Problem at a version no record could be at', async () => {
+    const { memory } = answering(200, transitionedTo('INVESTIGATING', { version: 0 }));
 
     await expect(memory.transitionProblemStatus(PROBLEM_ID, RESUME)).rejects.toBeInstanceOf(
       MemoryApiProtocolError,

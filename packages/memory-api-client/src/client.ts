@@ -440,7 +440,21 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
         throw readApiError(status, body);
       }
 
-      if (!isProblemResource(body)) {
+      if (!isProblemResource(body) || body.problem_id !== problemId) {
+        // The route named a Problem, and a body describing a different one is
+        // not an answer to that request — the same rule the list already
+        // applies to every element it returns.
+        //
+        // It reads like pedantry on a GET and is not, because of what is done
+        // with the answer. A caller reads a Problem in order to act on it: to
+        // decide a binding still holds, or to take the version it will send
+        // back on a transition. A response about Problem B accepted under
+        // Problem A's URL would let a mutation to A be decided from B's state,
+        // and nothing downstream could notice, because by then there is only
+        // one Problem in hand and it looks entirely well formed.
+        //
+        // Neither id is quoted. Which two Problems disagreed is the request
+        // id's to lead to.
         throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
       }
 

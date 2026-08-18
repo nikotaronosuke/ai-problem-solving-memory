@@ -126,6 +126,25 @@ function isMember<T extends string>(members: readonly T[], value: unknown): valu
 }
 
 /**
+ * Whether a value is a version a Problem record could actually be at.
+ *
+ * The published contract says integer, minimum one, and both halves are
+ * checked. The minimum used to look like pedantry when every consumer only
+ * read a version — but it is now a write's concurrency token, sent back as
+ * `expected_version` on a transition, and that request correctly refuses
+ * anything below one.
+ *
+ * So without this, a malformed response carrying `0` would pass here, travel
+ * through a composition as though it were a real record, and be refused two
+ * calls later as though the *caller* had made a mistake. It is the server's
+ * answer that is wrong, and the failure should say so at the boundary that can
+ * still tell the difference.
+ */
+function isRecordVersion(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1;
+}
+
+/**
  * Whether a parsed body is a Problem this contract describes.
  *
  * A predicate rather than a parser: nothing is coerced, defaulted or dropped.
@@ -177,8 +196,7 @@ export function isProblemResource(value: unknown): value is ProblemResource {
     typeof record['memory_read_enabled'] === 'boolean' &&
     typeof record['memory_write_enabled'] === 'boolean' &&
     typeof record['suppressed'] === 'boolean' &&
-    typeof record['version'] === 'number' &&
-    Number.isInteger(record['version']) &&
+    isRecordVersion(record['version']) &&
     isString(record['created_at']) &&
     isString(record['updated_at'])
   );

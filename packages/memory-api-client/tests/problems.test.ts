@@ -101,6 +101,57 @@ function answering(status: number, body: unknown) {
   return { calls, memory: createMemoryApiClient({ credential: CREDENTIAL, fetch }) };
 }
 
+describe('what reading one Problem accepts back', () => {
+  it('returns the Problem the route named', async () => {
+    const { memory } = answering(200, INVESTIGATING);
+
+    await expect(memory.getProblem(INVESTIGATING.problem_id)).resolves.toEqual(INVESTIGATING);
+  });
+
+  it('refuses a body describing a different Problem', async () => {
+    // The route named one Problem. A well-formed answer about another is not
+    // an answer to that request — and a caller reads a Problem in order to
+    // act on it, so accepting this would let a decision about A be made from
+    // B's status, Project and version, with nothing downstream able to tell.
+    const { memory } = answering(200, PAUSED);
+
+    await expect(memory.getProblem(INVESTIGATING.problem_id)).rejects.toBeInstanceOf(
+      MemoryApiProtocolError,
+    );
+  });
+
+  it('refuses a version no record could be at', async () => {
+    // A version is a write's concurrency token now. Left to pass here, a `0`
+    // would travel as though it were real and be refused later as though the
+    // caller had made the mistake.
+    for (const version of [0, -1, 0.5]) {
+      const { memory } = answering(200, { ...INVESTIGATING, version });
+
+      await expect(memory.getProblem(INVESTIGATING.problem_id)).rejects.toBeInstanceOf(
+        MemoryApiProtocolError,
+      );
+    }
+  });
+
+  it('accepts any version a record could be at', async () => {
+    for (const version of [1, 2, 4096]) {
+      const { memory } = answering(200, { ...INVESTIGATING, version });
+
+      await expect(memory.getProblem(INVESTIGATING.problem_id)).resolves.toMatchObject({
+        version,
+      });
+    }
+  });
+
+  it('does not ask twice for an answer it cannot read', async () => {
+    const { memory, calls } = answering(200, PAUSED);
+
+    await memory.getProblem(INVESTIGATING.problem_id).catch(() => undefined);
+
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe('what listing Problems sends', () => {
   it('reads the project’s collection with the credential in one place', async () => {
     const { calls, memory } = answering(200, { problems: [] });
