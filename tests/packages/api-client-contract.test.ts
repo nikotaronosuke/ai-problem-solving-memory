@@ -111,6 +111,21 @@ describe('the Problem the client expects', () => {
       expect(`${field}:${described.includes(field)}`).toBe(`${field}:true`);
     }
   });
+
+  it('knows about every field the schema describes', () => {
+    // The other direction, which the required-field comparison above does not
+    // cover on its own: a property the server documents and the client has
+    // never heard of would make the client's exact key check reject a Problem
+    // the server considers ordinary.
+    expect([...PROBLEM_RESOURCE_FIELDS].sort()).toEqual(
+      Object.keys(PROBLEM_RESOURCE_SCHEMA.properties).sort(),
+    );
+    // Which is what entitles the client to check for an exact key set rather
+    // than for the fields it needs: the server promised there would be no
+    // others. The Project mirror has asserted this from the start; the Problem
+    // one did not, and the client's Problem check was the looser for it.
+    expect(PROBLEM_RESOURCE_SCHEMA.additionalProperties).toBe(false);
+  });
 });
 
 describe('the Project the client expects', () => {
