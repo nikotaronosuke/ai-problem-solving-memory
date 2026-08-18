@@ -224,6 +224,7 @@ describe('credential', () => {
       'createProject',
       'createEnvironment',
       'createProblem',
+      'transitionProblemStatus',
       'search',
     ]);
   });

@@ -140,6 +140,7 @@ describe('reading the environment', () => {
       'createProject',
       'createEnvironment',
       'createProblem',
+      'transitionProblemStatus',
       'search',
     ]);
     expect(JSON.stringify(client).includes(TOKEN)).toBe(false);

@@ -47,8 +47,10 @@ import {
   isCreateProblemRequest,
   isProblemListBody,
   isProblemResource,
+  isTransitionProblemStatusRequest,
   type CreateProblemRequest,
   type ProblemResource,
+  type TransitionProblemStatusRequest,
 } from './problem.js';
 import {
   isCreateProjectRequest,
@@ -222,6 +224,31 @@ export interface MemoryApiClient {
    * the caller knows how to find out.
    */
   createProblem(projectId: string, request: CreateProblemRequest): Promise<ProblemResource>;
+
+  /**
+   * Moves a Problem to another status.
+   *
+   * The only way a status changes. The request says where the Problem should
+   * end up and which version it was read at; the server compares that against
+   * the record, and a `409` with `VERSION_CONFLICT` means somebody else wrote
+   * to the Problem in between. That is an answer, not a failure of this call —
+   * it is raised as an ordinary refusal and is emphatically not retried, because
+   * retrying it would mean re-deciding, against a record that has changed, a
+   * question the caller answered against the one it read.
+   *
+   * Whether a particular move is *legal* is the server's to say. This client
+   * will ask for any canonical status, because the rule depends on the record's
+   * current state and lives in one place.
+   *
+   * The answer is checked for being the Problem that was asked about and for
+   * being in the status that was asked for. Nothing else is compared: the
+   * server owns every other field of a transitioned Problem, including how far
+   * the version moved.
+   */
+  transitionProblemStatus(
+    problemId: string,
+    request: TransitionProblemStatusRequest,
+  ): Promise<ProblemResource>;
 
   /**
    * Finds past memory worth reading for the Problem being worked on.
@@ -601,6 +628,55 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
       }
 
       return answer;
+    },
+
+    async transitionProblemStatus(problemId, request): Promise<ProblemResource> {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError('problem id');
+      }
+      if (!isTransitionProblemStatusRequest(request)) {
+        // Before the request, and named as one argument. What is wrong is a
+        // shape, and `changed_by` is somebody's own name for themselves.
+        throw new MemoryApiArgumentError('status transition');
+      }
+
+      // Written out field by field rather than serialising the caller's object,
+      // so an extra property cannot travel to a route that refuses extras.
+      const payload = {
+        target_status: request.target_status,
+        expected_version: request.expected_version,
+        changed_by: request.changed_by,
+      };
+
+      const { status, body } = await send(`/v1/problems/${problemId}/status-transitions`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (
+        !isProblemResource(body) ||
+        body.problem_id !== problemId ||
+        body.status !== request.target_status
+      ) {
+        // Both halves of what was asked. A Problem that came back in a
+        // different status than the one requested has not answered this
+        // request, whatever else is true of it — and a caller about to record
+        // "resumed" would otherwise record it about a Problem that did not
+        // move.
+        //
+        // The version is deliberately not checked against any arithmetic. How
+        // far a version moves is the server's, the published contract does not
+        // promise a step of one, and a client asserting one would break the
+        // first time a transition wrote anything else alongside the status.
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body;
     },
 
     async search(problemId, request): Promise<MemorySearchOutcome> {

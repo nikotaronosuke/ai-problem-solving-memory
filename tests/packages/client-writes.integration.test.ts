@@ -128,9 +128,9 @@ describe.skipIf(databaseUrl === undefined)('the client writing through the real 
   /**
    * A Project to write under.
    *
-   * Created through the route rather than through the client, because the
-   * client has no `createProject` and will not grow one to make a test easier:
-   * the method arrives with the consumer that needs it.
+   * Created through the route rather than through the client, deliberately:
+   * these tests are about what the client sends, and building the Project with
+   * the same client would let one shared misunderstanding satisfy both halves.
    */
   async function makeProject(name: string): Promise<string> {
     const created = await app.inject({
