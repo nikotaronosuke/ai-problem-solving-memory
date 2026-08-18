@@ -210,6 +210,75 @@ export function isProblemListBody(value: unknown): value is { problems: ProblemR
 }
 
 /**
+ * What moving a Problem to another status sends.
+ *
+ * Three fields, all required, and the key set is closed. Where the Problem is
+ * now is deliberately not among them: the server reads that from the record,
+ * and a request carrying both would be two claims that can disagree.
+ *
+ * `expected_version` is the Problem's concurrency token, shared with every
+ * other write to it rather than being a second lock of its own. `changed_by` is
+ * descriptive provenance for the change log and decides nothing.
+ */
+export interface TransitionProblemStatusRequest {
+  readonly target_status: ProblemStatus;
+  readonly expected_version: number;
+  readonly changed_by: string;
+}
+
+/** The fields a transition request carries. Exactly these. */
+export const TRANSITION_PROBLEM_STATUS_REQUEST_FIELDS = [
+  'target_status',
+  'expected_version',
+  'changed_by',
+] as const;
+
+/**
+ * Whether a request is one this client will send.
+ *
+ * What is checked is what the contract requires of the *shape*: a canonical
+ * status, a version that is a whole number a record could actually be at, and
+ * a `changed_by` with something in it.
+ *
+ * What is deliberately **not** checked is whether the move makes sense. Which
+ * transitions are legal from which status is a rule about a Problem's
+ * lifecycle, it depends on state this client has not read, and the server
+ * enforces it against the record rather than against a request. A matrix
+ * mirrored here would be a second copy of that rule, wrong the first time the
+ * lifecycle gained a state, and it would refuse requests a correct server would
+ * have accepted. So any canonical target status may be asked for, and the
+ * answer to whether it was appropriate comes back from the server.
+ */
+export function isTransitionProblemStatusRequest(
+  value: unknown,
+): value is TransitionProblemStatusRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+
+  const keys = Object.keys(record);
+  if (keys.length !== TRANSITION_PROBLEM_STATUS_REQUEST_FIELDS.length) {
+    return false;
+  }
+  for (const field of TRANSITION_PROBLEM_STATUS_REQUEST_FIELDS) {
+    if (!(field in record)) {
+      return false;
+    }
+  }
+
+  const version = record['expected_version'];
+
+  return (
+    isMember(PROBLEM_STATUSES, record['target_status']) &&
+    typeof version === 'number' &&
+    Number.isInteger(version) &&
+    version >= 1 &&
+    isNonBlank(record['changed_by'])
+  );
+}
+
+/**
  * What starting a Problem sends.
  *
  * Three required fields and three optional ones. Everything else a Problem has

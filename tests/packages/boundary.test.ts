@@ -301,20 +301,22 @@ describe('the common client', () => {
     expect(code).toContain(
       'createProject(request: CreateProjectRequest): Promise<ProjectResource>;',
     );
+    expect(code).toContain('transitionProblemStatus(');
+    expect(code).toContain('request: TransitionProblemStatusRequest,');
     expect(code).toContain('search(problemId: string, request: MemorySearchRequest)');
 
-    // Seven, and no eighth by accident. Each write arrived with the caller
-    // that needed it. The ones still absent are absent for the same reason:
-    // nothing reads or edits a single Project, and nothing resumes a paused
-    // Problem, so a method for any of them would be a guess about how it will
-    // be called — and the guess is what a later task would then have to argue
-    // with.
+    // Eight, and no ninth by accident. Each write arrived with the caller that
+    // needed it, and the newest arrived with a paused Problem to resume. The
+    // ones still absent are absent for the same reason: nothing reads or edits
+    // a single Project, nothing edits a Problem's text, and nothing records an
+    // Event or a Verification — so a method for any of them would be a guess
+    // about how it will be called, and the guess is what a later task would
+    // then have to argue with.
     for (const absent of [
       'getProject',
       'updateProject',
       'deleteProject',
       'updateProblem',
-      'transitionProblemStatus',
       'appendEvent',
       'appendVerification',
     ]) {
@@ -598,6 +600,21 @@ describe('the Claude adapter, still', () => {
         `the resolver reaches for ${forbidden}:false`,
       );
     }
+
+    // And it writes nothing. A resolver that could move or create a Problem
+    // would make "what is true" and "what to do about it" one step, and every
+    // recheck built on it would be rechecking its own effect.
+    for (const forbidden of [
+      'transitionProblemStatus',
+      'createProblem',
+      'createEnvironment',
+      'startProblem',
+      'target_status',
+    ]) {
+      expect(`the resolver reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the resolver reaches for ${forbidden}:false`,
+      );
+    }
   });
 
   it('keeps local persistence and session identity in exactly one module', async () => {
@@ -612,24 +629,133 @@ describe('the Claude adapter, still', () => {
     // package may do, so it is bounded by name rather than by intention: a
     // second module quietly starting to keep session state is the thing this
     // catches, and it is the version of this mistake nobody would notice.
+    //
+    // One module now takes a session identifier as an *argument*, because
+    // binding a session to a Problem is what it composes. That is a parameter
+    // travelling through to the store, not knowledge of what a session is: it
+    // is never parsed, never read from the host, and never stored anywhere the
+    // store did not put it. So `sessionId` is narrowed to that module by name
+    // and everything else — the filesystem, the hashing, the wire spelling —
+    // stays forbidden there too.
+    const LIFECYCLE = 'src/problem-lifecycle.ts';
     for (const { path, source } of shipped) {
       if (path === STORE) {
         continue;
       }
       const code = codeOnly(source);
-      for (const forbidden of [
-        'node:fs',
-        'writeFile',
-        'readFile',
-        'mkdir',
-        'sessionId',
-        'session_id',
-        'createHash',
-      ]) {
+      const owns = ['node:fs', 'writeFile', 'readFile', 'mkdir', 'session_id', 'createHash'];
+      for (const forbidden of path === LIFECYCLE ? owns : [...owns, 'sessionId']) {
         expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
           `${path} reaches for ${forbidden}:false`,
         );
       }
+    }
+  });
+
+  it('composes a Problem lifecycle without acquiring anything itself', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const lifecycle = shipped.find((file) => file.path === 'src/problem-lifecycle.ts');
+    expect(lifecycle).toBeDefined();
+    const code = codeOnly(lifecycle?.source ?? '');
+
+    // A session identifier arrives as an argument and is handed to the store.
+    // Where it comes from is the host's question and belongs to the task that
+    // speaks to the host; a module that read it from the environment would have
+    // quietly taken that over, and it is the layer with the least context for
+    // deciding what a session is.
+    //
+    // Which Project a session is in is settled before any of this is called, so
+    // detection and registration are absent for the same reason: this composes
+    // the Problem half and would otherwise become the place both halves live.
+    for (const forbidden of [
+      'process.env',
+      'process.cwd',
+      'CLAUDE_PLUGIN',
+      'CLAUDE_PROJECT_DIR',
+      'CLAUDE_CODE_SESSION',
+      'node:fs',
+      'node:path',
+      'node:crypto',
+      'detectProjectSignals',
+      'resolveProject',
+      'registerProject',
+      'selectProject',
+      'listProjects',
+      'createProject',
+      '/v1/',
+      'fetch',
+      'credential',
+      'Authorization',
+      'mcp',
+      'plugin',
+      'hook',
+      'PreToolUse',
+      'retry',
+    ]) {
+      expect(`the lifecycle reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the lifecycle reaches for ${forbidden}:false`,
+      );
+    }
+
+    // It also does not read what a Problem says about itself in order to guess
+    // which one a conversation is about. A title compared, symptoms hashed or a
+    // list sorted would each be this module deciding the one thing it exists to
+    // refuse to decide.
+    for (const forbidden of [
+      '.title',
+      'symptoms',
+      '.sort(',
+      'localeCompare',
+      'newest',
+      'created_at',
+      'similar',
+    ]) {
+      expect(`the lifecycle reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the lifecycle reaches for ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('checks a start-new decision against every continuable Problem', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const lifecycle = shipped.find((file) => file.path === 'src/problem-lifecycle.ts');
+    const code = codeOnly(lifecycle?.source ?? '');
+
+    // The one that is easy to get wrong and quiet when it is. Resolving with a
+    // binding hint short-circuits on the Problem this session is already on and
+    // never enumerates the rest — which is right for "which Problem am I on"
+    // and precisely wrong for "is my judgement that this is a *new* Problem
+    // still safe", because the Problem that would change that judgement is some
+    // other Problem.
+    expect(code).toContain('await resolveCurrentProblem(client, input.projectId)');
+
+    // And the note is never removed. A stale hint is revalidated per call and
+    // replaced by the next write; deleting one would only add a way for a
+    // working session to lose its place because a Memory was briefly away.
+    for (const forbidden of ['removeBinding', 'unlink', 'ProblemBindingRemoval']) {
+      expect(`the lifecycle reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the lifecycle reaches for ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('never forgets a binding anywhere in the package', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // The store offers a removal because forgetting is a thing a store must be
+    // able to do. Nothing in this package has decided that it should, and the
+    // decision needs the Memory's answer about a Problem — which is knowledge
+    // the store deliberately does not have.
+    for (const { path, source } of shipped) {
+      if (path === 'src/problem-binding-store.ts' || path === 'src/index.ts') {
+        continue;
+      }
+      const code = codeOnly(source);
+      expect(`${path} calls removeBinding:${code.includes('removeBinding')}`).toBe(
+        `${path} calls removeBinding:false`,
+      );
     }
   });
 
