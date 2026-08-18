@@ -29,6 +29,9 @@
       "@ai-problem-solving-memory/api-client": ["./packages/memory-api-client/src/index.ts"],
       "@ai-problem-solving-memory/claude-code-adapter": [
         "./packages/claude-code-adapter/src/index.ts"
+      ],
+      "@ai-problem-solving-memory/claude-code-memory-plugin": [
+        "./packages/claude-code-memory-plugin/src/server.ts"
       ]
     }
   },

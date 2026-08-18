@@ -1,0 +1,6 @@
+{
+  "name": "problem-solving-memory",
+  "displayName": "Problem-Solving Memory",
+  "version": "0.0.0",
+  "description": "Remembers which problem this session is working on, across sessions and projects."
+}

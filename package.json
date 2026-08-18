@@ -2,7 +2,7 @@
   "name": "ai-problem-solving-memory",
   "version": "0.0.0",
   "private": true,
-  "description": "Problem-Solving Memory service — user-owned memory of past problem-solving experience, reusable across AIs and projects.",
+  "description": "Problem-Solving Memory service \u2014 user-owned memory of past problem-solving experience, reusable across AIs and projects.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -13,10 +13,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && npm run build -w @ai-problem-solving-memory/api-client && npm run build -w @ai-problem-solving-memory/claude-code-adapter",
+    "build": "tsc -p tsconfig.build.json && npm run build -w @ai-problem-solving-memory/api-client && npm run build -w @ai-problem-solving-memory/claude-code-adapter && npm run build -w @ai-problem-solving-memory/claude-code-memory-plugin",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
-    "typecheck": "tsc --noEmit && npm run typecheck -w @ai-problem-solving-memory/api-client && npm run typecheck -w @ai-problem-solving-memory/claude-code-adapter",
+    "typecheck": "tsc --noEmit && npm run typecheck -w @ai-problem-solving-memory/api-client && npm run typecheck -w @ai-problem-solving-memory/claude-code-adapter && npm run typecheck -w @ai-problem-solving-memory/claude-code-memory-plugin",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
