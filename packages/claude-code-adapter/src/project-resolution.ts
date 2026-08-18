@@ -279,7 +279,19 @@ function matchingRemote(
   });
 }
 
-function suggestionFor(signals: ProjectSignals): ProjectSuggestion {
+/**
+ * What to call a Project that does not exist yet, from what this session says.
+ *
+ * Exported for the outcome module beside this one, which registers Projects and
+ * needs the same suggestion built the same way. A second construction there
+ * would be a second answer to "what would we call this and what would we record
+ * on it" — and the two would agree right up until one of them was extended.
+ *
+ * Deliberately not part of the package's public surface: it is how two
+ * implementation modules share one definition, not a capability this package
+ * offers anybody.
+ */
+export function suggestionFor(signals: ProjectSignals): ProjectSuggestion {
   return {
     projectName: signals.projectNameHint,
     repo: signals.primaryRemote,
