@@ -60,9 +60,16 @@ schema change.
 
 The migrations establish the pipeline, the shared value sets (PostgreSQL
 DOMAINs over `text` with CHECK constraints, mirroring `src/domain/enums.ts`),
-the nine tables — `owners`, `projects`, `environments`, `problems`, `events`,
-`verifications`, `relations`, `usage_logs`, `change_logs` — and the storage-layer
-integrity and index set.
+the tables, and the integrity and index set. The tables are `owners`,
+`projects`, `environments`, `problems`, `events`, `verifications`, `relations`,
+`usage_logs`, `change_logs`, `clients`, `client_credentials` and
+`retrieval_artifacts`. Memory control is not among them: read, write,
+suppression and invalidation are columns on `problems`, because they qualify a
+Problem rather than being records of their own.
+
+`supabase/migrations/` is the authority on the schema as it stands. Read it
+there rather than trusting a list in prose, which is the kind of thing that goes
+stale between the change and the sentence describing it.
 
 Every foreign key deletes with `RESTRICT`, so a parent with children cannot be
 removed. That prevents implicit deletion, not deletion: a deliberate removal
@@ -162,6 +169,7 @@ does not restate field lists that the OpenAPI document already carries.
 | GET    | `/v1/projects/:project_id/problems`           |
 | GET    | `/v1/problems/:problem_id`                    |
 | PATCH  | `/v1/problems/:problem_id`                    |
+| DELETE | `/v1/problems/:problem_id`                    |
 | POST   | `/v1/problems/:problem_id/events`             |
 | GET    | `/v1/problems/:problem_id/events`             |
 | POST   | `/v1/problems/:problem_id/verifications`      |
@@ -174,6 +182,8 @@ does not restate field lists that the OpenAPI document already carries.
 | GET    | `/v1/problems/:problem_id/usage-logs`         |
 | GET    | `/v1/problems/:problem_id/change-logs`        |
 | POST   | `/v1/problems/:problem_id/close`              |
+| POST   | `/v1/problems/:problem_id/search`             |
+| GET    | `/v1/export`                                  |
 
 Outside `/v1`, alongside `/health`: `GET /openapi.json`, which needs no owner.
 It is generated rather than written, so a route schema change shows up in it
@@ -181,8 +191,8 @@ in the same commit. It does not list itself.
 
 Environments are created and listed under their project, so the project id
 has one source and cannot disagree with itself. An Environment is a point in
-time: there is no update or delete for one, and nothing is deleted in this
-phase.
+time: there is no update and no delete for one. A Problem can be removed —
+`DELETE /v1/problems/:problem_id` — and that is the only delete in the API.
 
 Problems are created under their project too, and name an environment that
 must belong to that same project. A new Problem starts `INVESTIGATING` with
@@ -319,7 +329,7 @@ successful Verification of the Problem's own; a well-argued
 again, so this is not a way to revise a conclusion. Anything refused is a 400,
 and nothing at all is written.
 
-`fix_kind` is writable here and nowhere else in this phase — whether a fix
+`fix_kind` is writable here and nowhere else — whether a fix
 addressed the cause or worked around it is a conclusion rather than an edit.
 Omitting it leaves whatever is there; sending `null` clears it. It is a
 separate axis from status in both directions: a Problem can be verified with
@@ -354,6 +364,19 @@ Nothing else is inferred. Closing does not raise confidence, refresh
 freshness, touch the memory controls, or create the Verification it requires.
 `PAUSED` stays resumable through the transition route, and the review it left
 behind remains as history.
+
+`POST /v1/problems/:problem_id/search` reads memory rather than writing it: it
+takes the Problem being worked on now and returns past Problems whose structure
+resembles it, from any project of the same owner. It returns material to judge
+with — the environment a memory was recorded in, what was verified, what turned
+out to be a dead end — and does not decide which candidate is right. What it
+ranks on, what it refuses to conclude, and how it degrades when a provider is
+unreachable are in [`retrieval.md`](./retrieval.md). Providers are optional:
+without their credentials that route narrows to the channels it still has
+rather than failing.
+
+`GET /v1/export` returns the calling owner's Memory in full, so the data can be
+taken elsewhere. It is scoped to that owner like everything else under `/v1`.
 
 JSON is snake_case and timestamps are ISO 8601. A resource that belongs to
 another owner answers exactly as one that does not exist.

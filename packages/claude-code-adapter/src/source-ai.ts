@@ -2,10 +2,10 @@
  * What this adapter calls itself when it records that it did something.
  *
  * `source_ai` is provenance and nothing else: it says which assistant a record
- * came from, and it has never decided what anybody is allowed to read. That
- * separation is the server's (D-085) and this constant depends on it — a value
- * that could widen a scope would be a value worth spoofing, and this one is
- * worth nothing.
+ * came from, and it has never decided what anybody is allowed to read. The
+ * server decides that from the authenticated owner, never from this field, and
+ * this constant depends on that separation — a value that could widen a scope
+ * would be a value worth spoofing, and this one is worth nothing.
  *
  * ## Why there is no version in it
  *

@@ -34,7 +34,7 @@
  * rows, and there is no reason to write it that way.
  *
  * Nothing here cascades. Every foreign key in the schema is `ON DELETE
- * RESTRICT` (D-034) and stays that way, which makes this function's list the
+ * RESTRICT` and stays that way, which makes this function's list the
  * single description of what a delete reaches. If a later table gains a
  * reference to `problems` and is not added here, the final statement fails on
  * the foreign key and the whole transaction rolls back — the table keeps its

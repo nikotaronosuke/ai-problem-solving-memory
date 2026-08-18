@@ -24,11 +24,16 @@ migrations.
 
 ## Current state
 
-The domain schema is in place: owners, projects, environments, problems,
-events, verifications, relations, usage logs, change logs, memory controls,
-client credentials, and the retrieval artifacts search reads from. Shared value
-sets are PostgreSQL `DOMAIN`s over `text` with CHECK constraints, mirroring
-`src/domain/enums.ts` so both sides move together.
+The domain schema is in place. The tables are `owners`, `projects`,
+`environments`, `problems`, `events`, `verifications`, `relations`,
+`usage_logs`, `change_logs`, `clients`, `client_credentials` and
+`retrieval_artifacts`. Memory control is not a table of its own — read, write,
+suppression and invalidation are columns on `problems`.
+
+Shared value sets are PostgreSQL `DOMAIN`s over `text` with CHECK constraints,
+mirroring `src/domain/enums.ts` so both sides move together. Every foreign key
+is `ON DELETE RESTRICT`, so a parent with children cannot be removed
+implicitly.
 
 `supabase/migrations/` is the authority on the schema as it stands;
 `docs/development.md` covers running the local database and inspecting it.
