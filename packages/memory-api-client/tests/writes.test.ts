@@ -362,6 +362,163 @@ describe('recording an Environment', () => {
     });
   });
 
+  describe('values the transport cannot carry unchanged', () => {
+    it('refuses negative zero, which comes back as an ordinary zero', async () => {
+      // Subtler than NaN and the same class of bug. It is a finite number, it
+      // passes every check a finite number passes, and it arrives as `0` — a
+      // different value that compares equal to the one sent, so nothing
+      // downstream would ever notice the snapshot had changed.
+      expect(JSON.stringify({ value: -0 })).toBe('{"value":0}');
+      const parsed = JSON.parse('{"value":-0}') as { value: number };
+      expect(Object.is(parsed.value, -0)).toBe(true);
+
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { offset: -0 } }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(calls).toHaveLength(0);
+    });
+
+    it.each([
+      ['nested in an object', { git: { offset: -0 } }],
+      ['inside an array', { offsets: [1, -0] }],
+    ])('refuses negative zero %s', async (_name, snapshot) => {
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(memory.createEnvironment(PROJECT_ID, { snapshot })).rejects.toBeInstanceOf(
+        MemoryApiArgumentError,
+      );
+      expect(calls).toHaveLength(0);
+    });
+
+    it('still accepts an ordinary zero', async () => {
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await memory.createEnvironment(PROJECT_ID, { snapshot: { offset: 0, other: -1 } });
+
+      expect(bodyOf(calls[0])).toEqual({ snapshot: { offset: 0, other: -1 } });
+    });
+  });
+
+  describe('values that would serialise as something else entirely', () => {
+    it('refuses an array subclass carrying an inherited toJSON, without calling it', async () => {
+      // Its own keys are a perfectly dense list, so every structural check
+      // passes — and the wire gets whatever the method returned.
+      let invocations = 0;
+      class RewritingArray extends Array<unknown> {
+        toJSON(): unknown {
+          invocations += 1;
+          return ['changed'];
+        }
+      }
+      const versions = new RewritingArray();
+      versions.push('original');
+      expect(JSON.stringify({ versions })).toBe('{"versions":["changed"]}');
+      // That demonstration invoked it, which is the whole point. Reset, so
+      // what the counter measures below is the validator alone.
+      invocations = 0;
+
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { versions } as never }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(invocations).toBe(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses a plain object whose prototype carries a toJSON, without calling it', async () => {
+      let invocations = 0;
+      const prototype = {
+        toJSON(): unknown {
+          invocations += 1;
+          return 'replaced';
+        },
+      };
+      const git = Object.create(prototype) as Record<string, string>;
+      git['branch'] = 'main';
+
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { git } }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(invocations).toBe(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses an inherited accessor named toJSON without ever reading it', async () => {
+      // `stringify` would run this getter during its own lookup, and so would
+      // any validator that discovered `toJSON` by reading the property.
+      let invocations = 0;
+      const prototype = {};
+      Object.defineProperty(prototype, 'toJSON', {
+        configurable: true,
+        get() {
+          invocations += 1;
+          throw new Error('a getter nobody should have reached');
+        },
+      });
+      const git = Object.create(prototype) as Record<string, string>;
+      git['branch'] = 'main';
+
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      // An argument error, not the getter's own error escaping through the
+      // client — which is what a property read would have produced.
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { git } }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(invocations).toBe(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses an array whose prototype defines toJSON as a getter, without reading it', async () => {
+      // The case that reaches furthest. An array skips the plain-object
+      // prototype check entirely — it is an array, that is the point — so an
+      // accessor on a subclass prototype is the one place an inherited
+      // `toJSON` gets all the way to the hook check. Its own keys are dense
+      // and ordinary, and the wire would get whatever the getter returned.
+      let invocations = 0;
+      class AccessorArray extends Array<unknown> {}
+      Object.defineProperty(AccessorArray.prototype, 'toJSON', {
+        configurable: true,
+        get() {
+          invocations += 1;
+          return () => ['changed-via-getter'];
+        },
+      });
+      const versions = new AccessorArray();
+      versions.push('original');
+      expect(JSON.stringify({ versions })).toBe('{"versions":["changed-via-getter"]}');
+      // That demonstration ran the getter; the validator must not.
+      invocations = 0;
+
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { versions } as never }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(invocations).toBe(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('accepts a property merely named toJSON when it is ordinary data', async () => {
+      // The rule is about a hook serialisation would execute, not about a key
+      // with a particular name. `stringify` keeps this one, so refusing it
+      // would be the client inventing a reserved word the API does not have.
+      const snapshot = { branch: 'main', toJSON: 'ordinary-data' };
+      expect(JSON.stringify(snapshot)).toBe('{"branch":"main","toJSON":"ordinary-data"}');
+
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await memory.createEnvironment(PROJECT_ID, { snapshot });
+
+      expect(bodyOf(calls[0])).toEqual({ snapshot });
+    });
+  });
+
   describe('ordinary structures still travel', () => {
     // The other half of tightening a check: it has to keep accepting the
     // things it was always meant to carry.
@@ -496,6 +653,39 @@ describe('recording an Environment', () => {
     await expect(memory.createEnvironment(PROJECT_ID, { snapshot: {} })).rejects.toBeInstanceOf(
       MemoryApiProtocolError,
     );
+  });
+
+  it('refuses an answer whose snapshot carries a negative zero', async () => {
+    // `JSON.parse` *does* preserve `-0`, so this one genuinely arrives — and
+    // it could not be sent back out again as what it is. Raw body on purpose:
+    // `JSON.stringify` would erase the condition before the parser saw it.
+    const raw = `{"environment_id":"${ENVIRONMENT_ID}","owner_id":"${ENVIRONMENT.owner_id}","project_id":"${PROJECT_ID}","snapshot":{"offset":-0},"created_at":"2026-01-01T00:00:00.000Z"}`;
+    expect(
+      Object.is((JSON.parse(raw) as { snapshot: { offset: number } }).snapshot.offset, -0),
+    ).toBe(true);
+
+    const fetch: FetchLike = () =>
+      Promise.resolve(
+        new Response(raw, { status: 201, headers: { 'content-type': 'application/json' } }),
+      );
+    const memory = createMemoryApiClient({ credential: CREDENTIAL, fetch });
+
+    await expect(memory.createEnvironment(PROJECT_ID, { snapshot: {} })).rejects.toBeInstanceOf(
+      MemoryApiProtocolError,
+    );
+  });
+
+  it('accepts an answer whose snapshot carries an ordinary zero', async () => {
+    const raw = `{"environment_id":"${ENVIRONMENT_ID}","owner_id":"${ENVIRONMENT.owner_id}","project_id":"${PROJECT_ID}","snapshot":{"offset":0},"created_at":"2026-01-01T00:00:00.000Z"}`;
+    const fetch: FetchLike = () =>
+      Promise.resolve(
+        new Response(raw, { status: 201, headers: { 'content-type': 'application/json' } }),
+      );
+    const memory = createMemoryApiClient({ credential: CREDENTIAL, fetch });
+
+    await expect(memory.createEnvironment(PROJECT_ID, { snapshot: {} })).resolves.toMatchObject({
+      snapshot: { offset: 0 },
+    });
   });
 
   it('accepts an ordinary snapshot coming back', async () => {
