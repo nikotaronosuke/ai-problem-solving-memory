@@ -5166,3 +5166,53 @@ describe('successful directions', () => {
     }
   });
 });
+
+describe('what the transport maps a failure from', () => {
+  it('answers for application failures, not for domain ones', async () => {
+    const source = await readFile(join(SRC, 'http', 'app.ts'), 'utf8');
+    const code = source.replace(/\/\*\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // The error handler decides what a caller is told. What it decides *from*
+    // is the application layer's vocabulary: `InvalidApplicationInputError`
+    // means "this service would not accept that", which is exactly what a 400
+    // says. A domain error class named here would mean the edge had learned a
+    // rule from two layers down — and then every new domain rule is a
+    // transport change, which is how an edge accumulates knowledge of the
+    // things it exists to be insulated from.
+    //
+    // This is deliberately narrow. `src/http/resources.ts` mirrors domain
+    // enums and constants and should: describing what a value may be is not
+    // the same as mapping how a failure is reported.
+    for (const forbidden of [
+      'InvalidProjectFieldError',
+      'InvalidProjectIdError',
+      'InvalidProblemFieldError',
+      'InvalidOwnerIdError',
+    ]) {
+      expect(`app.ts maps ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `app.ts maps ${forbidden}:false`,
+      );
+    }
+
+    // And the one it does map is still there, so this cannot pass by the
+    // handler having lost its input branch altogether.
+    expect(code).toContain('InvalidApplicationInputError');
+  });
+
+  it('translates a refused Project field where both layers are known', async () => {
+    const source = await readFile(join(SRC, 'app', 'project-environment-service.ts'), 'utf8');
+    const code = source.replace(/\/\*\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // The other side of the same boundary: the application layer is where the
+    // domain's refusal becomes the application's, because it is the only layer
+    // that legitimately knows both.
+    expect(code).toContain('InvalidProjectFieldError');
+    expect(code).toContain('InvalidApplicationInputError');
+
+    // Translated generically rather than by asking which field it was. A rule
+    // added to the Project domain later needs no change here.
+    expect(`the service inspects error.field:${code.includes('.field')}`).toBe(
+      'the service inspects error.field:false',
+    );
+  });
+});

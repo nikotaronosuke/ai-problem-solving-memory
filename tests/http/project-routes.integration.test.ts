@@ -279,6 +279,30 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
       expect(response.json()).toMatchObject({ error: { code: 'INVALID_REQUEST' } });
     });
 
+    it('answers a refused boundary with the ordinary refusal envelope', async () => {
+      // The status and the code are unchanged by where the translation
+      // happens: the domain refuses, the application layer says the input was
+      // not acceptable, and the transport answers the same 400 it answers for
+      // every other input it will not take.
+      const actor = await makeActor();
+
+      const response = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'bad', repo_subpath: '../escape' },
+      });
+
+      expect(response.statusCode).toBe(400);
+      const body = response.json<{
+        error: { code: string; message: string };
+        request_id: string;
+      }>();
+      expect(body.error.code).toBe('INVALID_REQUEST');
+      expect(typeof body.request_id).toBe('string');
+      // Fixed prose selected by the code, not built from what was sent.
+      expect(body.error.message.includes('escape')).toBe(false);
+    });
+
     it('keeps the refused value out of the answer', async () => {
       const planted = '/home/someone-private/clients/acme/checkout';
       const actor = await makeActor();
