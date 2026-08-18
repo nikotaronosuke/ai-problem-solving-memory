@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createMemoryApiClient,
+  MemoryApiArgumentError,
   MemoryApiError,
   MemoryApiProtocolError,
   MemoryApiUnreachableError,
@@ -74,6 +75,12 @@ function jsonResponse(status: number, body: unknown): Response {
 
 function errorEnvelope(code: string): unknown {
   return { error: { code, message: 'a fixed sentence' }, request_id: 'req-0000000000000000' };
+}
+
+/** The JSON body a recorded call carried, if it carried one. */
+function bodyOf(call: Call | undefined): Record<string, unknown> {
+  const body = call?.init?.body;
+  return JSON.parse(typeof body === 'string' ? body : '{}') as Record<string, unknown>;
 }
 
 function answering(status: number, body: unknown) {
@@ -177,6 +184,221 @@ describe('what listing Projects returns', () => {
     expect(Object.keys(projects[0] ?? {}).sort()).toEqual([...PROJECT_RESOURCE_FIELDS].sort());
     expect(projects[0]?.repo).toBeNull();
     expect(projects[0]?.platform).toBeNull();
+  });
+});
+
+describe('creating a Project', () => {
+  it('posts to the collection with the name it was given', async () => {
+    const { calls, memory } = answering(201, { ...FIRST, repo_subpath: null });
+
+    await memory.createProject({ project_name: 'widget' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('http://127.0.0.1:3000/v1/projects');
+    expect(calls[0]?.init?.method).toBe('POST');
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    expect(headers['authorization']).toBe(`Bearer ${CREDENTIAL}`);
+    expect(bodyOf(calls[0])).toEqual({ project_name: 'widget' });
+  });
+
+  it('sends every field when they are all given', async () => {
+    const { calls, memory } = answering(201, FIRST);
+
+    await memory.createProject({
+      project_name: 'widget',
+      repo: 'github.com/acme/widget',
+      platform: 'typescript',
+      repo_subpath: 'apps/web',
+    });
+
+    expect(bodyOf(calls[0])).toEqual({
+      project_name: 'widget',
+      repo: 'github.com/acme/widget',
+      platform: 'typescript',
+      repo_subpath: 'apps/web',
+    });
+  });
+
+  it('keeps absent and null apart on the wire', async () => {
+    const { calls, memory } = answering(201, { ...FIRST, repo_subpath: null });
+
+    await memory.createProject({ project_name: 'widget', repo: null });
+
+    const body = bodyOf(calls[0]);
+    expect('repo' in body).toBe(true);
+    expect(body['repo']).toBeNull();
+    expect('platform' in body).toBe(false);
+    expect('repo_subpath' in body).toBe(false);
+  });
+
+  it.each([
+    ['a blank name', { project_name: '' }],
+    ['a whitespace-only name', { project_name: '   \t ' }],
+    ['no name at all', { repo: 'github.com/acme/widget' }],
+    ['a name that is not a string', { project_name: 7 }],
+    ['an owner', { project_name: 'widget', owner_id: 'someone' }],
+    ['an id', { project_name: 'widget', project_id: 'something' }],
+    ['a timestamp', { project_name: 'widget', created_at: '2026-01-01T00:00:00.000Z' }],
+    ['a misspelled field', { project_name: 'widget', repo_subpaths: 'apps/web' }],
+    ['a non-string repo', { project_name: 'widget', repo: 7 }],
+    ['a non-string platform', { project_name: 'widget', platform: [] }],
+    ['a non-string boundary', { project_name: 'widget', repo_subpath: 7 }],
+  ])('refuses a request carrying %s, before spending a request', async (_name, request) => {
+    const { calls, memory } = answering(201, FIRST);
+
+    await expect(memory.createProject(request as never)).rejects.toBeInstanceOf(
+      MemoryApiArgumentError,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not judge what a repository boundary may look like', async () => {
+    // The server owns that rule, and a second copy here would be a second thing
+    // to keep in step. A boundary this client cannot vouch for is a request the
+    // server answers 400 to — which is the server answering for its own rule.
+    const { calls, memory } = answering(400, errorEnvelope('INVALID_REQUEST'));
+
+    await expect(
+      memory.createProject({ project_name: 'widget', repo_subpath: '../escape' }),
+    ).rejects.toBeInstanceOf(MemoryApiError);
+    // It was sent, rather than refused locally.
+    expect(calls).toHaveLength(1);
+  });
+
+  it('names one argument and never the name it refused', async () => {
+    const planted = 'a-project-name-nobody-should-log';
+    const { memory } = answering(201, FIRST);
+
+    const raised = await memory
+      .createProject({ project_name: planted, surprise: 1 } as never)
+      .catch((error: unknown) => error);
+
+    expect((raised as MemoryApiArgumentError).argument).toBe('project');
+    expect((raised as Error).message.includes(planted)).toBe(false);
+  });
+
+  it('returns the Project exactly as it arrived', async () => {
+    const { memory } = answering(201, FIRST);
+
+    await expect(
+      memory.createProject({ project_name: 'widget', repo_subpath: 'apps/web' }),
+    ).resolves.toEqual(FIRST);
+  });
+
+  describe('what the server is allowed to change', () => {
+    // The server trims a name and turns blank text into null. A client that
+    // demanded raw equality would call a correct server malformed — which is
+    // why only the boundary is compared.
+
+    it('accepts a name it trimmed', async () => {
+      const { memory } = answering(201, { ...FIRST, project_name: 'widget', repo_subpath: null });
+
+      await expect(memory.createProject({ project_name: '  widget  ' })).resolves.toMatchObject({
+        project_name: 'widget',
+      });
+    });
+
+    it('accepts a repository it emptied to null', async () => {
+      const { memory } = answering(201, { ...FIRST, repo: null, repo_subpath: null });
+
+      await expect(
+        memory.createProject({ project_name: 'widget', repo: '   ' }),
+      ).resolves.toMatchObject({ repo: null });
+    });
+
+    it('accepts a platform it emptied to null', async () => {
+      const { memory } = answering(201, { ...FIRST, platform: null, repo_subpath: null });
+
+      await expect(
+        memory.createProject({ project_name: 'widget', platform: '' }),
+      ).resolves.toMatchObject({ platform: null });
+    });
+  });
+
+  describe('what the server is not allowed to change', () => {
+    it.each([
+      ['a different boundary', 'apps/web', 'apps/api'],
+      ['a boundary where none was asked for', undefined, 'apps/web'],
+      ['no boundary where one was asked for', 'apps/web', null],
+    ])('refuses an answer carrying %s', async (_name, requested, answered) => {
+      // A boundary is identity material and is never normalised, so a
+      // difference here is the server describing a different Project.
+      const { memory } = answering(201, { ...FIRST, repo_subpath: answered });
+
+      await expect(
+        memory.createProject({
+          project_name: 'widget',
+          ...(requested === undefined ? {} : { repo_subpath: requested }),
+        }),
+      ).rejects.toBeInstanceOf(MemoryApiProtocolError);
+    });
+
+    it('accepts a null boundary answered for an absent one', async () => {
+      const { memory } = answering(201, { ...FIRST, repo_subpath: null });
+
+      await expect(memory.createProject({ project_name: 'widget' })).resolves.toMatchObject({
+        repo_subpath: null,
+      });
+    });
+  });
+
+  it.each([
+    ['a missing field', 'omit'],
+    ['an extra field', 'extra'],
+    ['a boundary that is not text or null', 'type'],
+  ])('refuses an answer with %s', async (_name, kind) => {
+    const bodies: Record<string, unknown> = {
+      omit: Object.fromEntries(Object.entries(FIRST).filter(([key]) => key !== 'platform')),
+      extra: { ...FIRST, archived: false },
+      type: { ...FIRST, repo_subpath: 7 },
+    };
+    const { memory } = answering(201, bodies[kind]);
+
+    await expect(
+      memory.createProject({ project_name: 'widget', repo_subpath: 'apps/web' }),
+    ).rejects.toBeInstanceOf(MemoryApiProtocolError);
+  });
+
+  it.each([
+    [400, 'INVALID_REQUEST'],
+    [500, 'INTERNAL_ERROR'],
+  ])('raises on %d', async (status, code) => {
+    const { memory } = answering(status, errorEnvelope(code));
+
+    await expect(memory.createProject({ project_name: 'widget' })).rejects.toBeInstanceOf(
+      MemoryApiError,
+    );
+  });
+
+  it('raises when nothing answered, and does not try again', async () => {
+    // A resend could create a second Project for one repository, which is the
+    // duplicate this whole design works to avoid.
+    let attempts = 0;
+    const fetch: FetchLike = () => {
+      attempts += 1;
+      return Promise.reject(new Error('socket hang up'));
+    };
+    const memory = createMemoryApiClient({ credential: CREDENTIAL, fetch });
+
+    await expect(memory.createProject({ project_name: 'widget' })).rejects.toBeInstanceOf(
+      MemoryApiUnreachableError,
+    );
+    expect(attempts).toBe(1);
+  });
+
+  it('uses the ordinary deadline', async () => {
+    const seen: number[] = [];
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+      seen.push(ms);
+      return timeout(ms);
+    });
+
+    const { memory } = answering(201, FIRST);
+    await memory.createProject({ project_name: 'widget', repo_subpath: 'apps/web' });
+
+    expect(seen).toEqual([MEMORY_API_REQUEST_TIMEOUT_MS]);
+    spy.mockRestore();
   });
 });
 

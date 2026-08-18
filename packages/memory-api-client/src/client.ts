@@ -50,7 +50,13 @@ import {
   type CreateProblemRequest,
   type ProblemResource,
 } from './problem.js';
-import { isProjectListBody, type ProjectResource } from './project.js';
+import {
+  isCreateProjectRequest,
+  isProjectListBody,
+  isProjectResource,
+  type CreateProjectRequest,
+  type ProjectResource,
+} from './project.js';
 import {
   isMemorySearchRequest,
   isMemorySearchResponse,
@@ -170,6 +176,22 @@ export interface MemoryApiClient {
    * disagrees with its own route is not an answer this contract describes.
    */
   listProblems(projectId: string): Promise<readonly ProblemResource[]>;
+
+  /**
+   * Creates a Project.
+   *
+   * A Project is a long-lived record and there is no delete for one, so this
+   * is the write in this client that is hardest to take back. It happens once
+   * per call and is not retried: if no answer comes, the caller does not know
+   * whether it committed, and only the caller knows how to find out.
+   *
+   * The answer is checked for being a Project, and for carrying back the
+   * repository boundary that was asked for — but **not** for echoing the name,
+   * repository or platform verbatim. The server normalises those: it trims a
+   * name, and turns blank text into null. A client demanding raw equality
+   * would call a correct server malformed.
+   */
+  createProject(request: CreateProjectRequest): Promise<ProjectResource>;
 
   /**
    * Records the conditions a Problem was found under.
@@ -444,6 +466,56 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
       }
 
       return body.problems;
+    },
+
+    async createProject(request): Promise<ProjectResource> {
+      if (!isCreateProjectRequest(request)) {
+        // Named as one argument and carrying none of it: a project name is
+        // somebody's own word for their own work.
+        throw new MemoryApiArgumentError('project');
+      }
+
+      // Field by field, so an extra property on the caller's object cannot
+      // travel, and `undefined` is never written — absent stays absent and an
+      // explicit `null` stays null.
+      const payload: Record<string, unknown> = { project_name: request.project_name };
+      if ('repo' in request) {
+        payload['repo'] = request.repo;
+      }
+      if ('platform' in request) {
+        payload['platform'] = request.platform;
+      }
+      if ('repo_subpath' in request) {
+        payload['repo_subpath'] = request.repo_subpath;
+      }
+
+      const { status, body } = await send('/v1/projects', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (!isProjectResource(body)) {
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      // The one field worth comparing. A boundary is identity material and the
+      // server never normalises it — it validates and stores it exactly — so a
+      // Project that came back covering a different part of the repository than
+      // the one asked for is not an answer to this request.
+      //
+      // The name, the repository and the platform are deliberately *not*
+      // compared: those the server does normalise, and demanding equality would
+      // make a correct response look like a broken one.
+      if (body.repo_subpath !== (request.repo_subpath ?? null)) {
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body;
     },
 
     async createEnvironment(projectId, request): Promise<EnvironmentResource> {

@@ -45,6 +45,18 @@ export {
 } from './project-resolution.js';
 
 export {
+  registerProject,
+  selectProject,
+  ProjectRegistrationArgumentError,
+  ProjectRegistrationInvariantError,
+  type ProjectRegistrationChoice,
+  type ProjectRegistrationClient,
+  type ProjectRegistrationResult,
+  type ProjectSelectionClient,
+  type ProjectSelectionResult,
+} from './project-outcome.js';
+
+export {
   captureEnvironment,
   EnvironmentCaptureArgumentError,
   type CaptureEnvironmentInput,

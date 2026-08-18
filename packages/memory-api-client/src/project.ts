@@ -105,3 +105,64 @@ export function isProjectListBody(value: unknown): value is { projects: ProjectR
   const projects = value['projects'];
   return Array.isArray(projects) && projects.every((entry) => isProjectResource(entry));
 }
+
+/**
+ * What creating a Project sends.
+ *
+ * A name and three optional fields. Ownership, identity and timestamps are the
+ * server's and appear nowhere here — a caller cannot declare them, and the
+ * absence of the fields is the first place that is true.
+ *
+ * Absent and `null` are kept apart on the way out, as everywhere else in this
+ * package, because they are different things to say.
+ */
+export interface CreateProjectRequest {
+  readonly project_name: string;
+  readonly repo?: string | null;
+  readonly platform?: string | null;
+  readonly repo_subpath?: string | null;
+}
+
+/** The fields a create request may carry, in the contract's order. */
+export const CREATE_PROJECT_REQUEST_FIELDS = [
+  'project_name',
+  'repo',
+  'platform',
+  'repo_subpath',
+] as const;
+
+/** The three the route declares nullable free-form text. */
+const OPTIONAL_CREATE_PROJECT_FIELDS = ['repo', 'platform', 'repo_subpath'] as const;
+
+/**
+ * Whether a request is one this client will send.
+ *
+ * Mirrored from the **route's** schema rather than from what the server does
+ * with a value afterwards. The route accepts nullable text for all three
+ * optional fields, so that is what is checked here.
+ *
+ * `repo_subpath` in particular is deliberately not parsed. The server owns
+ * what a repository boundary may be, and a second copy of that rule living
+ * here would be a second thing to keep in step — and the first to be wrong
+ * the day the rule moves. A structurally valid request carrying a boundary the
+ * server refuses is a `400`, which is the server answering for its own rule.
+ */
+export function isCreateProjectRequest(value: unknown): value is CreateProjectRequest {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const allowed = new Set<string>(CREATE_PROJECT_REQUEST_FIELDS);
+  if (!Object.keys(value).every((key) => allowed.has(key))) {
+    return false;
+  }
+
+  const name = value['project_name'];
+  if (typeof name !== 'string' || !/\S/.test(name)) {
+    return false;
+  }
+
+  return OPTIONAL_CREATE_PROJECT_FIELDS.every(
+    (field) => !(field in value) || value[field] === null || typeof value[field] === 'string',
+  );
+}
