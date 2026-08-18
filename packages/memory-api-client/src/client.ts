@@ -37,7 +37,7 @@ import {
   MemoryApiProtocolError,
   MemoryApiUnreachableError,
 } from './errors.js';
-import { isProblemResource, type ProblemResource } from './problem.js';
+import { isProblemListBody, isProblemResource, type ProblemResource } from './problem.js';
 import { isProjectListBody, type ProjectResource } from './project.js';
 import {
   isMemorySearchRequest,
@@ -135,6 +135,29 @@ export interface MemoryApiClient {
    * than a fault.
    */
   listProjects(): Promise<readonly ProjectResource[]>;
+
+  /**
+   * Lists every Problem recorded under one Project, in every state.
+   *
+   * The same rules as `listProjects`: the server's order, unchanged, with
+   * nothing sorted, filtered, de-duplicated or renumbered here. Which of these
+   * Problems is worth anything to a caller — whether a state can still be
+   * worked on, whether one of them is the thing being discussed right now — is
+   * the caller's question, and answering part of it here would make this method
+   * a policy with a list attached.
+   *
+   * A Project with no Problems gets an empty array. A Project that does not
+   * exist, or is not this owner's, is a `MemoryApiError` with `NOT_FOUND`, and
+   * it stays one: turning it into an empty list would say "no Problems here"
+   * about a Project the caller cannot see, which is the same sentence with a
+   * different meaning.
+   *
+   * Every element is validated and one malformed Problem fails the whole
+   * answer. So does a Problem belonging to a different Project than the one
+   * asked about — the request named the Project in its path, and a body that
+   * disagrees with its own route is not an answer this contract describes.
+   */
+  listProblems(projectId: string): Promise<readonly ProblemResource[]>;
 
   /**
    * Finds past memory worth reading for the Problem being worked on.
@@ -348,6 +371,37 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
       }
 
       return body.projects;
+    },
+
+    async listProblems(projectId): Promise<readonly ProblemResource[]> {
+      if (!PATH_SAFE_ID.test(projectId)) {
+        throw new MemoryApiArgumentError('project id');
+      }
+
+      const { status, body } = await send(`/v1/projects/${projectId}/problems`, {
+        method: 'GET',
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (!isProblemListBody(body)) {
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      // The route named the Project and the body has to agree with it. A
+      // Problem from somewhere else is not a Problem this caller asked about,
+      // and passing it on would put another Project's work into whatever is
+      // deciding what is being worked on here. Same failure as any other body
+      // this contract cannot read: nothing about it is a refusal, and there is
+      // no useful third answer between "the list" and "not the list".
+      if (body.problems.some((problem) => problem.project_id !== projectId)) {
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body.problems;
     },
 
     async search(problemId, request): Promise<MemorySearchOutcome> {

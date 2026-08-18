@@ -127,11 +127,12 @@ describe('reading the environment', () => {
     // Exactly the common client's surface. No configuration object beside it,
     // and so nowhere for the credential to be read back from.
     //
-    // It grew `search` in P5-02c-impl-2 and this adapter did not change: it
-    // returns the client it built, so a method the client gains arrives here for
-    // free. What the adapter must *not* have gained is policy about when to
-    // search or what to call itself, which a guard in the server's suite checks.
-    expect(Object.keys(client)).toEqual(['getProblem', 'listProjects', 'search']);
+    // It has grown twice now — `search`, then `listProblems` — and this adapter
+    // did not change either time: it returns the client it built, so a method
+    // the client gains arrives here for free. What the adapter must *not* have
+    // gained is policy about when to search or what to call itself, which a
+    // guard in the server's suite checks.
+    expect(Object.keys(client)).toEqual(['getProblem', 'listProjects', 'listProblems', 'search']);
     expect(JSON.stringify(client).includes(TOKEN)).toBe(false);
   });
 

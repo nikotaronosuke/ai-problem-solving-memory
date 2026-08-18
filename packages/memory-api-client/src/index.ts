@@ -3,7 +3,7 @@
  *
  * One export list, so what this package promises is readable in one place. It
  * grows a method at a time, when a task needs one: the API has twenty-eight
- * operations and this client has three, because a client method that no caller
+ * operations and this client has four, because a client method that no caller
  * has is a guess about how it will be called.
  *
  * What is exported from the search module is the contract: the request and
@@ -94,6 +94,7 @@ export {
 } from './project.js';
 
 export {
+  isProblemListBody,
   isProblemResource,
   CONFIDENCES,
   FIX_KINDS,
