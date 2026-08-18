@@ -201,9 +201,17 @@ describe('what this package is not, yet', () => {
         'CLAUDE_PROJECT_DIR',
         'roots/list',
         'hookSpecificOutput',
-        'session_id',
       ]) {
         expect(`${path}:${code.includes(forbidden)}`).toBe(`${path}:false`);
+      }
+
+      // `session_id` is the one term that stopped being package-wide. The
+      // binding store persists it as a record field, which is the whole of
+      // what that module is for; everywhere else it would still mean this
+      // package had started handling host session payloads. Narrowed by name
+      // rather than dropped, and the store carries its own tighter guard.
+      if (!path.endsWith('problem-binding-store.ts')) {
+        expect(`${path}:${code.includes('session_id')}`).toBe(`${path}:false`);
       }
     }
   });

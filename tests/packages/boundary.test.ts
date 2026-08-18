@@ -544,29 +544,104 @@ describe('the Claude adapter, still', () => {
   });
 
   it('resolves a current Problem without keeping anything between calls', async () => {
-    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
-      file.path.startsWith('src/'),
-    );
+    const shipped = await sourcesOf('claude-code-adapter');
+    const resolver = shipped.find((file) => file.path === 'src/problem-resolution.ts');
+    expect(resolver).toBeDefined();
+    const code = codeOnly(resolver?.source ?? '');
 
     // A binding arrives as an argument and leaves with the call. Where one is
     // stored, how long it lives, and what a session identifier has to do with
-    // it are a later task's questions — and a resolver that reached for a file
-    // or a session id would settle them here, quietly, in the module least
-    // suited to owning them.
+    // it belong to the store beside it — and a resolver that reached for a file
+    // or a session id would take that over quietly, in the module least suited
+    // to owning it.
+    for (const forbidden of [
+      'node:fs',
+      'node:path',
+      'node:crypto',
+      'writeFile',
+      'readFile',
+      'sessionId',
+      'session_id',
+      'CLAUDE_SESSION',
+    ]) {
+      expect(`the resolver reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the resolver reaches for ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('keeps local persistence and session identity in exactly one module', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+    const STORE = 'src/problem-binding-store.ts';
+    expect(shipped.map((file) => file.path)).toContain(STORE);
+
+    // The store owns filesystem persistence, session identity and the path and
+    // hash mechanics that go with them. That is a real widening of what this
+    // package may do, so it is bounded by name rather than by intention: a
+    // second module quietly starting to keep session state is the thing this
+    // catches, and it is the version of this mistake nobody would notice.
     for (const { path, source } of shipped) {
+      if (path === STORE) {
+        continue;
+      }
       const code = codeOnly(source);
       for (const forbidden of [
         'node:fs',
         'writeFile',
         'readFile',
+        'mkdir',
         'sessionId',
         'session_id',
-        'CLAUDE_SESSION',
+        'createHash',
       ]) {
         expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
           `${path} reaches for ${forbidden}:false`,
         );
       }
+    }
+  });
+
+  it('keeps the binding store free of everything that is not persistence', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const store = shipped.find((file) => file.path === 'src/problem-binding-store.ts');
+    expect(store).toBeDefined();
+    const code = codeOnly(store?.source ?? '');
+
+    // It holds three identities and a file. Reaching the Memory, reading the
+    // host's environment, or deciding whether a binding *should* exist are each
+    // somebody else's question, and a store that answered one would be the
+    // place those decisions went to hide.
+    for (const forbidden of [
+      'fetch',
+      'MemoryApi',
+      'credential',
+      'Authorization',
+      'process.env',
+      'CLAUDE_PLUGIN',
+      'CLAUDE_PROJECT_DIR',
+      'homedir',
+      '.claude',
+      'resolveCurrentProblem',
+      'ProblemResource',
+      'INVESTIGATING',
+      'PAUSED',
+      'mcp',
+      'hook',
+    ]) {
+      expect(`the store reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the store reaches for ${forbidden}:false`,
+      );
+    }
+
+    // And it does not sweep, prune or expire anything. A stale binding is tiny
+    // and is revalidated against the server whenever it is used; a store that
+    // aged them out would be deleting the state resume continuity depends on.
+    for (const forbidden of ['readdir', 'TTL', 'prune', 'expire', 'Date.now', 'maxAge']) {
+      expect(`the store reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the store reaches for ${forbidden}:false`,
+      );
     }
   });
 
