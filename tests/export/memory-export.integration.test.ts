@@ -319,6 +319,42 @@ describe.skipIf(databaseUrl === undefined)('exporting an owner’s memory', () =
     await closePool(pool);
   });
 
+  describe('a project’s repository boundary', () => {
+    it('travels in the export, both stated and absent', async () => {
+      const owner = await makeOwner();
+      await post(owner, '/v1/projects', {
+        project_name: 'web',
+        repo: 'github.com/acme/widget',
+        repo_subpath: 'apps/web',
+      });
+      await post(owner, '/v1/projects', { project_name: 'whole' });
+
+      const artifact = await exportParsed(owner);
+      const projects = artifact['projects'] as { project_name: string; repo_subpath: unknown }[];
+      const boundaries = Object.fromEntries(
+        projects.map((project) => [project.project_name, project.repo_subpath]),
+      );
+
+      // An export carries the Memory rather than a partial view of it: a
+      // boundary the owner declared is part of what they take with them.
+      expect(boundaries['web']).toBe('apps/web');
+      expect(boundaries['whole']).toBeNull();
+    });
+
+    it('gives every exported project the field, whatever its value', async () => {
+      const owner = await makeOwner();
+      await post(owner, '/v1/projects', { project_name: 'anything' });
+
+      const artifact = await exportParsed(owner);
+      const projects = artifact['projects'] as Record<string, unknown>[];
+
+      expect(projects.length).toBeGreaterThan(0);
+      for (const project of projects) {
+        expect(project).toHaveProperty('repo_subpath');
+      }
+    });
+  });
+
   describe('the envelope', () => {
     it('gives an owner with nothing recorded eight empty arrays', async () => {
       const owner = await makeOwner();
@@ -338,7 +374,7 @@ describe.skipIf(databaseUrl === undefined)('exporting an owner’s memory', () =
     it('carries the format version, which is not the API contract version', async () => {
       const artifact = await exportParsed(await makeOwner());
 
-      expect(artifact['schema_version']).toBe('1');
+      expect(artifact['schema_version']).toBe('2');
 
       // The two move for different reasons. P3-05 took the contract from 0.2.0
       // to 0.3.0 and changed nothing about what an export contains; telling

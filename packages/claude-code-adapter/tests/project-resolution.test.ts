@@ -26,6 +26,9 @@ function project(overrides: Partial<ProjectResource> = {}): ProjectResource {
     project_name: 'widget',
     repo: 'github.com/acme/widget',
     platform: null,
+    // No declared boundary: the Project covers the whole repository, which is
+    // what every Project meant before boundaries existed.
+    repo_subpath: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     ...overrides,
@@ -367,7 +370,11 @@ describe('what a candidate is allowed to say', () => {
     }
   });
 
-  it('carries exactly three fields, and no path among them', async () => {
+  it('carries exactly four fields, and no path among them', async () => {
+    // The boundary joined them because choosing between two Projects on one
+    // repository *is* choosing between boundaries — a list showing only names
+    // would be asking somebody to decide without the thing they decide by. It
+    // is repository-relative, which an absolute path is not.
     const client = reader([project({ project_id: 'first' }), project({ project_id: 'second' })]);
 
     const resolution = await resolveProject(client, signals());
@@ -377,8 +384,263 @@ describe('what a candidate is allowed to say', () => {
         'canonicalRepo',
         'projectId',
         'projectName',
+        'repoSubpath',
       ]);
     }
+  });
+});
+
+describe('a repository whose parts the owner has split', () => {
+  /** A Project on the shared repository with a declared boundary. */
+  function part(projectId: string, repoSubpath: string | null): ProjectResource {
+    return project({ project_id: projectId, repo_subpath: repoSubpath });
+  }
+
+  /** A session launched somewhere inside that repository. */
+  function at(location: string | null): ProjectSignals {
+    return signals({ monorepoSubpath: location });
+  }
+
+  it('resolves the whole repository when no boundary is declared', async () => {
+    const client = reader([part('root', null)]);
+
+    await expect(resolveProject(client, at(null))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'root',
+    });
+  });
+
+  it('resolves a nested session to the Project covering the whole repository', async () => {
+    // A null boundary is the repository root, and the root contains everything
+    // in it.
+    const client = reader([part('root', null)]);
+
+    await expect(resolveProject(client, at('apps/web/client'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'root',
+    });
+  });
+
+  it('resolves a session inside a declared boundary', async () => {
+    const client = reader([part('web', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/web'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'web',
+    });
+  });
+
+  it('resolves a session below a declared boundary', async () => {
+    const client = reader([part('web', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/web/client'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'web',
+    });
+  });
+
+  it('does not treat a boundary as a raw string prefix', async () => {
+    // `apps/web-old` is a different directory from `apps/web`, and only a
+    // comparison that stops at a separator can tell. A prefix test would file
+    // one Project's work under another's.
+    const client = reader([part('web', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/web-old'))).resolves.toMatchObject({
+      kind: 'AMBIGUOUS',
+      reason: 'NO_MATCHING_REPO_BOUNDARY',
+    });
+  });
+
+  it('prefers the most specific boundary that covers the session', async () => {
+    const client = reader([part('root', null), part('web', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/web'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'web',
+    });
+    await expect(resolveProject(client, at('apps/web/client'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'web',
+    });
+  });
+
+  it('falls back to the repository-wide Project where no narrower one covers', async () => {
+    const client = reader([part('root', null), part('web', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/api'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'root',
+    });
+    await expect(resolveProject(client, at(null))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'root',
+    });
+  });
+
+  it('chooses the deepest of several nested boundaries', async () => {
+    const client = reader([part('root', null), part('apps', 'apps'), part('web', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/web/client'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'web',
+    });
+    await expect(resolveProject(client, at('apps/api'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'apps',
+    });
+  });
+
+  it('orders by path depth rather than by string length', async () => {
+    // `a/b` is deeper than `averylongdirectoryname`, and shorter.
+    const client = reader([part('long', 'averylongdirectoryname'), part('deep', 'a/b')]);
+
+    await expect(resolveProject(client, at('a/b/c'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'deep',
+    });
+  });
+
+  it('refuses to choose between two Projects declaring the same boundary', async () => {
+    const client = reader([part('first', 'apps/web'), part('second', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/web'))).resolves.toMatchObject({
+      kind: 'AMBIGUOUS',
+      reason: 'MULTIPLE_PROJECTS_FOR_REMOTE',
+    });
+  });
+
+  it('offers only the tied Projects, not the ones a boundary shadowed', async () => {
+    // The repository-wide Project lost to a decision the owner made, not to a
+    // coin flip. Offering it beside the tied pair would reopen a settled
+    // question alongside an unsettled one.
+    const client = reader([
+      part('root', null),
+      part('first', 'apps/web'),
+      part('second', 'apps/web'),
+    ]);
+
+    const resolution = await resolveProject(client, at('apps/web'));
+
+    expect(resolution).toMatchObject({ kind: 'AMBIGUOUS' });
+    if (resolution.kind === 'AMBIGUOUS') {
+      expect(resolution.candidates.map((candidate) => candidate.projectId).sort()).toEqual([
+        'first',
+        'second',
+      ]);
+    }
+  });
+
+  it.each([
+    ['at the repository root', null],
+    ['beside the declared parts', 'apps/api'],
+    ['somewhere else entirely', 'packages/shared'],
+  ])('asks rather than answering when the session sits %s', async (_name, location) => {
+    const client = reader([part('web', 'apps/web')]);
+
+    // Deliberately not UNREGISTERED. Three different things could be true —
+    // this location wants its own Project, it belongs to an existing one, or
+    // the owner wants a repository-wide Project — and answering "unregistered"
+    // would invite the next step to create a Project out of a directory
+    // layout.
+    await expect(resolveProject(client, at(location))).resolves.toMatchObject({
+      kind: 'AMBIGUOUS',
+      reason: 'NO_MATCHING_REPO_BOUNDARY',
+    });
+  });
+
+  it('asks even when the repository has exactly one Project', async () => {
+    // A single Project claiming `apps/web` says nothing about a session in
+    // `apps/api`. One candidate is not evidence.
+    const client = reader([part('web', 'apps/web')]);
+
+    await expect(resolveProject(client, at('apps/api'))).resolves.toMatchObject({
+      kind: 'AMBIGUOUS',
+      reason: 'NO_MATCHING_REPO_BOUNDARY',
+    });
+  });
+
+  it('offers every Project on the repository when none of them covers the session', async () => {
+    const client = reader([part('web', 'apps/web'), part('api', 'apps/api')]);
+
+    const resolution = await resolveProject(client, at('packages/shared'));
+
+    if (resolution.kind === 'AMBIGUOUS') {
+      expect(resolution.candidates.map((candidate) => candidate.projectId).sort()).toEqual([
+        'api',
+        'web',
+      ]);
+    }
+  });
+
+  it('shows the boundary on each candidate', async () => {
+    const client = reader([part('web', 'apps/web'), part('api', 'apps/api')]);
+
+    const resolution = await resolveProject(client, at('packages/shared'));
+
+    if (resolution.kind === 'AMBIGUOUS') {
+      expect(resolution.candidates.map((candidate) => candidate.repoSubpath).sort()).toEqual([
+        'apps/api',
+        'apps/web',
+      ]);
+    }
+  });
+
+  it('still reports an unrecorded repository as unregistered', async () => {
+    // Nothing records this repository at all, which is a different situation
+    // from a recorded repository whose parts do not cover the session.
+    const client = reader([project({ repo: 'github.com/acme/other' })]);
+
+    await expect(resolveProject(client, at('apps/web'))).resolves.toMatchObject({
+      kind: 'UNREGISTERED',
+    });
+  });
+
+  it('does not let a boundary promote a secondary remote into identity', async () => {
+    // The fork-and-upstream case is unchanged: a secondary match is a question
+    // however precisely its boundary lines up.
+    const client = reader([
+      project({
+        project_id: 'upstream',
+        repo: 'github.com/acme/upstream',
+        repo_subpath: 'apps/web',
+      }),
+    ]);
+
+    await expect(
+      resolveProject(
+        client,
+        signals({
+          primaryRemote: 'github.com/acme/fork',
+          secondaryRemotes: ['github.com/acme/upstream'],
+          monorepoSubpath: 'apps/web',
+        }),
+      ),
+    ).resolves.toMatchObject({
+      kind: 'AMBIGUOUS',
+      reason: 'ONLY_SECONDARY_REMOTE_MATCHED',
+    });
+  });
+
+  it('does not consult a boundary when a name is the only evidence', async () => {
+    const client = reader([project({ project_id: 'named', repo: null, repo_subpath: 'apps/web' })]);
+
+    await expect(
+      resolveProject(client, signals({ primaryRemote: null, monorepoSubpath: 'apps/web' })),
+    ).resolves.toMatchObject({ kind: 'AMBIGUOUS', reason: 'NAME_ONLY_MATCH' });
+  });
+
+  it('decides from boundaries alone, never from the order they arrived in', async () => {
+    const forwards = reader([part('first', 'apps/web'), part('second', null)]);
+    const backwards = reader([part('second', null), part('first', 'apps/web')]);
+
+    await expect(resolveProject(forwards, at('apps/web'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'first',
+    });
+    await expect(resolveProject(backwards, at('apps/web'))).resolves.toEqual({
+      kind: 'RESOLVED',
+      projectId: 'first',
+    });
   });
 });
 

@@ -763,7 +763,7 @@ describe.skipIf(databaseUrl === undefined)('Phase 3, end to end', { sequential: 
     expect(response.status).toBe(200);
 
     const artifact = JSON.parse(response.body) as Record<string, unknown>;
-    expect(artifact['schema_version']).toBe('1');
+    expect(artifact['schema_version']).toBe('2');
     expect(artifact['source_owner_id']).toBe(ownerId);
     for (const key of EXPORT_COLLECTIONS) {
       expect(Array.isArray(artifact[key]), `collection ${key}`).toBe(true);

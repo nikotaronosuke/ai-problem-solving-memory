@@ -55,6 +55,7 @@ import {
   ResourceNotFoundError,
   SanitizationRejectedError,
 } from '../app/index.js';
+import { InvalidProjectFieldError } from '../domain/project.js';
 import { buildErrorEnvelope, ERROR_RESPONSE_SCHEMA, ERROR_STATUS } from './errors.js';
 import { registerChangeLogRoutes } from './change-log-routes.js';
 import { registerEventRoutes } from './event-routes.js';
@@ -466,7 +467,8 @@ export function buildMemoryHttpApp(dependencies: MemoryHttpAppDependencies): Fas
 
     if (
       error instanceof InvalidApplicationInputError ||
-      error instanceof InvalidRetrievalSearchError
+      error instanceof InvalidRetrievalSearchError ||
+      error instanceof InvalidProjectFieldError
     ) {
       // The error itself is not logged, and neither is its message. Every call
       // site that raises one writes a fixed sentence today, but the
