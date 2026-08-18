@@ -26,7 +26,12 @@ import {
   type MemoryApiClient,
 } from '@ai-problem-solving-memory/api-client';
 
-import { startProblem } from '@ai-problem-solving-memory/claude-code-adapter';
+import {
+  registerProject,
+  resolveProject,
+  startProblem,
+  type ProjectSignals,
+} from '@ai-problem-solving-memory/claude-code-adapter';
 
 import {
   createChangeLogService,
@@ -137,6 +142,165 @@ describe.skipIf(databaseUrl === undefined)('the client writing through the real 
     expect(created.statusCode).toBe(201);
     return (JSON.parse(created.body) as { project_id: string }).project_id;
   }
+
+  /** Signals for a session in a repository nothing has recorded yet. */
+  function signalsFor(remote: string, subpath: string | null): ProjectSignals {
+    return {
+      projectNameHint: remote.split('/').pop() ?? 'project',
+      insideGit: true,
+      primaryRemote: remote,
+      secondaryRemotes: [],
+      monorepoSubpath: subpath,
+    };
+  }
+
+  describe('creating a Project across the real wire', () => {
+    it('creates one covering a whole repository', async () => {
+      const created = await memory.createProject({
+        project_name: 'write-path-root',
+        repo: 'github.com/acme/write-path-root',
+      });
+
+      expect(created.owner_id).toBe(ownerId);
+      expect(created.repo).toBe('github.com/acme/write-path-root');
+      expect(created.repo_subpath).toBeNull();
+    });
+
+    it('creates one covering a part of a repository', async () => {
+      const created = await memory.createProject({
+        project_name: 'write-path-part',
+        repo: 'github.com/acme/write-path-part',
+        repo_subpath: 'apps/web',
+      });
+
+      expect(created.repo_subpath).toBe('apps/web');
+    });
+
+    it('accepts the fields the server normalises on the way in', async () => {
+      // The server trims a name and empties blank text to null. The client
+      // deliberately does not demand raw equality for those, and this is where
+      // that would show up as a false protocol failure if it did.
+      const created = await memory.createProject({
+        project_name: '  write-path-normalised  ',
+        repo: '   ',
+        platform: '',
+      });
+
+      expect(created.project_name).toBe('write-path-normalised');
+      expect(created.repo).toBeNull();
+      expect(created.platform).toBeNull();
+    });
+
+    it('reports a boundary the server refuses as a refusal, not a client argument error', async () => {
+      // The rule lives on the server; the client sends what is structurally
+      // valid and lets the server answer for its own rule.
+      const raised = await memory
+        .createProject({ project_name: 'write-path-bad', repo_subpath: '../escape' })
+        .catch((error: unknown) => error);
+
+      expect(raised).toBeInstanceOf(MemoryApiError);
+      expect((raised as MemoryApiError).code).toBe('INVALID_REQUEST');
+    });
+  });
+
+  describe('registering a Project through the adapter', () => {
+    it('creates one for an unrecorded repository, and the resolver then finds it', async () => {
+      const remote = 'github.com/acme/register-root';
+      const signals = signalsFor(remote, null);
+
+      const result = await registerProject(memory, signals);
+
+      expect(result).toMatchObject({ kind: 'CREATED' });
+      // The proof that matters: the same signals now resolve to it, through the
+      // real list and the real resolver.
+      await expect(resolveProject(memory, signals)).resolves.toEqual({
+        kind: 'RESOLVED',
+        projectId: (result as { projectId: string }).projectId,
+      });
+    });
+
+    it('does not create a second one when the repository already resolves', async () => {
+      const remote = 'github.com/acme/register-twice';
+      const signals = signalsFor(remote, null);
+
+      const first = await registerProject(memory, signals);
+      const second = await registerProject(memory, signals);
+
+      expect(first).toMatchObject({ kind: 'CREATED' });
+      expect(second).toEqual({
+        kind: 'RESOLVED',
+        projectId: (first as { projectId: string }).projectId,
+      });
+    });
+
+    it('persists a chosen boundary that the resolver then uses to tell parts apart', async () => {
+      // The whole point of the boundary, end to end: two Projects on one
+      // repository, and a session in each resolving to its own.
+      //
+      // Only the first is registered through the adapter. Once a repository has
+      // a Project whose boundary does not cover the next session, the resolver
+      // answers NO_MATCHING_REPO_BOUNDARY — a question rather than "nothing
+      // records this" — and registration correctly declines to create against
+      // an ambiguous answer. So the second part is created directly here, and
+      // the limit that forces it is asserted in the test below rather than
+      // worked around silently.
+      const remote = 'github.com/acme/register-monorepo';
+
+      const web = await registerProject(memory, signalsFor(remote, 'apps/web'), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/web',
+      });
+      expect(web).toMatchObject({ kind: 'CREATED' });
+
+      const api = await memory.createProject({
+        project_name: 'register-monorepo-api',
+        repo: remote,
+        repo_subpath: 'apps/api',
+      });
+
+      await expect(resolveProject(memory, signalsFor(remote, 'apps/web/client'))).resolves.toEqual({
+        kind: 'RESOLVED',
+        projectId: (web as { projectId: string }).projectId,
+      });
+      await expect(resolveProject(memory, signalsFor(remote, 'apps/api'))).resolves.toEqual({
+        kind: 'RESOLVED',
+        projectId: api.project_id,
+      });
+    });
+
+    it('declines to register a second part of an already-recorded repository', async () => {
+      // Worth pinning because it is a real limit rather than an accident. The
+      // repository is recorded and no stored boundary covers this session, so
+      // the resolver asks — and asking is the answer this primitive respects.
+      // Registering a sibling part is therefore a decision that needs its own
+      // path, and does not exist yet.
+      const remote = 'github.com/acme/register-sibling';
+
+      await registerProject(memory, signalsFor(remote, 'apps/web'), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/web',
+      });
+
+      const second = await registerProject(memory, signalsFor(remote, 'apps/api'), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
+      });
+
+      expect(second).toMatchObject({
+        kind: 'AMBIGUOUS',
+        reason: 'NO_MATCHING_REPO_BOUNDARY',
+      });
+    });
+
+    it('asks rather than guessing when the session is inside a subdirectory', async () => {
+      const result = await registerProject(
+        memory,
+        signalsFor('github.com/acme/register-asks', 'apps/web'),
+      );
+
+      expect(result).toMatchObject({ kind: 'BOUNDARY_REQUIRED' });
+    });
+  });
 
   it('records an Environment the server stores and returns whole', async () => {
     const projectId = await makeProject('write-path-environment');
