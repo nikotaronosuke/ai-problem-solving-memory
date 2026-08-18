@@ -208,3 +208,98 @@ export function isProblemListBody(value: unknown): value is { problems: ProblemR
   const problems = record['problems'];
   return Array.isArray(problems) && problems.every((entry) => isProblemResource(entry));
 }
+
+/**
+ * What starting a Problem sends.
+ *
+ * Three required fields and three optional ones. Everything else a Problem has
+ * — its status, its version, its confidence, its freshness, its flags — comes
+ * from the server, which starts every Problem the same way. A caller cannot
+ * declare a Problem already verified, and the absence of those fields from this
+ * type is the first place that is true.
+ *
+ * The optional fields are `string | null` and both spellings mean something:
+ * absent leaves the column alone, and `null` states there is no answer. They
+ * are kept apart all the way to the wire rather than collapsed into one.
+ */
+export interface CreateProblemRequest {
+  readonly environment_id: string;
+  readonly title: string;
+  readonly symptoms: string;
+  readonly problem_domain?: string | null;
+  readonly suspected_boundary?: string | null;
+  readonly source_ai?: string | null;
+}
+
+/** The fields a create request may carry, in the contract's order. */
+export const CREATE_PROBLEM_REQUEST_FIELDS = [
+  'environment_id',
+  'title',
+  'symptoms',
+  'problem_domain',
+  'suspected_boundary',
+  'source_ai',
+] as const;
+
+/** The three a request cannot leave out. */
+const REQUIRED_CREATE_PROBLEM_FIELDS = ['environment_id', 'title', 'symptoms'] as const;
+
+/** The three the server declares nullable free-form text. */
+const OPTIONAL_CREATE_PROBLEM_FIELDS = [
+  'problem_domain',
+  'suspected_boundary',
+  'source_ai',
+] as const;
+
+/**
+ * The id shape the server's routes accept in a path or a body.
+ *
+ * Mirrored rather than imported, like every other part of this contract.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Whether text has something in it, which is what the server requires. */
+function isNonBlank(value: unknown): value is string {
+  return typeof value === 'string' && /\S/.test(value);
+}
+
+/**
+ * Whether a request is one this client will send.
+ *
+ * The key set is closed, so a field the server would refuse — `status`,
+ * `version`, a typo — fails here rather than as a `400` after a round trip.
+ *
+ * What is deliberately *not* checked is anything the server would accept. An
+ * empty string is a legal value for the optional text fields, and refusing it
+ * would make this client stricter than the contract it speaks for — which is
+ * the kind of divergence that gets discovered as "the API works but the client
+ * says no".
+ */
+export function isCreateProblemRequest(value: unknown): value is CreateProblemRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+
+  const allowed = new Set<string>(CREATE_PROBLEM_REQUEST_FIELDS);
+  if (!Object.keys(record).every((key) => allowed.has(key))) {
+    return false;
+  }
+  for (const field of REQUIRED_CREATE_PROBLEM_FIELDS) {
+    if (!(field in record)) {
+      return false;
+    }
+  }
+
+  const environmentId = record['environment_id'];
+  if (typeof environmentId !== 'string' || !UUID.test(environmentId)) {
+    return false;
+  }
+  if (!isNonBlank(record['title']) || !isNonBlank(record['symptoms'])) {
+    return false;
+  }
+
+  return OPTIONAL_CREATE_PROBLEM_FIELDS.every(
+    (field) => !(field in record) || isNullableString(record[field]),
+  );
+}

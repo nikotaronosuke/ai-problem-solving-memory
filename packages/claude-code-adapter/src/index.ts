@@ -45,6 +45,19 @@ export {
 } from './project-resolution.js';
 
 export {
+  captureEnvironment,
+  EnvironmentCaptureArgumentError,
+  type CaptureEnvironmentInput,
+} from './environment-capture.js';
+
+export {
+  startProblem,
+  type StartProblemClient,
+  type StartProblemInput,
+  type StartProblemResult,
+} from './problem-start.js';
+
+export {
   createProblemBindingStore,
   ProblemBindingArgumentError,
   type ProblemBindingRead,

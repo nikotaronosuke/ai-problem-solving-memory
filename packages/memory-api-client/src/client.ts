@@ -37,7 +37,19 @@ import {
   MemoryApiProtocolError,
   MemoryApiUnreachableError,
 } from './errors.js';
-import { isProblemListBody, isProblemResource, type ProblemResource } from './problem.js';
+import {
+  isCreateEnvironmentRequest,
+  isEnvironmentResource,
+  type CreateEnvironmentRequest,
+  type EnvironmentResource,
+} from './environment.js';
+import {
+  isCreateProblemRequest,
+  isProblemListBody,
+  isProblemResource,
+  type CreateProblemRequest,
+  type ProblemResource,
+} from './problem.js';
 import { isProjectListBody, type ProjectResource } from './project.js';
 import {
   isMemorySearchRequest,
@@ -158,6 +170,36 @@ export interface MemoryApiClient {
    * disagrees with its own route is not an answer this contract describes.
    */
   listProblems(projectId: string): Promise<readonly ProblemResource[]>;
+
+  /**
+   * Records the conditions a Problem was found under.
+   *
+   * An Environment is a point in time: there is no update and no delete for
+   * one, so what is sent is what is stored. The snapshot's keys are the
+   * caller's — which conditions mattered is a question about the problem —
+   * but every value in it is checked before the request, because a snapshot
+   * that serialised into something the caller did not write would be a
+   * permanent record of the wrong conditions.
+   */
+  createEnvironment(
+    projectId: string,
+    request: CreateEnvironmentRequest,
+  ): Promise<EnvironmentResource>;
+
+  /**
+   * Starts a Problem under a Project, against an Environment already recorded.
+   *
+   * Three things are required and three are optional; everything else about a
+   * new Problem is the server's. It begins `INVESTIGATING` at version 1 with no
+   * fix kind, and no caller can declare otherwise — which is why none of those
+   * fields exists in the request.
+   *
+   * Whether a Problem *should* be started is not a question this method asks.
+   * It is a mutation, it happens once per call, and it is not retried: if no
+   * answer comes back, the caller does not know whether it committed, and only
+   * the caller knows how to find out.
+   */
+  createProblem(projectId: string, request: CreateProblemRequest): Promise<ProblemResource>;
 
   /**
    * Finds past memory worth reading for the Problem being worked on.
@@ -402,6 +444,91 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
       }
 
       return body.problems;
+    },
+
+    async createEnvironment(projectId, request): Promise<EnvironmentResource> {
+      if (!PATH_SAFE_ID.test(projectId)) {
+        throw new MemoryApiArgumentError('project id');
+      }
+      if (!isCreateEnvironmentRequest(request)) {
+        // Before the request, and without the snapshot in the message. What is
+        // wrong with it is a shape, and the values are the caller's own.
+        throw new MemoryApiArgumentError('environment snapshot');
+      }
+
+      const { status, body } = await send(`/v1/projects/${projectId}/environments`, {
+        method: 'POST',
+        // Rebuilt from the one field this contract has, so nothing a caller
+        // attached beside it travels.
+        body: JSON.stringify({ snapshot: request.snapshot }),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (!isEnvironmentResource(body) || body.project_id !== projectId) {
+        // The route named the Project; an answer describing another one is not
+        // an answer to this request.
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body;
+    },
+
+    async createProblem(projectId, request): Promise<ProblemResource> {
+      if (!PATH_SAFE_ID.test(projectId)) {
+        throw new MemoryApiArgumentError('project id');
+      }
+      if (!isCreateProblemRequest(request)) {
+        // Named as one argument rather than field by field, and carrying none
+        // of it: a title and symptoms are somebody's own words about their own
+        // problem.
+        throw new MemoryApiArgumentError('problem');
+      }
+
+      // Field by field, so an extra property on the caller's object cannot
+      // travel — and `undefined` is never written, so absent stays absent and
+      // an explicit `null` stays null. The two mean different things to the
+      // server and this is where they would otherwise collapse.
+      const body: Record<string, unknown> = {
+        environment_id: request.environment_id,
+        title: request.title,
+        symptoms: request.symptoms,
+      };
+      if ('problem_domain' in request) {
+        body['problem_domain'] = request.problem_domain;
+      }
+      if ('suspected_boundary' in request) {
+        body['suspected_boundary'] = request.suspected_boundary;
+      }
+      if ('source_ai' in request) {
+        body['source_ai'] = request.source_ai;
+      }
+
+      const { status, body: answer } = await send(`/v1/projects/${projectId}/problems`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, answer);
+      }
+
+      if (
+        !isProblemResource(answer) ||
+        answer.project_id !== projectId ||
+        answer.environment_id !== request.environment_id
+      ) {
+        // Both halves of what was asked for. A Problem attached to a different
+        // Environment than the one just recorded describes conditions nobody
+        // captured.
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return answer;
     },
 
     async search(problemId, request): Promise<MemorySearchOutcome> {

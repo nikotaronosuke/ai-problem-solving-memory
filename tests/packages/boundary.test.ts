@@ -290,20 +290,30 @@ describe('the common client', () => {
     expect(code).toContain('getProblem(problemId: string)');
     expect(code).toContain('listProjects(): Promise<readonly ProjectResource[]>');
     expect(code).toContain('listProblems(projectId: string): Promise<readonly ProblemResource[]>');
+    // Multi-line in the source, so matched on the parts that identify it
+    // rather than on its exact wrapping.
+    expect(code).toContain('createEnvironment(');
+    expect(code).toContain('request: CreateEnvironmentRequest,');
+    expect(code).toContain('): Promise<EnvironmentResource>;');
+    expect(code).toContain(
+      'createProblem(projectId: string, request: CreateProblemRequest): Promise<ProblemResource>;',
+    );
     expect(code).toContain('search(problemId: string, request: MemorySearchRequest)');
 
-    // Four, and no fifth by accident. The writes are absent on purpose: nothing
-    // creates a Project, a Problem or an Environment yet, and nothing moves a
-    // Problem between statuses, so a method for any of them would be a guess
-    // about how it will be called.
+    // Six, and no seventh by accident. The two writes that arrived came with a
+    // caller that needed them. The ones still absent are absent for the same
+    // reason: nothing creates a Project yet and nothing resumes a paused
+    // Problem, so a method for either would be a guess about how it will be
+    // called — and the guess is what a later task would then have to argue
+    // with.
     for (const absent of [
       'createProject',
       'getProject',
       'updateProject',
-      'createProblem',
       'updateProblem',
-      'createEnvironment',
       'transitionProblemStatus',
+      'appendEvent',
+      'appendVerification',
     ]) {
       expect(`${absent}:${code.includes(absent)}`).toBe(`${absent}:false`);
     }
@@ -530,12 +540,29 @@ describe('the Claude adapter, still', () => {
 
     // The adapter returns the client it built, so `search()` reached it for free
     // the moment the client grew one. What it must not have grown is *policy*:
-    // when to search, what `source_ai` to send, how to present a result. Each of
-    // those is a later task with its own decisions, and doing any of them here
-    // would settle them by accident.
+    // when to search, how to present a result. Each of those is a later task
+    // with its own decisions, and doing any of them here would settle them by
+    // accident.
     for (const { path, source } of shipped) {
       const code = codeOnly(source);
-      for (const forbidden of ['.search(', 'autoSearch', 'sourceAi:', 'source_ai']) {
+      for (const forbidden of ['.search(', 'autoSearch']) {
+        expect(`${path} does ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} does ${forbidden}:false`,
+        );
+      }
+    }
+
+    // `source_ai` narrowed rather than dropped. Starting a Problem stamps this
+    // adapter's own name on it, which is the one module with a reason to say
+    // so; anywhere else the field would mean the package had started deciding
+    // what to call itself per call. The start module's own guard pins the value
+    // to the constant, so it cannot come from a caller even there.
+    for (const { path, source } of shipped) {
+      if (path === 'src/problem-start.ts') {
+        continue;
+      }
+      const code = codeOnly(source);
+      for (const forbidden of ['sourceAi:', 'source_ai']) {
         expect(`${path} does ${forbidden}:${code.includes(forbidden)}`).toBe(
           `${path} does ${forbidden}:false`,
         );
@@ -601,6 +628,80 @@ describe('the Claude adapter, still', () => {
         );
       }
     }
+  });
+
+  it('captures an environment without learning where it is sent', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const capture = shipped.find((file) => file.path === 'src/environment-capture.ts');
+    expect(capture).toBeDefined();
+    const code = codeOnly(capture?.source ?? '');
+
+    // It runs git in a directory and returns what it read. Where that goes,
+    // and what it is attached to, are questions it has no way to answer and no
+    // reason to ask.
+    for (const forbidden of [
+      'fetch',
+      'MemoryApi',
+      'credential',
+      'Authorization',
+      '/v1/',
+      'process.env',
+      'process.cwd',
+      'sessionId',
+      'session_id',
+      'mcp',
+      'plugin',
+      'hook',
+      'BindingStore',
+      'get-url',
+      'remote',
+      'config',
+      'stderr',
+    ]) {
+      expect(`capture reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `capture reaches for ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('starts a Problem without deciding that one should be started', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const start = shipped.find((file) => file.path === 'src/problem-start.ts');
+    expect(start).toBeDefined();
+    const code = codeOnly(start?.source ?? '');
+
+    // It is the mutation and none of the judgement. Detecting a Project,
+    // enumerating candidates, weighing whether this is really a new Problem,
+    // remembering the answer — each belongs to the composition above it, and a
+    // primitive that did any of them would be deciding with the least context.
+    for (const forbidden of [
+      'detectProjectSignals',
+      'resolveProject',
+      'resolveCurrentProblem',
+      'listProblems',
+      'listProjects',
+      'BindingStore',
+      'readBinding',
+      'writeBinding',
+      'sessionId',
+      'session_id',
+      'process.env',
+      'process.cwd',
+      'node:fs',
+      'mcp',
+      'plugin',
+      'hook',
+      'retry',
+      'createProject',
+      'transitionProblemStatus',
+    ]) {
+      expect(`start reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `start reaches for ${forbidden}:false`,
+      );
+    }
+
+    // And it does not let a caller say which assistant recorded something.
+    expect(code).toContain('source_ai: CLAUDE_CODE_SOURCE_AI');
   });
 
   it('keeps the binding store free of everything that is not persistence', async () => {

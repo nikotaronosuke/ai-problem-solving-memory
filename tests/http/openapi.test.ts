@@ -54,6 +54,11 @@ import {
 } from '../../src/domain/retrieval-summary.js';
 import { buildMemoryHttpApp } from '../../src/http/index.js';
 import { ERROR_CODES } from '../../src/http/errors.js';
+import {
+  CREATE_ENVIRONMENT_REQUEST_FIELDS,
+  CREATE_PROBLEM_REQUEST_FIELDS,
+} from '@ai-problem-solving-memory/api-client';
+
 import { OPENAPI_PATH } from '../../src/http/openapi.js';
 import type { MemoryRepository } from '../../src/repository/index.js';
 import { createUnusedSearchResolver } from '../support/search-resolver.js';
@@ -283,6 +288,92 @@ describe('the document itself', () => {
 
     expect([...used].filter((tag) => !declared.has(tag))).toEqual([]);
     expect([...declared].filter((tag) => !used.has(tag))).toEqual([]);
+  });
+});
+
+describe('the write requests the client mirrors', () => {
+  /** The request body schema the generated document publishes for an operation. */
+  function requestBody(
+    document: Document,
+    operationId: string,
+  ): {
+    properties: Record<string, unknown>;
+    required?: readonly string[];
+    additionalProperties?: boolean;
+  } {
+    const found = operations(document).find((entry) => entry.operation.operationId === operationId);
+    expect(found, operationId).toBeDefined();
+    const body = (
+      found?.operation as unknown as {
+        requestBody?: { content: Record<string, { schema: unknown }> };
+      }
+    ).requestBody;
+    expect(body, operationId).toBeDefined();
+    return (body?.content['application/json']?.schema ?? {}) as never;
+  }
+
+  // The client cannot import these — they are declared inline on the routes —
+  // so it carries its own copies and this is where a copy that fell behind
+  // fails. Measured against the *generated* document rather than the source,
+  // which is what a client generator would read.
+
+  it('sends exactly the fields the Environment route accepts', async () => {
+    const route = requestBody(await documentPromise, 'createEnvironment');
+
+    expect([...CREATE_ENVIRONMENT_REQUEST_FIELDS].sort()).toEqual(
+      Object.keys(route.properties).sort(),
+    );
+    expect([...(route.required ?? [])].sort()).toEqual(
+      [...CREATE_ENVIRONMENT_REQUEST_FIELDS].sort(),
+    );
+    expect(route.additionalProperties).toBe(false);
+  });
+
+  it('sends exactly the fields the Problem route accepts', async () => {
+    const route = requestBody(await documentPromise, 'createProblem');
+
+    expect([...CREATE_PROBLEM_REQUEST_FIELDS].sort()).toEqual(Object.keys(route.properties).sort());
+    expect(route.additionalProperties).toBe(false);
+  });
+
+  it('requires the three a Problem cannot start without', async () => {
+    const route = requestBody(await documentPromise, 'createProblem');
+
+    expect([...(route.required ?? [])].sort()).toEqual(['environment_id', 'symptoms', 'title']);
+  });
+
+  it('agrees the optional Problem text may be a string or null', async () => {
+    // Nullable free-form text, so an empty string is legal and the client must
+    // not refuse one. A client stricter than its own contract rejects requests
+    // the API would have taken.
+    const route = requestBody(await documentPromise, 'createProblem');
+
+    for (const field of ['problem_domain', 'suspected_boundary', 'source_ai']) {
+      const declared = route.properties[field] as { type: readonly string[] };
+      expect([...declared.type].sort(), field).toEqual(['null', 'string']);
+    }
+  });
+
+  it('agrees a title and symptoms must have something in them', async () => {
+    const route = requestBody(await documentPromise, 'createProblem');
+
+    for (const field of ['title', 'symptoms']) {
+      const declared = route.properties[field] as { pattern: string };
+      expect(declared.pattern, field).toBe('\\S');
+    }
+  });
+
+  it('agrees a snapshot is an object whose keys are the caller’s', async () => {
+    const route = requestBody(await documentPromise, 'createEnvironment');
+    const snapshot = route.properties['snapshot'] as {
+      type: string;
+      additionalProperties: boolean;
+    };
+
+    // Open about its keys — which conditions mattered differs by problem — and
+    // closed about being an object, which is what the client checks too.
+    expect(snapshot.type).toBe('object');
+    expect(snapshot.additionalProperties).toBe(true);
   });
 });
 
