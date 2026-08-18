@@ -501,6 +501,162 @@ describe('the Claude adapter', () => {
     expect(packageManifest.devDependencies ?? {}).toEqual({});
   });
 
+  it('keeps every protocol dependency inside the plugin runtime', async () => {
+    // The whole point of a third package. The client speaks one JSON API and
+    // the adapter speaks none: a protocol dependency in either would make them
+    // unusable anywhere the protocol is not, and would put host knowledge in
+    // the two layers that are meant to be testable without a host.
+    for (const packageDirectory of ['memory-api-client', 'claude-code-adapter']) {
+      const declared = Object.keys((await manifest(PACKAGES, packageDirectory)).dependencies ?? {});
+
+      for (const forbidden of [
+        '@modelcontextprotocol/server',
+        '@modelcontextprotocol/sdk',
+        'zod',
+      ]) {
+        expect(`${packageDirectory} depends on ${forbidden}:${declared.includes(forbidden)}`).toBe(
+          `${packageDirectory} depends on ${forbidden}:false`,
+        );
+      }
+
+      const shipped = (await sourcesOf(packageDirectory)).filter((file) =>
+        file.path.startsWith('src/'),
+      );
+      for (const { path, source } of shipped) {
+        const code = codeOnly(source);
+        for (const forbidden of [
+          'modelcontextprotocol',
+          'McpServer',
+          'serveStdio',
+          'PreToolUse',
+          'claudecode/toolUseId',
+          'CLAUDE_PLUGIN_DATA',
+          'CLAUDE_PLUGIN_ROOT',
+        ]) {
+          expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+            `${path} reaches for ${forbidden}:false`,
+          );
+        }
+      }
+    }
+  });
+
+  it('gives the plugin runtime the dependencies it actually uses, and no others', async () => {
+    const runtime = await manifest(PACKAGES, 'claude-code-memory-plugin');
+
+    expect(Object.keys(runtime.dependencies ?? {}).sort()).toEqual([
+      '@ai-problem-solving-memory/api-client',
+      '@ai-problem-solving-memory/claude-code-adapter',
+      '@modelcontextprotocol/server',
+      'zod',
+    ]);
+    // Pinned exactly: the host bridge was measured against one version of the
+    // protocol library, and a range would let it move underneath a contract
+    // that is measured rather than published.
+    expect(runtime.dependencies?.['@modelcontextprotocol/server']).toBe('2.0.0');
+    expect(runtime.private).toBe(true);
+    expect(runtime.type).toBe('module');
+  });
+
+  it('leaves every deterministic rule where it already lives', async () => {
+    const shipped = (await sourcesOf('claude-code-memory-plugin')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // A runtime that knew any of these would be a second place they are
+    // decided — and the one furthest from the tests that prove them. The
+    // rejected proof design is named too, so it cannot quietly return.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of [
+        'transitionProblemStatus',
+        'canonicaliseGitRemote',
+        'CLAUDE_CODE_SESSION_ID',
+        'process.cwd',
+        'transcript',
+        '_memory_host_proof',
+        'hostProof',
+        'proofToken',
+        'createHmac',
+        'randomBytes',
+        'src/db',
+        'node:sqlite',
+      ]) {
+        expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} reaches for ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
+  it('composes the adapter rather than calling the Memory itself', async () => {
+    const shipped = (await sourcesOf('claude-code-memory-plugin')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // The runtime's only business calls are the adapter's compositions. A
+    // direct client call here would be a second implementation of a rule that
+    // already has one, in the layer with the least context for it.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of [
+        'listProjects(',
+        'createProject(',
+        'listProblems(',
+        'getProblem(',
+        'createProblem(',
+        'createEnvironment(',
+      ]) {
+        expect(`${path} calls ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} calls ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
+  it('reads the host identifier in one place, and writes nothing into the call', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    expect(shipped.map((file) => file.path)).toContain('src/host-call-context.ts');
+
+    // The key is measured on the installed host rather than published by it,
+    // so it is named once and every other module asks this one.
+    for (const { path, source } of shipped.filter((file) => file.path.startsWith('src/'))) {
+      const mentions = codeOnly(source).split('claudecode/toolUseId').length - 1;
+      expect(`${path} names the host key ${String(mentions)} times`).toBe(
+        `${path} names the host key ${path === 'src/host-call-context.ts' ? '1' : '0'} times`,
+      );
+    }
+
+    // And the hook rewrites nothing. No injected field means nothing for the
+    // model to carry, nothing in a transcript, and no rewrite race with
+    // another hook.
+    const hook = shipped.find((file) => file.path === 'src/pre-tool-use.ts');
+    expect(codeOnly(hook?.source ?? '').includes('updatedInput')).toBe(false);
+  });
+
+  it('offers exactly one Memory tool, and no input for the model to fill', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const server = shipped.find((file) => file.path === 'src/server.ts');
+    const code = codeOnly(server?.source ?? '');
+
+    expect(code).toContain('inputSchema: z.object({}).strict()');
+    // The operations that act on an answer arrive with their own task, and so
+    // do the inputs they need. A field added now would be a guess about a call
+    // nobody makes. `readOnlyHint` is absent deliberately: the deterministic
+    // path can register a Project, which is a durable write.
+    for (const absent of [
+      'continue_problem',
+      'resume_problem',
+      'start_problem',
+      'project_decision',
+      'readOnlyHint',
+    ]) {
+      expect(`the runtime declares ${absent}:${code.includes(absent)}`).toBe(
+        `the runtime declares ${absent}:false`,
+      );
+    }
+  });
+
   it('has no MCP dependency yet, because it has no protocol code yet', async () => {
     const packageManifest = await manifest(PACKAGES, 'claude-code-adapter');
     const declared = Object.keys({

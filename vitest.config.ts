@@ -17,6 +17,9 @@ export default defineConfig(({ mode }) => ({
       '@ai-problem-solving-memory/claude-code-adapter': here(
         './packages/claude-code-adapter/src/index.ts',
       ),
+      '@ai-problem-solving-memory/claude-code-memory-plugin': here(
+        './packages/claude-code-memory-plugin/src/server.ts',
+      ),
     },
   },
   test: {
