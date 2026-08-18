@@ -45,6 +45,15 @@ export {
 } from './project-resolution.js';
 
 export {
+  createProblemBindingStore,
+  ProblemBindingArgumentError,
+  type ProblemBindingRead,
+  type ProblemBindingRemoval,
+  type ProblemBindingStore,
+  type ProblemBindingWrite,
+} from './problem-binding-store.js';
+
+export {
   CONTINUABLE_PROBLEM_STATUSES,
   resolveCurrentProblem,
   type ContinuableProblemStatus,
