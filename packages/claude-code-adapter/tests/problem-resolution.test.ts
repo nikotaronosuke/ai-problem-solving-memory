@@ -20,11 +20,13 @@ import {
   MemoryApiError,
   MemoryApiProtocolError,
   MemoryApiUnreachableError,
+  PROBLEM_STATUSES,
   type ProblemResource,
   type ProblemStatus,
 } from '@ai-problem-solving-memory/api-client';
 
 import {
+  CONTINUABLE_PROBLEM_STATUSES,
   resolveCurrentProblem,
   type CurrentProblemReader,
   type ProblemBindingHint,
@@ -112,6 +114,82 @@ function binding(overrides: Partial<ProblemBindingHint> = {}): ProblemBindingHin
 }
 
 const TERMINAL: readonly ProblemStatus[] = ['VERIFIED', 'CLOSED_UNRESOLVED'];
+
+describe('how every status is classified', () => {
+  // The behaviour these three groups produce is asserted throughout this file.
+  // What is asserted *here* is that the groups between them account for every
+  // status the contract has — which is the property a list of continuable
+  // states cannot give, because nothing about such a list mentions the states
+  // it leaves out.
+  const WORKING: readonly ProblemStatus[] = ['INVESTIGATING', 'FIX_CANDIDATE'];
+  const PAUSED_ONLY: readonly ProblemStatus[] = ['PAUSED'];
+  const TERMINAL_ONLY: readonly ProblemStatus[] = ['VERIFIED', 'CLOSED_UNRESOLVED'];
+
+  it('classifies every status the contract publishes, and no others', () => {
+    expect([...WORKING, ...PAUSED_ONLY, ...TERMINAL_ONLY].sort()).toEqual(
+      [...PROBLEM_STATUSES].sort(),
+    );
+  });
+
+  it('puts each status in exactly one class', () => {
+    const all = [...WORKING, ...PAUSED_ONLY, ...TERMINAL_ONLY];
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it('treats the working and paused statuses as continuable, and no others', () => {
+    expect([...CONTINUABLE_PROBLEM_STATUSES].sort()).toEqual([...WORKING, ...PAUSED_ONLY].sort());
+  });
+
+  it('leaves every terminal status out of the continuable set', () => {
+    for (const status of TERMINAL_ONLY) {
+      expect(`${status}:${CONTINUABLE_PROBLEM_STATUSES.includes(status as never)}`).toBe(
+        `${status}:false`,
+      );
+    }
+  });
+
+  it.each(WORKING)(
+    'resolves a binding to a %s Problem, because it is being worked in',
+    async (status) => {
+      const bound = problem({ status });
+      const { client } = reader({ get: bound });
+
+      await expect(resolveCurrentProblem(client, PROJECT_ID, binding())).resolves.toEqual({
+        kind: 'RESOLVED',
+        problemId: bound.problem_id,
+      });
+    },
+  );
+
+  it.each([...PAUSED_ONLY, ...TERMINAL_ONLY])(
+    'does not resolve a binding to a %s Problem',
+    async (status) => {
+      const bound = problem({ status });
+      const { client, log } = reader({ get: bound, list: [] });
+
+      const resolution = await resolveCurrentProblem(client, PROJECT_ID, binding());
+
+      expect(resolution).not.toMatchObject({ kind: 'RESOLVED' });
+      expect(log.listProblems).toEqual([PROJECT_ID]);
+    },
+  );
+
+  it.each([...WORKING, ...PAUSED_ONLY])('offers a %s Problem as a candidate', async (status) => {
+    const only = problem({ status });
+    const { client } = reader({ list: [only] });
+
+    await expect(resolveCurrentProblem(client, PROJECT_ID)).resolves.toEqual({
+      kind: 'CANDIDATES',
+      candidates: [{ problemId: only.problem_id, status, title: only.title }],
+    });
+  });
+
+  it.each(TERMINAL_ONLY)('never offers a %s Problem as a candidate', async (status) => {
+    const { client } = reader({ list: [problem({ status })] });
+
+    await expect(resolveCurrentProblem(client, PROJECT_ID)).resolves.toEqual({ kind: 'NONE' });
+  });
+});
 
 describe('with no binding at all', () => {
   it('answers NONE when the project has no Problems', async () => {
