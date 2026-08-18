@@ -61,7 +61,7 @@ schema change.
 The migrations establish the pipeline, the shared value sets (PostgreSQL
 DOMAINs over `text` with CHECK constraints, mirroring `src/domain/enums.ts`),
 the nine tables — `owners`, `projects`, `environments`, `problems`, `events`,
-`verifications`, `relations`, `usage_logs`, `change_logs` — and the Phase 1
+`verifications`, `relations`, `usage_logs`, `change_logs` — and the storage-layer
 integrity and index set.
 
 Every foreign key deletes with `RESTRICT`, so a parent with children cannot be
@@ -416,23 +416,23 @@ Run `npm run check` before reporting a task complete.
 | `src/sanitization/`    | What may be stored, and what a credential looks like   |
 | `src/reliability/`     | Client-side retry queue — **not part of the server**   |
 | `tests/`               | Automated tests, mirroring `src/`                      |
-| `tests/e2e/`           | Whole-scenario tests, one per phase                    |
+| `tests/e2e/`           | Whole-scenario tests, each running one whole story     |
 | `supabase/migrations/` | Schema migrations, in filename order                   |
 | `supabase/config.toml` | Local stack configuration                              |
 | `db/`                  | Database notes                                         |
-| `docs/`                | Public implementation documentation                    |
-| `.ai/`                 | Implementation state for AI sessions — see `CLAUDE.md` |
+| `docs/`                | Implementation documentation                           |
+| `packages/`            | Workspace packages — the API client and the adapter    |
 
 ## End-to-end tests
 
 Two scenarios run a whole story rather than one endpoint.
 
 ```bash
-npx vitest run tests/e2e/phase2.e2e.test.ts        # Phase 2, over HTTP
-npx vitest run tests/integration/phase1            # Phase 1, through the repository
+npx vitest run tests/e2e/phase2.e2e.test.ts        # over HTTP
+npx vitest run tests/integration/phase1            # through the repository
 ```
 
-`tests/e2e/phase2.e2e.test.ts` is the Phase 2 one: a problem investigated,
+`tests/e2e/phase2.e2e.test.ts` is the HTTP one: a problem investigated,
 fixed and verified, then used as memory by a second problem in a different
 project, every step an HTTP request against a real database. It is where a
 change that breaks the join between two features shows up — each endpoint
@@ -454,7 +454,7 @@ running them does not touch your local data.
 
 `src/reliability/` is the one directory under `src/` that the server does not
 run. It is a library for whoever _calls_ the Memory Server — the Claude Code
-and Codex adapters of Phase 5 and Phase 6 — and it holds writes that could not
+and Codex adapters — and it holds writes that could not
 be delivered so they can be sent again later.
 
 It has to be on that side. The failure it exists for is the Memory Server being
