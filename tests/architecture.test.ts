@@ -2687,9 +2687,9 @@ describe('structural reranking', () => {
     // that has drifted from the one the model saw.
     expect(code).toContain('input: StructuralRerankerInput');
 
-    // What it must not do is decide the match itself. Comparing the text would
-    // be the arithmetic D-265 measured and rejected, arriving as a validation
-    // rule instead.
+    // What it must not do is decide the match itself. Comparing the text here
+    // would be lexical overlap scoring — the thing structural reranking exists
+    // to avoid — arriving as a validation rule instead.
     const helper = code.slice(code.indexOf('function comparisonMaterialExists('));
     const body = helper.slice(0, helper.indexOf('\n}'));
     for (const overreach of ['toLowerCase', 'includes(', 'some(', 'trim(', '===  ']) {
