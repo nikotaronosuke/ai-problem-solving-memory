@@ -183,6 +183,226 @@ describe('recording an Environment', () => {
     expect(calls).toHaveLength(0);
   });
 
+  describe('own properties serialisation would not carry', () => {
+    // Every case here passed validation before and then arrived at the server
+    // missing something, or holding something the caller never wrote. The
+    // validator said one structure and the wire recorded another, which is the
+    // one thing this whole check exists to prevent.
+
+    it('refuses a symbol-keyed property, which would vanish silently', async () => {
+      const snapshot = { branch: 'main', [Symbol('hidden')]: 'value' };
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(memory.createEnvironment(PROJECT_ID, { snapshot })).rejects.toBeInstanceOf(
+        MemoryApiArgumentError,
+      );
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses a symbol-keyed property nested deeper down', async () => {
+      const snapshot = { git: { branch: 'main', [Symbol('hidden')]: 'value' } };
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(memory.createEnvironment(PROJECT_ID, { snapshot })).rejects.toBeInstanceOf(
+        MemoryApiArgumentError,
+      );
+      expect(calls).toHaveLength(0);
+    });
+
+    it.each([
+      [
+        'a hole at the start',
+        () => {
+          const a: unknown[] = new Array<unknown>(2);
+          a[1] = 'x';
+          return a;
+        },
+      ],
+      [
+        'a hole at the end',
+        () => {
+          const a: unknown[] = ['x'];
+          a.length = 3;
+          return a;
+        },
+      ],
+      [
+        'a hole in the middle',
+        () => {
+          const a: unknown[] = [];
+          a[0] = 'x';
+          a[2] = 'y';
+          return a;
+        },
+      ],
+    ])('refuses an array with %s, which would serialise as null', async (_name, build) => {
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { versions: build() } as never }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses an enormous sparse array without walking it', async () => {
+      // A billion holes, refused from the shape of its own key list rather
+      // than by counting to a billion. If this ever starts iterating, it stops
+      // being a test and starts being a hang.
+      const huge = new Array(1_000_000_000);
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      const started = Date.now();
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { huge } }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses an extra property hung off an array, which would vanish', async () => {
+      const versions: unknown[] = ['a'];
+      (versions as unknown as Record<string, string>)['extra'] = 'x';
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { versions } as never }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses a non-enumerable property, which serialisation skips', async () => {
+      const snapshot = { branch: 'main' };
+      Object.defineProperty(snapshot, 'hidden', { value: 'x', enumerable: false });
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(memory.createEnvironment(PROJECT_ID, { snapshot })).rejects.toBeInstanceOf(
+        MemoryApiArgumentError,
+      );
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses an accessor without ever running it', async () => {
+      // Two things at once. An accessor is computed rather than stored, so it
+      // is not the data it looks like — and a validator that answered by
+      // *calling* it would be running arbitrary caller code to decide whether
+      // that code's result is data, then sending a value computed a second
+      // time and possibly differently.
+      let invocations = 0;
+      const snapshot = { branch: 'main' };
+      Object.defineProperty(snapshot, 'computed', {
+        enumerable: true,
+        configurable: true,
+        get() {
+          invocations += 1;
+          return 'x';
+        },
+      });
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(memory.createEnvironment(PROJECT_ID, { snapshot })).rejects.toBeInstanceOf(
+        MemoryApiArgumentError,
+      );
+      expect(invocations).toBe(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses a getter that would have thrown, without letting it throw', async () => {
+      const snapshot = { branch: 'main' };
+      Object.defineProperty(snapshot, 'explodes', {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error('a getter nobody should have called');
+        },
+      });
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      // An argument error, not the getter's own error escaping through the
+      // client — which is what would happen if this were validated by reading.
+      await expect(memory.createEnvironment(PROJECT_ID, { snapshot })).rejects.toBeInstanceOf(
+        MemoryApiArgumentError,
+      );
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses an accessor sitting at an array index', async () => {
+      let invocations = 0;
+      const versions: unknown[] = ['a'];
+      Object.defineProperty(versions, 1, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          invocations += 1;
+          return 'b';
+        },
+      });
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: { versions } as never }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(invocations).toBe(0);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('refuses an own toJSON, which would replace the value entirely', async () => {
+      const snapshot = {
+        branch: 'main',
+        toJSON() {
+          return 'something else';
+        },
+      };
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await expect(
+        memory.createEnvironment(PROJECT_ID, { snapshot: snapshot as never }),
+      ).rejects.toBeInstanceOf(MemoryApiArgumentError);
+      expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe('ordinary structures still travel', () => {
+    // The other half of tightening a check: it has to keep accepting the
+    // things it was always meant to carry.
+
+    it.each([
+      ['a dense array', { versions: ['1', '2', '3'] }],
+      ['nested arrays and objects', { git: { tags: [{ name: 'v1' }, { name: 'v2' }] } }],
+      ['an empty array', { versions: [] }],
+      ['an empty nested object', { git: {} }],
+      ['every scalar JSON has', { s: 'x', n: -1.5, b: false, nil: null }],
+      ['an array of scalars including null', { mixed: ['a', 1, true, null] }],
+    ])('accepts %s', async (_name, snapshot) => {
+      const { calls, memory } = answering(201, { ...ENVIRONMENT, snapshot });
+
+      await memory.createEnvironment(PROJECT_ID, { snapshot });
+
+      expect(bodyOf(calls[0])).toEqual({ snapshot });
+    });
+
+    it('accepts a record with no prototype at all', async () => {
+      // `Object.create(null)` is a plain data bag and serialises as one; the
+      // prototype check is about `Date` and class instances, not about this.
+      const bare = Object.create(null) as Record<string, string>;
+      bare['branch'] = 'main';
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await memory.createEnvironment(PROJECT_ID, { snapshot: bare });
+
+      expect(bodyOf(calls[0])).toEqual({ snapshot: { branch: 'main' } });
+    });
+
+    it('accepts an array of the length it claims', async () => {
+      const versions = new Array(3).fill('x') as string[];
+      const { calls, memory } = answering(201, ENVIRONMENT);
+
+      await memory.createEnvironment(PROJECT_ID, { snapshot: { versions } });
+
+      expect(bodyOf(calls[0])).toEqual({ snapshot: { versions: ['x', 'x', 'x'] } });
+    });
+  });
+
   it('refuses a snapshot that points back at itself', async () => {
     const cyclic: Record<string, unknown> = { git: {} };
     (cyclic['git'] as Record<string, unknown>)['self'] = cyclic;
@@ -251,6 +471,42 @@ describe('recording an Environment', () => {
     await expect(memory.createEnvironment(PROJECT_ID, { snapshot: {} })).rejects.toBeInstanceOf(
       MemoryApiProtocolError,
     );
+  });
+
+  it('refuses an answer whose snapshot is not JSON this contract can carry', async () => {
+    // "It was parsed from JSON, so it is JSON" is nearly true. `JSON.parse`
+    // reads `1e999` as `Infinity` — a number JavaScript has and JSON does not —
+    // so a proxy, a rewriting intermediary or a server this contract does not
+    // describe can hand back a snapshot that cannot be serialised back into
+    // the thing it arrived as.
+    //
+    // The fixture is a raw body on purpose: `JSON.stringify` would turn the
+    // value into `null` on the way in and the test would prove nothing.
+    const raw = `{"environment_id":"${ENVIRONMENT_ID}","owner_id":"${ENVIRONMENT.owner_id}","project_id":"${PROJECT_ID}","snapshot":{"attempts":1e999},"created_at":"2026-01-01T00:00:00.000Z"}`;
+    expect(
+      Number.isFinite((JSON.parse(raw) as { snapshot: { attempts: number } }).snapshot.attempts),
+    ).toBe(false);
+
+    const fetch: FetchLike = () =>
+      Promise.resolve(
+        new Response(raw, { status: 201, headers: { 'content-type': 'application/json' } }),
+      );
+    const memory = createMemoryApiClient({ credential: CREDENTIAL, fetch });
+
+    await expect(memory.createEnvironment(PROJECT_ID, { snapshot: {} })).rejects.toBeInstanceOf(
+      MemoryApiProtocolError,
+    );
+  });
+
+  it('accepts an ordinary snapshot coming back', async () => {
+    // The other half: tightening the inbound check must not start refusing the
+    // answers a real server gives.
+    const snapshot = { branch: 'main', versions: ['1', '2'], nested: { dirty: false, n: null } };
+    const { memory } = answering(201, { ...ENVIRONMENT, snapshot });
+
+    await expect(memory.createEnvironment(PROJECT_ID, { snapshot: {} })).resolves.toMatchObject({
+      snapshot,
+    });
   });
 
   it('refuses an Environment recorded against another project', async () => {
