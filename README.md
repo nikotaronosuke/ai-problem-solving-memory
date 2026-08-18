@@ -24,17 +24,9 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 
 特に、別プロジェクトで起きた構造的に似た問題を自動で思い出し、過去の成功方向とdead-endの両方を次の調査に活かすことを重視します。
 
-## Current status
+## What works today
 
-実装 Phase 1〜4 が完了し、AI Adapter（Phase 5）に入っています。
-
-- P5-01 接続方式の調査: 完了
-- P5-02 adapter package 境界と共通クライアント: 完了
-- 次は P5-03 Project 自動判定
-
-実装 Phase 1（保存基盤）が完了しました。
-
-現時点で動作するもの:
+### 保存基盤
 
 - TypeScript / Node.js のサービス基盤
 - PostgreSQL への migration 基盤（ローカル開発は Supabase CLI + Docker）
@@ -45,7 +37,7 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 - owner scope を固定した Repository 境界
 - 上記を1本の流れとして通す統合テスト
 
-実装 Phase 2 に入り、HTTP/JSON API の土台ができました。
+### HTTP/JSON API
 
 - Fastify によるローカル HTTP サーバー（既定で `127.0.0.1` のみ）
 - `/health` と、owner が確立していることを要求する `/v1/*`
@@ -65,14 +57,16 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 
 API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にあります。
 
-実装 Phase 3（機密除去・障害耐性）が完了しました。
+### 機密除去・障害耐性
 
 - Memory 本文へ書き込む前の secret 検出。確定した credential は保存を拒否します
 - 運用ログは閉じた値だけを出力し、Memory 本文を持ちません
 - Memory Server 障害時に本作業を止めないための retry queue（interface と drain を提供し、scheduler は持ちません）
 - Problem の物理削除と、owner Memory の export
 
-実装 Phase 4（検索）が完了しました。別 Project の過去経験を、**技術名や文言が違っても問題構造の近さで**候補にできます。
+### 検索
+
+別 Project の過去経験を、**技術名や文言が違っても問題構造の近さで**候補にできます。
 
 - 元 Memory と、検索用に再生成可能な RetrievalArtifact の分離
 - canonical Memory から artifact を生成する pipeline（要約・embedding・整合性つき書き込み）
@@ -89,7 +83,7 @@ API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にありま�
 
 検索の設計と、サーバーが**判断しないこと**は [`docs/retrieval.md`](docs/retrieval.md) にあります。
 
-Phase 5 のうち、AI から Memory へ到達する経路までができました。
+### AI から Memory へ到達する経路
 
 - 具体的な provider（要約・embedding・再ランキング）の構成が composition edge に存在します。credential がなければその機能だけが無効になり、記録と読み出しは今までどおり動きます
 - artifact の自動保守。canonical な書き込み後の通知と、起動時および定期の照合で、検索用の rendering を作り直します
@@ -97,9 +91,9 @@ Phase 5 のうち、AI から Memory へ到達する経路までができまし�
 - provider に到達できないときは、型のついた degradation として返します（検索が落ちるのではなく、使えたチャネルだけで答えます）
 - 共通 Memory API クライアントの `search(problemId, request)`
 
-まだないもの: Claude Code 固有の Project 判定・session 連携・自動検索・Event 記録。これらは Phase 5 の以降の段階です。
+- `packages/claude-code-adapter` の Project 自動判定。git remote から Project 同一性を導き、確信が持てないときは推測せず候補と理由を返します
 
-詳細な内部仕様は現時点では非公開です。
+まだないもの: session 連携・自動検索・Event の自動記録。
 
 ## Development
 
@@ -157,7 +151,3 @@ npm run credential:revoke -- --credential-id <uuid>
 使わないときは `npm run supabase:stop` で停止してください。
 
 コマンド一覧・構成・規約は [docs/development.md](docs/development.md) を参照してください。
-
-外部の事例・記事など、規範ではない参考メモは
-[docs/reference-set.md](docs/reference-set.md) にあります（仕様でも roadmap でも
-なく、採用を意味しません）。
