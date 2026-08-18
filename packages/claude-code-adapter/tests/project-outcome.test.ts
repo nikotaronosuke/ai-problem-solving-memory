@@ -461,13 +461,82 @@ describe('when a create goes unanswered', () => {
     expect(recorded.creates).toHaveLength(1);
   });
 
-  it('reports an ambiguity that is now visible', async () => {
+  it('reports a duplicate that is now visible', async () => {
+    // Two Projects tied on this repository is proof the write landed — or that
+    // somebody else's did, which is equally a Project to work in. The reason is
+    // asserted, not just the kind: it is the whole of why this counts as proof.
     const { client: api } = client({
       listings: [[], [project({ project_id: 'a' }), project({ project_id: 'b' })]],
       onCreate: () => new MemoryApiUnreachableError('TRANSPORT'),
     });
 
-    await expect(registerProject(api, signals())).resolves.toMatchObject({ kind: 'AMBIGUOUS' });
+    await expect(registerProject(api, signals())).resolves.toMatchObject({
+      kind: 'AMBIGUOUS',
+      reason: 'MULTIPLE_PROJECTS_FOR_REMOTE',
+    });
+  });
+
+  it('propagates the failure when the answer is the same one as before', async () => {
+    // The load-bearing case, and it only became reachable once a create could
+    // be attempted from an ambiguity. `NO_MATCHING_REPO_BOUNDARY` before the
+    // request and `NO_MATCHING_REPO_BOUNDARY` after it is not a change; reading
+    // it as recovery would turn "nobody knows whether this committed" into an
+    // ordinary outcome, most reliably in the case where it did not.
+    const unreachable = new MemoryApiUnreachableError('TRANSPORT');
+    const sibling = [project({ project_id: 'web', repo_subpath: 'apps/web' })];
+    const { client: api, recorded } = client({
+      listings: [sibling, sibling],
+      onCreate: () => unreachable,
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
+      }),
+    ).rejects.toBe(unreachable);
+    expect(recorded.creates).toHaveLength(1);
+  });
+
+  it('propagates the failure when only another repository answers', async () => {
+    const unreachable = new MemoryApiUnreachableError('TRANSPORT');
+    const { client: api, recorded } = client({
+      listings: [[], [project({ repo: 'github.com/acme/other' })]],
+      onCreate: () => unreachable,
+    });
+
+    await expect(
+      registerProject(api, signals({ secondaryRemotes: ['github.com/acme/other'] })),
+    ).rejects.toBe(unreachable);
+    expect(recorded.creates).toHaveLength(1);
+  });
+
+  // A name-only ambiguity after an anchored create is unreachable rather than
+  // untested: this recovery is only entered from a create that had a repository
+  // to anchor on, and a name-only answer requires there to be no primary remote
+  // — from the same signals, on both reads. There is no fixture that produces
+  // one without producing the other, so the case is recorded here instead of
+  // being manufactured.
+
+  it('recovers a sibling create the resolver can now see', async () => {
+    const { client: api, recorded } = client({
+      listings: [
+        [project({ project_id: 'web', repo_subpath: 'apps/web' })],
+        [
+          project({ project_id: 'web', repo_subpath: 'apps/web' }),
+          project({ project_id: 'api', repo_subpath: 'apps/api' }),
+        ],
+      ],
+      onCreate: () => new MemoryApiUnreachableError('TRANSPORT'),
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
+      }),
+    ).resolves.toEqual({ kind: 'RESOLVED', projectId: 'api' });
+    expect(recorded.creates).toHaveLength(1);
   });
 
   it('propagates the original failure when nothing can be proven', async () => {
@@ -582,6 +651,252 @@ describe('when a create goes unanswered', () => {
     await registerProject(api, signals());
 
     expect(recorded.creates).toHaveLength(1);
+  });
+});
+
+describe('registering another part of a repository somebody split', () => {
+  /** One Project already covers a different part of this repository. */
+  const web = () => project({ project_id: 'web', repo_subpath: 'apps/web' });
+
+  it('is still a question when nobody has answered it', async () => {
+    // The default has not moved. A detected subdirectory is evidence, and
+    // registering what happened to be there would make every part of a monorepo
+    // a Project by accident.
+    const { client: api, recorded } = client({ listings: [[web()]] });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' })),
+    ).resolves.toMatchObject({
+      kind: 'AMBIGUOUS',
+      reason: 'NO_MATCHING_REPO_BOUNDARY',
+    });
+    expect(recorded.creates).toEqual([]);
+  });
+
+  it('registers the part the owner named', async () => {
+    const { client: api, recorded } = client({
+      listings: [[web()], [web(), project({ project_id: 'created', repo_subpath: 'apps/api' })]],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
+      }),
+    ).resolves.toEqual({ kind: 'CREATED', projectId: 'created' });
+    expect(recorded.creates).toEqual([
+      { project_name: 'widget', repo: REPO, repo_subpath: 'apps/api' },
+    ]);
+  });
+
+  it('registers an ancestor of where the session is', async () => {
+    const { client: api, recorded } = client({
+      listings: [[web()], [web(), project({ project_id: 'created', repo_subpath: 'services' })]],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'services/api/client' }), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'services',
+      }),
+    ).resolves.toMatchObject({ kind: 'CREATED' });
+    expect(recorded.creates[0]?.repo_subpath).toBe('services');
+  });
+
+  it('registers the whole repository when that is the answer', async () => {
+    const { client: api, recorded } = client({
+      listings: [[web()], [web(), project({ project_id: 'created', repo_subpath: null })]],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+        kind: 'REPOSITORY_ROOT',
+      }),
+    ).resolves.toMatchObject({ kind: 'CREATED' });
+    expect(recorded.creates[0]?.repo_subpath).toBeNull();
+  });
+
+  it('describes the new Project from this session, never from a candidate', async () => {
+    // A candidate describes somebody else's Project. Building a record out of
+    // one would copy a neighbour rather than record this place.
+    const { client: api, recorded } = client({
+      listings: [
+        [project({ project_id: 'web', project_name: 'the-other-one', repo_subpath: 'apps/web' })],
+        [project({ project_id: 'created', repo_subpath: 'apps/api' })],
+      ],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await registerProject(api, signals({ projectNameHint: 'api', monorepoSubpath: 'apps/api' }), {
+      kind: 'REPOSITORY_BOUNDARY',
+      repoSubpath: 'apps/api',
+    });
+
+    expect(recorded.creates[0]?.project_name).toBe('api');
+    expect(recorded.creates[0]?.repo).toBe(REPO);
+  });
+
+  it('refuses a boundary the session is not inside', async () => {
+    for (const repoSubpath of ['apps/web', 'apps/api-old', 'apps/api/client/deeper', '../apps']) {
+      const { client: api, recorded } = client({ listings: [[web()]] });
+
+      await expect(
+        registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+          kind: 'REPOSITORY_BOUNDARY',
+          repoSubpath,
+        }),
+      ).rejects.toBeInstanceOf(ProjectRegistrationArgumentError);
+      expect(recorded.creates).toEqual([]);
+    }
+  });
+
+  it.each([
+    ['inside a subdirectory', 'apps/api'],
+    // At the root this is the case that matters. A session in a subdirectory
+    // has no boundary to fall back to, so a missing refusal would surface as
+    // some other complaint; at the root the fallback is "the whole repository",
+    // and a missing refusal would quietly create exactly the Project the caller
+    // asked not to have.
+    ['at the repository root', null],
+  ])('refuses to register as though there were no repository, %s', async (_where, subpath) => {
+    // This reason cannot arise without a matching primary remote, so there is a
+    // durable identity available and pretending otherwise would discard it.
+    const { client: api, recorded } = client({ listings: [[web()]] });
+    const raised = await registerProject(api, signals({ monorepoSubpath: subpath }), {
+      kind: 'REGISTER_WITHOUT_REPOSITORY',
+    }).catch((error: unknown) => error);
+
+    expect(raised).toBeInstanceOf(ProjectRegistrationArgumentError);
+    expect((raised as ProjectRegistrationArgumentError).argument).toBe('registration choice');
+    expect(recorded.creates).toEqual([]);
+  });
+
+  it('says which argument was refused and never the path in it', async () => {
+    const { client: api } = client({ listings: [[web()]] });
+    const raised = await registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+      kind: 'REPOSITORY_BOUNDARY',
+      repoSubpath: 'apps/secret-client-name',
+    }).catch((error: unknown) => error);
+
+    expect(raised).toBeInstanceOf(ProjectRegistrationArgumentError);
+    expect((raised as ProjectRegistrationArgumentError).argument).toBe('repository boundary');
+    expect(String((raised as Error).message).includes('secret-client-name')).toBe(false);
+  });
+
+  it.each([
+    [
+      'two Projects tied on this repository',
+      [project({ project_id: 'a' }), project({ project_id: 'b' })],
+      { monorepoSubpath: null },
+    ],
+    [
+      'only a secondary remote matching',
+      [project({ repo: 'github.com/acme/other' })],
+      { secondaryRemotes: ['github.com/acme/other'] },
+    ],
+    [
+      'only a name matching',
+      [project({ repo: null, project_name: 'widget' })],
+      { primaryRemote: null },
+    ],
+  ])('creates nothing when the ambiguity is %s', async (_name, listing, extra) => {
+    // A registration choice is not a general "create anyway". Each of these is
+    // a conflict rather than a question, and none of them is answered by
+    // recording another Project.
+    const { client: api, recorded } = client({ listings: [listing] });
+
+    const result = await registerProject(api, signals(extra), { kind: 'REPOSITORY_ROOT' });
+
+    expect(result.kind).toBe('AMBIGUOUS');
+    expect(recorded.creates).toEqual([]);
+  });
+
+  it('reads the world once before it writes, and once after', async () => {
+    const { client: api, recorded } = client({
+      listings: [[web()], [web(), project({ project_id: 'created', repo_subpath: 'apps/api' })]],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+      kind: 'REPOSITORY_BOUNDARY',
+      repoSubpath: 'apps/api',
+    });
+
+    // The fresh resolve, then the create, then the confirmation. Nothing here
+    // takes the ambiguity a caller saw earlier as authority.
+    expect(recorded.lists).toBe(2);
+  });
+
+  it('reports a Project that arrived alongside and covers this session better', async () => {
+    const { client: api } = client({
+      listings: [
+        [web()],
+        [web(), project({ project_id: 'somebody-elses', repo_subpath: 'apps/api' })],
+      ],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
+      }),
+    ).resolves.toEqual({ kind: 'RESOLVED', projectId: 'somebody-elses' });
+  });
+
+  it('reports a duplicate the confirmation now sees', async () => {
+    const { client: api } = client({
+      listings: [
+        [web()],
+        [
+          project({ project_id: 'a', repo_subpath: 'apps/api' }),
+          project({ project_id: 'b', repo_subpath: 'apps/api' }),
+        ],
+      ],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
+      }),
+    ).resolves.toMatchObject({ kind: 'AMBIGUOUS', reason: 'MULTIPLE_PROJECTS_FOR_REMOTE' });
+  });
+
+  it('raises when a created Project still does not cover this session', async () => {
+    // Answered, created, and the resolver would not select it. Continuing under
+    // an id the resolver disagrees with is worse than stopping.
+    const { client: api } = client({
+      listings: [[web()], [web()]],
+      onCreate: (request) => project({ project_id: 'created', ...request }),
+    });
+
+    await expect(
+      registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
+      }),
+    ).rejects.toBeInstanceOf(ProjectRegistrationInvariantError);
+  });
+
+  it('answers with an identity and nothing else', async () => {
+    const { client: api } = client({
+      listings: [[web()], [web(), project({ project_id: 'created', repo_subpath: 'apps/api' })]],
+      onCreate: (request) =>
+        project({ project_id: 'created', ...request, repo: REPO + FAKE_TOKEN }),
+    });
+
+    const result = await registerProject(api, signals({ monorepoSubpath: 'apps/api' }), {
+      kind: 'REPOSITORY_BOUNDARY',
+      repoSubpath: 'apps/api',
+    });
+
+    expect(Object.keys(result).sort()).toEqual(['kind', 'projectId']);
+    expect(JSON.stringify(result).includes(FAKE_TOKEN)).toBe(false);
   });
 });
 
