@@ -221,6 +221,7 @@ describe('credential', () => {
       'getProblem',
       'listProjects',
       'listProblems',
+      'createProject',
       'createEnvironment',
       'createProblem',
       'search',

@@ -298,18 +298,21 @@ describe('the common client', () => {
     expect(code).toContain(
       'createProblem(projectId: string, request: CreateProblemRequest): Promise<ProblemResource>;',
     );
+    expect(code).toContain(
+      'createProject(request: CreateProjectRequest): Promise<ProjectResource>;',
+    );
     expect(code).toContain('search(problemId: string, request: MemorySearchRequest)');
 
-    // Six, and no seventh by accident. The two writes that arrived came with a
-    // caller that needed them. The ones still absent are absent for the same
-    // reason: nothing creates a Project yet and nothing resumes a paused
-    // Problem, so a method for either would be a guess about how it will be
-    // called — and the guess is what a later task would then have to argue
+    // Seven, and no eighth by accident. Each write arrived with the caller
+    // that needed it. The ones still absent are absent for the same reason:
+    // nothing reads or edits a single Project, and nothing resumes a paused
+    // Problem, so a method for any of them would be a guess about how it will
+    // be called — and the guess is what a later task would then have to argue
     // with.
     for (const absent of [
-      'createProject',
       'getProject',
       'updateProject',
+      'deleteProject',
       'updateProblem',
       'transitionProblemStatus',
       'appendEvent',
@@ -704,6 +707,116 @@ describe('the Claude adapter, still', () => {
     expect(code).toContain('source_ai: CLAUDE_CODE_SOURCE_AI');
   });
 
+  it('registers a Project without learning anything about Problems', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');
+    expect(outcome).toBeDefined();
+    const code = codeOnly(outcome?.source ?? '');
+
+    // It reads Projects and creates one. Which Problem a session is on, where a
+    // binding lives, what a session identifier is — none of that is a question
+    // it can answer or has any reason to ask, and a module that reached for one
+    // would be the place those decisions went to hide.
+    for (const forbidden of [
+      'Problem',
+      'BindingStore',
+      'sessionId',
+      'session_id',
+      'Environment',
+      'node:fs',
+      'node:path',
+      'process.env',
+      'process.cwd',
+      '/v1/',
+      'credential',
+      'Authorization',
+      'mcp',
+      'plugin',
+      'hook',
+    ]) {
+      expect(`registration reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `registration reaches for ${forbidden}:false`,
+      );
+    }
+
+    // And it never settles an ambiguity itself.
+    for (const forbidden of ['.sort(', '[0]', 'created_at', 'localeCompare', 'newest']) {
+      expect(`registration uses ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `registration uses ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('reads the world again before it writes to it', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');
+    const code = codeOnly(outcome?.source ?? '');
+
+    // Creating a second Project for one repository is invisible afterwards, so
+    // both entry points resolve at the moment they are called. A version that
+    // took an earlier resolution as an argument would let a caller act on an
+    // answer from a previous turn, which is exactly the race this closes.
+    expect(code).toContain('resolveProject(client, signals)');
+
+    // Read against collapsed whitespace so a parameter can be told apart from a
+    // field of the same name: `candidates` is a legitimate part of the answer
+    // registration returns, and only illegitimate as something it is handed.
+    const flattened = code.replace(/\s+/gu, ' ');
+    for (const forbidden of [
+      'resolution: ProjectResolution,',
+      'previousResolution',
+      'candidates: readonly ProjectCandidate[], ): Promise',
+    ]) {
+      expect(`registration accepts ${forbidden}:${flattened.includes(forbidden)}`).toBe(
+        `registration accepts ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('says only what a caller needs, in a shape that is written down', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');
+    const flattened = codeOnly(outcome?.source ?? '').replace(/\s+/gu, ' ');
+
+    // These two unions are the whole outward contract, so they are pinned whole
+    // rather than sampled. A field is how a leak arrives: `repo` or a raw
+    // resource added to an answer would be inert on the day it appeared —
+    // nothing populates it, no assertion changes — and would carry repository
+    // text out of the adapter the first time somebody filled it in. Pinning the
+    // shape makes that a decision somebody has to make here, in the open.
+    expect(flattened).toContain(
+      'export type ProjectRegistrationResult = ' +
+        "| { readonly kind: 'CREATED'; readonly projectId: string } " +
+        "| { readonly kind: 'RESOLVED'; readonly projectId: string } " +
+        "| { readonly kind: 'AMBIGUOUS'; readonly reason: ProjectAmbiguityReason; " +
+        'readonly candidates: readonly ProjectCandidate[]; } ' +
+        "| { readonly kind: 'BOUNDARY_REQUIRED'; readonly suggestion: ProjectSuggestion } " +
+        "| { readonly kind: 'EXPLICIT_REGISTRATION_REQUIRED'; " +
+        'readonly suggestion: ProjectSuggestion } ' +
+        "| { readonly kind: 'NO_PROJECT_SIGNAL' };",
+    );
+    expect(flattened).toContain(
+      'export type ProjectSelectionResult = ' +
+        "| { readonly kind: 'SELECTED'; readonly projectId: string } " +
+        "| { readonly kind: 'SELECTION_STALE'; readonly resolution: ProjectResolution };",
+    );
+  });
+
+  it('keeps the resolver a read', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const resolver = shipped.find((file) => file.path === 'src/project-resolution.ts');
+    const code = codeOnly(resolver?.source ?? '');
+
+    // Registration consumes what the resolver decided. The resolver writing
+    // anything would make "what is true" and "what to do about it" one step,
+    // and the recheck above would have nothing to recheck.
+    for (const forbidden of ['createProject', 'updateProject', 'ProjectRegistration']) {
+      expect(`the resolver reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the resolver reaches for ${forbidden}:false`,
+      );
+    }
+  });
+
   it('keeps the binding store free of everything that is not persistence', async () => {
     const shipped = await sourcesOf('claude-code-adapter');
     const store = shipped.find((file) => file.path === 'src/problem-binding-store.ts');
@@ -900,15 +1013,24 @@ describe('the Claude adapter, still', () => {
       file.path.startsWith('src/'),
     );
 
-    // P5-03 resolves and reports. Creating a Project is a long-lived record and
-    // asking a question interrupts somebody; both belong to whatever consumes
-    // these outcomes, and neither is settled here by accident.
+    // Detection resolves and reports; creating a Project is a long-lived record
+    // and belongs to whatever consumes those outcomes. That consumer now exists
+    // and is exactly one module, so `createProject` is narrowed to it rather
+    // than dropped — anywhere else it would still mean detection had started
+    // writing.
+    //
+    // Asking a question stays forbidden everywhere, including there. These
+    // primitives return typed material; putting a question to somebody belongs
+    // to the composition, and a module that grew a prompt would be settling in
+    // code what belongs in a conversation.
     for (const { path, source } of shipped) {
       const code = codeOnly(source);
-      for (const forbidden of ['createProject', 'prompt', 'readline', 'confirm(']) {
-        expect(`${path} does ${forbidden}:${code.includes(forbidden)}`).toBe(
-          `${path} does ${forbidden}:false`,
-        );
+      const writesProjects = path === 'src/project-outcome.ts';
+      const forbidden = writesProjects
+        ? ['prompt', 'readline', 'confirm(']
+        : ['createProject', 'prompt', 'readline', 'confirm('];
+      for (const term of forbidden) {
+        expect(`${path} does ${term}:${code.includes(term)}`).toBe(`${path} does ${term}:false`);
       }
     }
   });
