@@ -54,44 +54,98 @@ import type {
 import { MemoryApiError } from '@ai-problem-solving-memory/api-client';
 
 /**
- * The states a Problem can still be worked on from.
+ * What a Problem's state means to a session looking for the one it is on.
  *
- * Derived from the contract's own status set rather than spelled out again:
- * `PROBLEM_STATUSES` minus the two nothing leads out of. Writing the three
- * names here would be a second authority on what a status means, and the
- * failure it invites is the silent one — a sixth status arriving and being
- * treated as terminal by omission.
+ * Three meanings, and they are not the same question the status vocabulary
+ * answers. `ProblemStatus` is the wire contract and stays the only authority on
+ * which states exist; this is the policy layer on top of it, which is genuinely
+ * this module's to own: whether a state is being worked in *now*, can be
+ * returned to, or is finished is a judgement about resolving a current Problem
+ * rather than a fact about the record.
  */
-export const CONTINUABLE_PROBLEM_STATUSES = [
-  'INVESTIGATING',
-  'FIX_CANDIDATE',
-  'PAUSED',
-] as const satisfies readonly ProblemStatus[];
-
-export type ContinuableProblemStatus = (typeof CONTINUABLE_PROBLEM_STATUSES)[number];
+export type CurrentProblemStatusClass = 'WORKING' | 'PAUSED' | 'TERMINAL';
 
 /**
- * The statuses a binding may resolve to.
+ * Every status, classified.
  *
- * `PAUSED` is deliberately not among them. A paused Problem can be returned to,
- * which is not the same as being the one in progress: resuming it is a decision
- * somebody makes, and it changes the record's status when they do. Treating a
- * binding to a paused Problem as "currently working on it" would skip both the
- * decision and the transition, and the Memory would show a Problem that was
- * never resumed accumulating work.
+ * `Record<ProblemStatus, …>` is what makes this exhaustive rather than merely
+ * valid, and the distinction is the whole point of writing it as a map. A list
+ * of the states that happen to be continuable proves only that each name is a
+ * real status; it says nothing about the ones left out. So a sixth status
+ * arriving in the contract would leave such a list still compiling, still
+ * passing, and quietly excluding that state from every candidate it should have
+ * appeared in — the exact shape of drift that is invisible until somebody
+ * notices their work is not being offered back to them.
+ *
+ * Written this way, a new status does not compile until somebody decides what
+ * it means here. That decision is small; making it is the point.
  */
-const WORKING_PROBLEM_STATUSES = [
-  'INVESTIGATING',
-  'FIX_CANDIDATE',
-] as const satisfies readonly ContinuableProblemStatus[];
+const CURRENT_PROBLEM_STATUS_CLASS = {
+  INVESTIGATING: 'WORKING',
+  FIX_CANDIDATE: 'WORKING',
+  PAUSED: 'PAUSED',
+  VERIFIED: 'TERMINAL',
+  CLOSED_UNRESOLVED: 'TERMINAL',
+} as const satisfies Record<ProblemStatus, CurrentProblemStatusClass>;
 
+/** The statuses classified into one of the given meanings. */
+type StatusesClassedAs<C extends CurrentProblemStatusClass> = {
+  [S in ProblemStatus]: (typeof CURRENT_PROBLEM_STATUS_CLASS)[S] extends C ? S : never;
+}[ProblemStatus];
+
+/**
+ * A state a Problem can still be continued from — worked in, or paused.
+ *
+ * Derived from the classification rather than listed beside it, so the two
+ * cannot disagree.
+ */
+export type ContinuableProblemStatus = StatusesClassedAs<'WORKING' | 'PAUSED'>;
+
+/**
+ * Whether a Problem in this state could still be continued.
+ *
+ * A `switch` over the classification rather than a membership test, because it
+ * makes the second dimension exhaustive too: the function is annotated to
+ * return a boolean, so a class nobody handled leaves a path that falls off the
+ * end and does not compile. Neither an unclassified status nor an unhandled
+ * meaning can reach a silent default here, which is the failure this whole
+ * section exists to make impossible.
+ */
 function isContinuable(status: ProblemStatus): status is ContinuableProblemStatus {
-  return (CONTINUABLE_PROBLEM_STATUSES as readonly ProblemStatus[]).includes(status);
+  switch (CURRENT_PROBLEM_STATUS_CLASS[status]) {
+    case 'WORKING':
+    case 'PAUSED':
+      return true;
+    case 'TERMINAL':
+      return false;
+  }
 }
 
+/**
+ * Whether a Problem in this state is one being worked in right now.
+ *
+ * `PAUSED` is deliberately not. A paused Problem can be returned to, which is
+ * not the same as being the one in progress: resuming it is a decision somebody
+ * makes, and it changes the record's status when they do. Treating a binding to
+ * a paused Problem as "currently working on it" would skip both the decision
+ * and the transition, and the Memory would show a Problem that was never
+ * resumed accumulating work.
+ */
 function isWorking(status: ProblemStatus): boolean {
-  return (WORKING_PROBLEM_STATUSES as readonly ProblemStatus[]).includes(status);
+  return CURRENT_PROBLEM_STATUS_CLASS[status] === 'WORKING';
 }
+
+/**
+ * The continuable statuses, in the order the classification lists them.
+ *
+ * Filtered out of the classification rather than written again, for the same
+ * reason the type is derived from it: a second list is a second thing to keep
+ * in step. The assertion on `Object.keys` is sound by construction — the
+ * `satisfies` above is what guarantees these keys are exactly the statuses.
+ */
+export const CONTINUABLE_PROBLEM_STATUSES: readonly ContinuableProblemStatus[] = (
+  Object.keys(CURRENT_PROBLEM_STATUS_CLASS) as readonly ProblemStatus[]
+).filter(isContinuable);
 
 /**
  * A previously recorded answer to "which Problem is this session on".
