@@ -24,9 +24,14 @@ migrations.
 
 ## Current state
 
-No domain schema exists yet. The baseline migration establishes the migration
-pipeline only. Project, Environment, Problem, Event and Verification are
-designed from P1-04 onward.
+The domain schema is in place: owners, projects, environments, problems,
+events, verifications, relations, usage logs, change logs, memory controls,
+client credentials, and the retrieval artifacts search reads from. Shared value
+sets are PostgreSQL `DOMAIN`s over `text` with CHECK constraints, mirroring
+`src/domain/enums.ts` so both sides move together.
+
+`supabase/migrations/` is the authority on the schema as it stands;
+`docs/development.md` covers running the local database and inspecting it.
 
 ## Rules
 
