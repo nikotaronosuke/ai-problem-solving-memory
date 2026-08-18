@@ -906,6 +906,58 @@ describe('the Claude adapter, still', () => {
     }
   });
 
+  it('shares one description of a new Project, and offers it to nobody else', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');
+    const index = shipped.find((file) => file.path === 'src/index.ts');
+    const code = codeOnly(outcome?.source ?? '');
+
+    // Two modules now need the same answer to "what would we call this Project
+    // and what would we record on it", so there is one definition and the
+    // second module imports it. A copy here would agree until one of them was
+    // extended, and then disagree silently.
+    expect(code).toContain('suggestionFor(signals)');
+    for (const forbidden of ['projectNameHint:', 'primaryRemote:', 'monorepoSubpath:']) {
+      expect(`registration rebuilds ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `registration rebuilds ${forbidden}:false`,
+      );
+    }
+
+    // Sharing between two implementation modules is not the same as offering a
+    // capability. Nothing outside this package has asked what a suggestion is,
+    // and an export is far easier to add than to take back.
+    expect(
+      `the package exports suggestionFor:${codeOnly(index?.source ?? '').includes('suggestionFor')}`,
+    ).toBe('the package exports suggestionFor:false');
+  });
+
+  it('creates against exactly one ambiguity, and proves a write by the same rule', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');
+    const code = codeOnly(outcome?.source ?? '');
+    const flattened = code.replace(/\s+/gu, ' ');
+
+    // One ambiguity is a question with a second legitimate answer. A choice
+    // does not turn the others into one — a tie is a duplicate to merge, a
+    // secondary remote is another repository, a name is not an identity.
+    expect(flattened).toContain(
+      "resolution.reason === 'NO_MATCHING_REPO_BOUNDARY' && choice !== undefined",
+    );
+
+    // And both reads that ask "did a covering Project appear" accept the same
+    // proof. An answer that is still NO_MATCHING is the answer from before the
+    // request, so reading it as recovery would turn an unknown write into an
+    // ordinary outcome.
+    expect(
+      `ambiguity accepted as proof: ${String(
+        (flattened.match(/after\.reason === 'MULTIPLE_PROJECTS_FOR_REMOTE'/gu) ?? []).length,
+      )}`,
+    ).toBe('ambiguity accepted as proof: 2');
+    expect(
+      `bare ambiguity accepted: ${flattened.includes("if (after.kind === 'AMBIGUOUS') {")}`,
+    ).toBe('bare ambiguity accepted: false');
+  });
+
   it('reads the world again before it writes to it', async () => {
     const shipped = await sourcesOf('claude-code-adapter');
     const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');

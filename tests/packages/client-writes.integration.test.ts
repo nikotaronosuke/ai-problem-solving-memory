@@ -235,60 +235,101 @@ describe.skipIf(databaseUrl === undefined)('the client writing through the real 
 
     it('persists a chosen boundary that the resolver then uses to tell parts apart', async () => {
       // The whole point of the boundary, end to end: two Projects on one
-      // repository, and a session in each resolving to its own.
-      //
-      // Only the first is registered through the adapter. Once a repository has
-      // a Project whose boundary does not cover the next session, the resolver
-      // answers NO_MATCHING_REPO_BOUNDARY — a question rather than "nothing
-      // records this" — and registration correctly declines to create against
-      // an ambiguous answer. So the second part is created directly here, and
-      // the limit that forces it is asserted in the test below rather than
-      // worked around silently.
+      // repository, both registered through the adapter, and a session in each
+      // resolving to its own — against real routes and a real database.
       const remote = 'github.com/acme/register-monorepo';
 
       const web = await registerProject(memory, signalsFor(remote, 'apps/web'), {
         kind: 'REPOSITORY_BOUNDARY',
         repoSubpath: 'apps/web',
       });
-      expect(web).toMatchObject({ kind: 'CREATED' });
-
-      const api = await memory.createProject({
-        project_name: 'register-monorepo-api',
-        repo: remote,
-        repo_subpath: 'apps/api',
+      // The second part is the one that had no path before. The repository is
+      // recorded by then and no stored boundary covers this session, so the
+      // resolver asks — and this is the owner answering.
+      const api = await registerProject(memory, signalsFor(remote, 'apps/api'), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/api',
       });
+
+      expect(web).toMatchObject({ kind: 'CREATED' });
+      expect(api).toMatchObject({ kind: 'CREATED' });
 
       await expect(resolveProject(memory, signalsFor(remote, 'apps/web/client'))).resolves.toEqual({
         kind: 'RESOLVED',
         projectId: (web as { projectId: string }).projectId,
       });
-      await expect(resolveProject(memory, signalsFor(remote, 'apps/api'))).resolves.toEqual({
+      await expect(resolveProject(memory, signalsFor(remote, 'apps/api/client'))).resolves.toEqual({
         kind: 'RESOLVED',
-        projectId: api.project_id,
+        projectId: (api as { projectId: string }).projectId,
       });
     });
 
-    it('declines to register a second part of an already-recorded repository', async () => {
-      // Worth pinning because it is a real limit rather than an accident. The
-      // repository is recorded and no stored boundary covers this session, so
-      // the resolver asks — and asking is the answer this primitive respects.
-      // Registering a sibling part is therefore a decision that needs its own
-      // path, and does not exist yet.
-      const remote = 'github.com/acme/register-sibling';
+    it('still asks before registering a second part nobody has decided on', async () => {
+      // The default has not moved. Without an explicit answer the question is
+      // still the answer, and no Project is created out of a directory layout.
+      const remote = 'github.com/acme/register-sibling-unanswered';
 
       await registerProject(memory, signalsFor(remote, 'apps/web'), {
         kind: 'REPOSITORY_BOUNDARY',
         repoSubpath: 'apps/web',
       });
 
-      const second = await registerProject(memory, signalsFor(remote, 'apps/api'), {
-        kind: 'REPOSITORY_BOUNDARY',
-        repoSubpath: 'apps/api',
-      });
+      const before = await memory.listProjects();
+      const second = await registerProject(memory, signalsFor(remote, 'apps/api'));
+      const after = await memory.listProjects();
 
       expect(second).toMatchObject({
         kind: 'AMBIGUOUS',
         reason: 'NO_MATCHING_REPO_BOUNDARY',
+      });
+      expect(after.length).toBe(before.length);
+    });
+
+    it('registers the whole repository without flattening a part somebody split', async () => {
+      // A root Project alongside a deeper one is not a contradiction: the
+      // most specific covering boundary still wins, so `apps/web` keeps its
+      // sessions and the root takes everything else.
+      const remote = 'github.com/acme/register-root-beside-part';
+
+      const web = await registerProject(memory, signalsFor(remote, 'apps/web'), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/web',
+      });
+      const root = await registerProject(memory, signalsFor(remote, null), {
+        kind: 'REPOSITORY_ROOT',
+      });
+
+      expect(root).toMatchObject({ kind: 'CREATED' });
+
+      await expect(resolveProject(memory, signalsFor(remote, null))).resolves.toEqual({
+        kind: 'RESOLVED',
+        projectId: (root as { projectId: string }).projectId,
+      });
+      await expect(resolveProject(memory, signalsFor(remote, 'apps/web'))).resolves.toEqual({
+        kind: 'RESOLVED',
+        projectId: (web as { projectId: string }).projectId,
+      });
+    });
+
+    it('registers an ancestor of where the session is, when that is the answer', async () => {
+      const remote = 'github.com/acme/register-ancestor';
+
+      await registerProject(memory, signalsFor(remote, 'apps/web'), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'apps/web',
+      });
+      const services = await registerProject(memory, signalsFor(remote, 'services/api/client'), {
+        kind: 'REPOSITORY_BOUNDARY',
+        repoSubpath: 'services',
+      });
+
+      expect(services).toMatchObject({ kind: 'CREATED' });
+      // Explicitly chosen, not inferred from the directory the session is in.
+      await expect(
+        resolveProject(memory, signalsFor(remote, 'services/api/client')),
+      ).resolves.toEqual({
+        kind: 'RESOLVED',
+        projectId: (services as { projectId: string }).projectId,
       });
     });
 

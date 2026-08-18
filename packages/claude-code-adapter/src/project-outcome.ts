@@ -45,6 +45,7 @@ import { MemoryApiUnreachableError } from '@ai-problem-solving-memory/api-client
 
 import {
   resolveProject,
+  suggestionFor,
   type ProjectAmbiguityReason,
   type ProjectCandidate,
   type ProjectResolution,
@@ -175,6 +176,15 @@ export async function registerProject(
     return { kind: 'RESOLVED', projectId: resolution.projectId };
   }
   if (resolution.kind === 'AMBIGUOUS') {
+    // One ambiguity is a question with a second legitimate answer. The rest are
+    // not, and an explicit choice does not turn them into one: two Projects
+    // tied on a boundary is a duplicate to merge, a secondary remote is not
+    // this repository, and a name match is not an identity. Creating against
+    // any of those would answer a question nobody asked.
+    if (resolution.reason === 'NO_MATCHING_REPO_BOUNDARY' && choice !== undefined) {
+      return registerNewBoundary(client, signals, choice);
+    }
+
     return {
       kind: 'AMBIGUOUS',
       reason: resolution.reason,
@@ -220,6 +230,58 @@ export async function registerProject(
   const repoSubpath = boundaryFor(suggestion, choice);
   if (repoSubpath === UNDECIDED) {
     return { kind: 'BOUNDARY_REQUIRED', suggestion };
+  }
+
+  return createAnchoredProject(client, signals, suggestion, repoSubpath);
+}
+
+/**
+ * Registers a further part of a repository the owner has already split.
+ *
+ * `NO_MATCHING_REPO_BOUNDARY` is the one ambiguity that is a question rather
+ * than a conflict: the repository is recorded and no stored boundary covers
+ * this session, which can mean the work belongs to an existing Project, or that
+ * this location is another Project. The first answer is a selection and has its
+ * own path. This is the second, and until now it had none — the owner could be
+ * asked and there was nothing that could enact the reply.
+ *
+ * Only an explicit choice gets here. Without one the answer is still the
+ * ambiguity, because a detected subdirectory is evidence and never a decision:
+ * registering what happened to be there would make every part of a monorepo a
+ * Project by accident, which is the whole thing the question exists to avoid.
+ *
+ * The new Project is described from the session's *current* signals rather than
+ * from any candidate that came back. A candidate describes somebody else's
+ * Project — its name, its repository as stored — and building a new record out
+ * of one would copy a neighbour rather than record this place.
+ */
+async function registerNewBoundary(
+  client: ProjectRegistrationClient,
+  signals: ProjectSignals | null,
+  choice: ProjectRegistrationChoice,
+): Promise<ProjectRegistrationResult> {
+  if (choice.kind === 'REGISTER_WITHOUT_REPOSITORY') {
+    // This reason cannot arise without a matching primary repository, so there
+    // is a durable identity available and registering as though there were none
+    // would throw it away.
+    throw new ProjectRegistrationArgumentError('registration choice');
+  }
+
+  if (signals === null) {
+    // Unreachable by construction rather than defended against: this reason is
+    // only reached through a matching primary remote, and no signals resolve to
+    // no Project signal at all. Kept because the alternative is a cast that
+    // says the same thing less honestly.
+    throw new ProjectRegistrationArgumentError('project signals');
+  }
+
+  const suggestion = suggestionFor(signals);
+  const repoSubpath = boundaryFor(suggestion, choice);
+
+  if (repoSubpath === UNDECIDED) {
+    // Also unreachable: both remaining choices decide a boundary. The check is
+    // what keeps that a fact about the code rather than an assumption.
+    throw new ProjectRegistrationArgumentError('registration choice');
   }
 
   return createAnchoredProject(client, signals, suggestion, repoSubpath);
@@ -300,13 +362,17 @@ async function createAnchoredProject(
       : { kind: 'RESOLVED', projectId: after.projectId };
   }
 
-  if (after.kind === 'AMBIGUOUS') {
+  if (after.kind === 'AMBIGUOUS' && after.reason === 'MULTIPLE_PROJECTS_FOR_REMOTE') {
+    // A real duplicate: two Projects now tie on this repository, which is
+    // somebody to merge rather than a failure. Every other ambiguity says no
+    // Project covers this session — and one was just created that necessarily
+    // does, so the answer contradicts the write that was acknowledged.
     return { kind: 'AMBIGUOUS', reason: after.reason, candidates: after.candidates };
   }
 
-  // A repository-anchored Project was created and the resolver does not see it.
-  // Nothing sensible follows from that, and a second create would make it
-  // worse.
+  // A repository-anchored Project was created and the resolver does not see it
+  // covering this session. Nothing sensible follows from that, and a second
+  // create would make it worse.
   throw new ProjectRegistrationInvariantError();
 }
 
@@ -315,9 +381,22 @@ async function createAnchoredProject(
  *
  * An unreachable Memory means the request may or may not have committed. That
  * is genuinely unknown — but it is not *unknowable*: reading again can show a
- * Project now resolving, which is proof enough that one exists to work in,
- * whether this session created it or another did. Where the read shows nothing,
- * the original failure travels unchanged, still meaning exactly what it meant.
+ * Project now covering this session, which is proof enough that one exists to
+ * work in, whether this session created it or another did.
+ *
+ * What counts as proof is narrower than "the answer changed shape", and the
+ * difference only becomes visible once a create can be attempted from an
+ * ambiguity. A create anchored on this repository, with a boundary that covers
+ * this session, necessarily makes the resolver either resolve or report several
+ * equally-best covering Projects. Those two are the proof. An answer that is
+ * still `NO_MATCHING_REPO_BOUNDARY` is the *same answer as before the request*
+ * and says nothing about it; a secondary-remote or name-only ambiguity is about
+ * some other repository entirely. Accepting any of those would turn "nobody
+ * knows whether this committed" into an ordinary outcome — and it would do it
+ * most reliably in exactly the case where the write did not happen.
+ *
+ * Where nothing is proven, the original failure travels unchanged, still
+ * meaning exactly what it meant.
  *
  * Nothing is re-sent. A second create is as likely to make a duplicate as to
  * recover.
@@ -344,7 +423,7 @@ async function recoverFromUnknownCreate(
   if (after.kind === 'RESOLVED') {
     return { kind: 'RESOLVED', projectId: after.projectId };
   }
-  if (after.kind === 'AMBIGUOUS') {
+  if (after.kind === 'AMBIGUOUS' && after.reason === 'MULTIPLE_PROJECTS_FOR_REMOTE') {
     return { kind: 'AMBIGUOUS', reason: after.reason, candidates: after.candidates };
   }
 
