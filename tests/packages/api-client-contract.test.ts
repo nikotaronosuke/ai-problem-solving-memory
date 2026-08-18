@@ -39,6 +39,7 @@ import {
   MEMORY_SEARCH_STRUCTURAL_FEATURE_SCHEMA_VERSION,
   MEMORY_SEARCH_STRUCTURAL_STATUSES,
   MEMORY_SEARCH_VERIFICATION_TYPES,
+  ENVIRONMENT_RESOURCE_FIELDS,
   PROBLEM_RESOURCE_FIELDS,
   PROBLEM_STATUSES as CLIENT_PROBLEM_STATUSES,
   PROJECT_RESOURCE_FIELDS,
@@ -69,7 +70,11 @@ import {
   STRUCTURAL_FEATURE_SCHEMA_VERSION,
 } from '../../src/domain/retrieval-summary.js';
 import { ERROR_CODES } from '../../src/http/errors.js';
-import { PROBLEM_RESOURCE_SCHEMA, PROJECT_RESOURCE_SCHEMA } from '../../src/http/resources.js';
+import {
+  ENVIRONMENT_RESOURCE_SCHEMA,
+  PROBLEM_RESOURCE_SCHEMA,
+  PROJECT_RESOURCE_SCHEMA,
+} from '../../src/http/resources.js';
 import { SEARCH_REQUEST_SCHEMA, SEARCH_RESPONSE_SCHEMA } from '../../src/http/search-resources.js';
 
 describe('the value sets the client mirrors', () => {
@@ -155,6 +160,32 @@ describe('the Project the client expects', () => {
       const declared = PROJECT_RESOURCE_SCHEMA.properties[field] as { type: readonly string[] };
       expect([...declared.type].sort(), field).toEqual(['null', 'string']);
     }
+  });
+});
+
+describe('the Environment the client expects', () => {
+  it('requires exactly the fields the response schema requires', () => {
+    expect([...ENVIRONMENT_RESOURCE_FIELDS].sort()).toEqual(
+      [...ENVIRONMENT_RESOURCE_SCHEMA.required].sort(),
+    );
+  });
+
+  it('knows about every field the schema describes, and no others', () => {
+    expect([...ENVIRONMENT_RESOURCE_FIELDS].sort()).toEqual(
+      Object.keys(ENVIRONMENT_RESOURCE_SCHEMA.properties).sort(),
+    );
+    // Which is what entitles the client to check for an exact key set.
+    expect(ENVIRONMENT_RESOURCE_SCHEMA.additionalProperties).toBe(false);
+  });
+
+  it('agrees a snapshot is an object whose keys are the caller’s', () => {
+    // The one deliberately open thing in this contract: which conditions
+    // mattered differs by problem. Open about its keys, closed about being an
+    // object — and the client refuses an array or a string for the same reason
+    // the route does.
+    const snapshot = ENVIRONMENT_RESOURCE_SCHEMA.properties.snapshot;
+    expect(snapshot.type).toBe('object');
+    expect(snapshot.additionalProperties).toBe(true);
   });
 });
 

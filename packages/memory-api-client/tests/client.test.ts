@@ -217,7 +217,14 @@ describe('credential', () => {
     // options, nowhere the credential could be read back from. The list stays
     // exact rather than becoming a minimum, and it grows only when a task has
     // a caller for the method it adds.
-    expect(Object.keys(built)).toEqual(['getProblem', 'listProjects', 'listProblems', 'search']);
+    expect(Object.keys(built)).toEqual([
+      'getProblem',
+      'listProjects',
+      'listProblems',
+      'createEnvironment',
+      'createProblem',
+      'search',
+    ]);
   });
 });
 

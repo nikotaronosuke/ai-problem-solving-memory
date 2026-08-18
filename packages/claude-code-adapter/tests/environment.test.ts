@@ -132,7 +132,14 @@ describe('reading the environment', () => {
     // the client gains arrives here for free. What the adapter must *not* have
     // gained is policy about when to search or what to call itself, which a
     // guard in the server's suite checks.
-    expect(Object.keys(client)).toEqual(['getProblem', 'listProjects', 'listProblems', 'search']);
+    expect(Object.keys(client)).toEqual([
+      'getProblem',
+      'listProjects',
+      'listProblems',
+      'createEnvironment',
+      'createProblem',
+      'search',
+    ]);
     expect(JSON.stringify(client).includes(TOKEN)).toBe(false);
   });
 

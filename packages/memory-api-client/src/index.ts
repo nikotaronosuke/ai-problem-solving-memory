@@ -3,7 +3,7 @@
  *
  * One export list, so what this package promises is readable in one place. It
  * grows a method at a time, when a task needs one: the API has twenty-eight
- * operations and this client has four, because a client method that no caller
+ * operations and this client has six, because a client method that no caller
  * has is a guess about how it will be called.
  *
  * What is exported from the search module is the contract: the request and
@@ -86,6 +86,17 @@ export {
   type MemorySearchVerificationType,
 } from './search.js';
 
+export { isJsonObject, type JsonObject, type JsonPrimitive, type JsonValue } from './json.js';
+
+export {
+  isCreateEnvironmentRequest,
+  isEnvironmentResource,
+  CREATE_ENVIRONMENT_REQUEST_FIELDS,
+  ENVIRONMENT_RESOURCE_FIELDS,
+  type CreateEnvironmentRequest,
+  type EnvironmentResource,
+} from './environment.js';
+
 export {
   isProjectListBody,
   isProjectResource,
@@ -94,15 +105,18 @@ export {
 } from './project.js';
 
 export {
+  isCreateProblemRequest,
   isProblemListBody,
   isProblemResource,
   CONFIDENCES,
+  CREATE_PROBLEM_REQUEST_FIELDS,
   FIX_KINDS,
   FRESHNESSES,
   PROBLEM_RESOURCE_FIELDS,
   PROBLEM_STATUSES,
   type Confidence,
   type FixKind,
+  type CreateProblemRequest,
   type Freshness,
   type ProblemResource,
   type ProblemStatus,
