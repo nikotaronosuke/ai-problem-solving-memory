@@ -50,6 +50,7 @@ export {
   type ContinuableProblemStatus,
   type CurrentProblemReader,
   type CurrentProblemResolution,
+  type CurrentProblemStatusClass,
   type ProblemBindingHint,
   type ProblemCandidate,
 } from './problem-resolution.js';
