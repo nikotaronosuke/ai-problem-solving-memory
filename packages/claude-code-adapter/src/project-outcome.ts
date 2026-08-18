@@ -41,6 +41,7 @@
  */
 
 import type { MemoryApiClient } from '@ai-problem-solving-memory/api-client';
+import { MemoryApiUnreachableError } from '@ai-problem-solving-memory/api-client';
 
 import {
   resolveProject,
@@ -320,13 +321,21 @@ async function createAnchoredProject(
  *
  * Nothing is re-sent. A second create is as likely to make a duplicate as to
  * recover.
+ *
+ * Which failure means that is decided by class identity. The client's error
+ * types are part of its published contract and this package already depends on
+ * them, so the question "did this request go unanswered" is asked of the class
+ * that means it. Reading `error.name` would have asked prose instead, and any
+ * error at all can be given that name — after which the read below would
+ * quietly turn an unrelated failure into an ordinary Project outcome. A refusal is not unknown in any case: the server answered, and it
+ * travels untouched.
  */
 async function recoverFromUnknownCreate(
   client: ProjectRegistrationClient,
   signals: ProjectSignals | null,
   error: unknown,
 ): Promise<ProjectRegistrationResult> {
-  if (!isUnreachable(error)) {
+  if (!(error instanceof MemoryApiUnreachableError)) {
     throw error;
   }
 
@@ -340,18 +349,6 @@ async function recoverFromUnknownCreate(
   }
 
   throw error;
-}
-
-/**
- * Whether a failure means nothing came back.
- *
- * Read by name rather than by importing the class, because this module has no
- * other reason to depend on the client's error types and the name is the
- * contract's own. A refusal, by contrast, is not unknown at all — the server
- * answered — and travels untouched.
- */
-function isUnreachable(error: unknown): boolean {
-  return error instanceof Error && error.name === 'MemoryApiUnreachableError';
 }
 
 /**

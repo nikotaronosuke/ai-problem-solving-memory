@@ -773,6 +773,23 @@ describe('the Claude adapter, still', () => {
     }
   });
 
+  it('tells failures apart by class, never by what they call themselves', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');
+    const code = codeOnly(outcome?.source ?? '');
+
+    // Exactly one failure may be recovered from, and only the client's own
+    // class means it. A name, a message or a constructor name is prose that any
+    // error can carry, so a check against one would let an unrelated failure
+    // enter recovery and come back out as an ordinary Project outcome.
+    expect(code).toContain('error instanceof MemoryApiUnreachableError');
+    for (const forbidden of ['.name ===', 'constructor.name', 'error.message', 'error.code']) {
+      expect(`registration classifies by ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `registration classifies by ${forbidden}:false`,
+      );
+    }
+  });
+
   it('says only what a caller needs, in a shape that is written down', async () => {
     const shipped = await sourcesOf('claude-code-adapter');
     const outcome = shipped.find((file) => file.path === 'src/project-outcome.ts');

@@ -15,7 +15,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { CreateProjectRequest, ProjectResource } from '@ai-problem-solving-memory/api-client';
-import { MemoryApiError, MemoryApiUnreachableError } from '@ai-problem-solving-memory/api-client';
+import {
+  MemoryApiError,
+  MemoryApiProtocolError,
+  MemoryApiUnreachableError,
+} from '@ai-problem-solving-memory/api-client';
 
 import {
   registerProject,
@@ -71,6 +75,8 @@ interface Recorded {
 function client(options: {
   listings: readonly (readonly ProjectResource[])[];
   onCreate?: (request: CreateProjectRequest) => ProjectResource | Error;
+  /** Rejects with the value as given, including values that are not `Error`s. */
+  onCreateThrows?: (request: CreateProjectRequest) => unknown;
 }): { client: ProjectRegistrationClient; recorded: Recorded } {
   const state = { creates: [] as CreateProjectRequest[], lists: 0 };
 
@@ -82,6 +88,10 @@ function client(options: {
     },
     createProject: (request) => {
       state.creates.push(request);
+      if (options.onCreateThrows !== undefined) {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a non-Error travelling unchanged is the property under test
+        return Promise.reject(options.onCreateThrows(request));
+      }
       const answer = options.onCreate?.(request) ?? project({ project_id: 'created', ...request });
       return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
     },
@@ -494,6 +504,72 @@ describe('when a create goes unanswered', () => {
 
     await expect(registerProject(api, signals())).rejects.toBe(refused);
     // No recovery read: there is nothing unknown to discover.
+    expect(recorded.lists).toBe(1);
+  });
+
+  it('recovers only for a real unreachable failure, not one that merely says so', async () => {
+    // The load-bearing distinction is class identity, not prose. Any error at
+    // all can be given this name, and the world here is arranged so that a
+    // name-based check would succeed loudly: the second listing resolves, so
+    // recovery would have returned a perfectly ordinary CREATED-looking answer
+    // and an unrelated failure would have vanished into it.
+    const spoof = new Error('synthetic');
+    spoof.name = 'MemoryApiUnreachableError';
+    const { client: api, recorded } = client({
+      listings: [[], [project()]],
+      onCreate: () => spoof,
+    });
+
+    await expect(registerProject(api, signals())).rejects.toBe(spoof);
+    // One read before the create, and none after: recovery never ran.
+    expect(recorded.lists).toBe(1);
+    expect(recorded.creates).toHaveLength(1);
+  });
+
+  it('does not recover one that says so even when an ambiguity would have been reported', async () => {
+    const spoof = new Error('synthetic');
+    spoof.name = 'MemoryApiUnreachableError';
+    const { client: api, recorded } = client({
+      listings: [[], [project({ project_id: 'a' }), project({ project_id: 'b' })]],
+      onCreate: () => spoof,
+    });
+
+    await expect(registerProject(api, signals())).rejects.toBe(spoof);
+    expect(recorded.lists).toBe(1);
+    expect(recorded.creates).toHaveLength(1);
+  });
+
+  it('propagates a malformed answer untouched, because something did come back', async () => {
+    const malformed = new MemoryApiProtocolError('RESOURCE_MALFORMED', 201);
+    const { client: api, recorded } = client({
+      listings: [[], [project()]],
+      onCreate: () => malformed,
+    });
+
+    await expect(registerProject(api, signals())).rejects.toBe(malformed);
+    expect(recorded.lists).toBe(1);
+  });
+
+  it('propagates an ordinary failure untouched', async () => {
+    const ordinary = new TypeError('synthetic');
+    const { client: api, recorded } = client({
+      listings: [[], [project()]],
+      onCreate: () => ordinary,
+    });
+
+    await expect(registerProject(api, signals())).rejects.toBe(ordinary);
+    expect(recorded.lists).toBe(1);
+  });
+
+  it('propagates a thrown value that is not an error at all', async () => {
+    // `instanceof` answers false rather than throwing, so this needs no
+    // special case — and the test exists to say that it needs none.
+    const { client: api, recorded } = client({
+      listings: [[], [project()]],
+      onCreateThrows: () => 'synthetic',
+    });
+
+    await expect(registerProject(api, signals())).rejects.toBe('synthetic');
     expect(recorded.lists).toBe(1);
   });
 
