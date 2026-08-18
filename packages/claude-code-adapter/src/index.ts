@@ -80,6 +80,7 @@ export {
 
 export {
   CONTINUABLE_PROBLEM_STATUSES,
+  isProblemGone,
   resolveCurrentProblem,
   type ContinuableProblemStatus,
   type CurrentProblemReader,
@@ -88,3 +89,21 @@ export {
   type ProblemBindingHint,
   type ProblemCandidate,
 } from './problem-resolution.js';
+
+export {
+  continueProblem,
+  ProblemLifecycleInvariantError,
+  RESUME_PROBLEM_TARGET_STATUSES,
+  resolveProblemForSession,
+  resumeProblem,
+  startNewProblem,
+  type ProblemBindingWriter,
+  type ProblemContinuity,
+  type ProblemSelectionResult,
+  type ReconsiderReason,
+  type ResumeProblemClient,
+  type ResumeProblemResult,
+  type ResumeProblemTargetStatus,
+  type StartNewProblemClient,
+  type StartNewProblemResult,
+} from './problem-lifecycle.js';

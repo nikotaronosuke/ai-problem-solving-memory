@@ -224,8 +224,13 @@ function toCandidate(problem: ProblemResource, status: ContinuableProblemStatus)
  * server saying the Problem does not exist, and the status line alone cannot
  * tell those apart. The client already draws that boundary by raising a
  * different error for an answer it cannot read; this only refuses to widen it.
+ *
+ * Exported because a composition on top of this module has to draw the same
+ * line — a bound Problem that is gone and a Memory that cannot be reached lead
+ * somewhere different — and two copies of "what counts as gone" would be two
+ * places to widen it by accident.
  */
-function isProblemGone(error: unknown): boolean {
+export function isProblemGone(error: unknown): boolean {
   return error instanceof MemoryApiError && error.status === 404 && error.code === 'NOT_FOUND';
 }
 

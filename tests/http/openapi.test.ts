@@ -57,6 +57,7 @@ import { ERROR_CODES } from '../../src/http/errors.js';
 import {
   CREATE_ENVIRONMENT_REQUEST_FIELDS,
   CREATE_PROBLEM_REQUEST_FIELDS,
+  TRANSITION_PROBLEM_STATUS_REQUEST_FIELDS,
 } from '@ai-problem-solving-memory/api-client';
 
 import { OPENAPI_PATH } from '../../src/http/openapi.js';
@@ -394,6 +395,22 @@ describe('the write requests the client mirrors', () => {
     const route = requestBody(await documentPromise, 'createProblem');
 
     expect([...CREATE_PROBLEM_REQUEST_FIELDS].sort()).toEqual(Object.keys(route.properties).sort());
+    expect(route.additionalProperties).toBe(false);
+  });
+
+  it('sends exactly the fields the status-transition route accepts', async () => {
+    const route = requestBody(await documentPromise, 'transitionProblemStatus');
+
+    // All three required, and the key set closed. `status`, `current_status`
+    // and `version` in particular are absent from both ends: the server reads
+    // where a Problem is from the record, and a request that could say so would
+    // be a second claim able to disagree with it.
+    expect([...TRANSITION_PROBLEM_STATUS_REQUEST_FIELDS].sort()).toEqual(
+      Object.keys(route.properties).sort(),
+    );
+    expect([...(route.required ?? [])].sort()).toEqual(
+      [...TRANSITION_PROBLEM_STATUS_REQUEST_FIELDS].sort(),
+    );
     expect(route.additionalProperties).toBe(false);
   });
 
