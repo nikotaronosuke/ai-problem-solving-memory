@@ -5,10 +5,12 @@
  * continuity, when to search, what to record — arrives in the task that owns it,
  * and each one is a thing this package knows and the Memory does not.
  *
- * Project identity arrived in P5-03: reading what this machine can say about
- * where a session is working, and deciding which existing Project that is. It
- * asks nobody anything and creates nothing, which is why there is still no MCP
- * server, no hook and no Skill here.
+ * Project identity arrived first: reading what this machine can say about where
+ * a session is working, and deciding which existing Project that is. Current
+ * Problem resolution sits on top of it — given a Project, which Problem is
+ * being worked on, or which ones could be. Both ask nobody anything and create
+ * nothing, which is why there is still no MCP server, no hook and no Skill
+ * here.
  */
 
 export {
@@ -41,3 +43,13 @@ export {
   type ProjectResolution,
   type ProjectSuggestion,
 } from './project-resolution.js';
+
+export {
+  CONTINUABLE_PROBLEM_STATUSES,
+  resolveCurrentProblem,
+  type ContinuableProblemStatus,
+  type CurrentProblemReader,
+  type CurrentProblemResolution,
+  type ProblemBindingHint,
+  type ProblemCandidate,
+} from './problem-resolution.js';

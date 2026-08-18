@@ -131,6 +131,14 @@ function isMember<T extends string>(members: readonly T[], value: unknown): valu
  * A predicate rather than a parser: nothing is coerced, defaulted or dropped.
  * A body that passes is returned as it arrived, which is what makes "the
  * client did not change what the server said" checkable rather than promised.
+ *
+ * The key set is exact. The server declares the resource closed, so a body
+ * carrying a field nobody here knows about means the two ends disagree about
+ * the contract — and a passing predicate would let that disagreement travel
+ * into whatever consumes a Problem. This matters more now than it did with one
+ * caller: a list check runs this per element, and an unknown field arriving in
+ * one Problem of forty is exactly the kind of drift that otherwise surfaces
+ * long after the release that caused it.
  */
 export function isProblemResource(value: unknown): value is ProblemResource {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -139,8 +147,12 @@ export function isProblemResource(value: unknown): value is ProblemResource {
 
   const record = value as Record<string, unknown>;
 
-  // Presence first, so a missing field fails as a missing field rather than as
-  // whatever `undefined` happens to fail on below.
+  // Presence and count first, so a missing field fails as a missing field
+  // rather than as whatever `undefined` happens to fail on below — and so an
+  // extra one fails as the contract disagreement it is.
+  if (Object.keys(record).length !== PROBLEM_RESOURCE_FIELDS.length) {
+    return false;
+  }
   for (const field of PROBLEM_RESOURCE_FIELDS) {
     if (!(field in record)) {
       return false;
@@ -170,4 +182,29 @@ export function isProblemResource(value: unknown): value is ProblemResource {
     isString(record['created_at']) &&
     isString(record['updated_at'])
   );
+}
+
+/**
+ * Whether a parsed body is the Problem list envelope.
+ *
+ * The envelope has exactly one field and is checked as closed, and every
+ * element is checked. One malformed Problem makes the whole answer unreadable
+ * rather than being quietly skipped: a list silently missing a Problem reads as
+ * a project that does not have it, and the next thing a caller does with that
+ * belief is start a second Problem for something already being investigated.
+ *
+ * Whether the Problems in it are the ones that were asked for is a separate
+ * question, and not one this predicate can answer — it never saw the request.
+ */
+export function isProblemListBody(value: unknown): value is { problems: ProblemResource[] } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 1 || !('problems' in record)) {
+    return false;
+  }
+  const problems = record['problems'];
+  return Array.isArray(problems) && problems.every((entry) => isProblemResource(entry));
 }

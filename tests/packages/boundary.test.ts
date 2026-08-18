@@ -284,17 +284,27 @@ describe('the common client', () => {
     expect(client).toBeDefined();
     const code = codeOnly(client?.source ?? '');
 
-    // Two methods, both named. The interface is small on purpose: a method that
-    // no caller has is a guess about how it will be called, and it grows one
-    // task at a time.
+    // Every method named. The interface is small on purpose: a method that no
+    // caller has is a guess about how it will be called, and it grows one task
+    // at a time.
     expect(code).toContain('getProblem(problemId: string)');
     expect(code).toContain('listProjects(): Promise<readonly ProjectResource[]>');
+    expect(code).toContain('listProblems(projectId: string): Promise<readonly ProblemResource[]>');
     expect(code).toContain('search(problemId: string, request: MemorySearchRequest)');
 
-    // Three, and no fourth by accident. `createProject` in particular is absent
-    // on purpose: P5-03 resolves Projects and creates none, and a method nobody
-    // calls is a guess about how it will be called.
-    for (const absent of ['createProject', 'getProject', 'updateProject']) {
+    // Four, and no fifth by accident. The writes are absent on purpose: nothing
+    // creates a Project, a Problem or an Environment yet, and nothing moves a
+    // Problem between statuses, so a method for any of them would be a guess
+    // about how it will be called.
+    for (const absent of [
+      'createProject',
+      'getProject',
+      'updateProject',
+      'createProblem',
+      'updateProblem',
+      'createEnvironment',
+      'transitionProblemStatus',
+    ]) {
       expect(`${absent}:${code.includes(absent)}`).toBe(`${absent}:false`);
     }
 
@@ -530,6 +540,59 @@ describe('the Claude adapter, still', () => {
           `${path} does ${forbidden}:false`,
         );
       }
+    }
+  });
+
+  it('resolves a current Problem without keeping anything between calls', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // A binding arrives as an argument and leaves with the call. Where one is
+    // stored, how long it lives, and what a session identifier has to do with
+    // it are a later task's questions — and a resolver that reached for a file
+    // or a session id would settle them here, quietly, in the module least
+    // suited to owning them.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of [
+        'node:fs',
+        'writeFile',
+        'readFile',
+        'sessionId',
+        'session_id',
+        'CLAUDE_SESSION',
+      ]) {
+        expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} reaches for ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
+  it('does not decide which Problem a conversation is about', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const resolver = shipped.find((file) => file.path === 'src/problem-resolution.ts');
+    expect(resolver).toBeDefined();
+    const code = codeOnly(resolver?.source ?? '');
+
+    // The shortcuts that would each turn a list into an answer. Sorting is the
+    // visible one; the other three are the ones that look like reasonable code
+    // and are the same mistake — a count, a position, or a comparison of what
+    // two Problems say about themselves.
+    for (const forbidden of [
+      '.sort(',
+      'length === 1',
+      'length == 1',
+      '[0]',
+      '.at(0)',
+      'toLowerCase',
+      '.includes(candidate',
+      'similar',
+    ]) {
+      expect(`the resolver uses ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the resolver uses ${forbidden}:false`,
+      );
     }
   });
 

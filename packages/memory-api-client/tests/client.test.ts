@@ -214,9 +214,10 @@ describe('credential', () => {
     // later reading. Serialised whole so an accessor added anywhere fails.
     expect(JSON.stringify(built).includes(CREDENTIAL)).toBe(false);
     // The methods, and nothing beside them — no configuration object, no
-    // options, nowhere the credential could be read back from. `search` joined
-    // in P5-02c-impl-2; the list stays exact rather than becoming a minimum.
-    expect(Object.keys(built)).toEqual(['getProblem', 'listProjects', 'search']);
+    // options, nowhere the credential could be read back from. The list stays
+    // exact rather than becoming a minimum, and it grows only when a task has
+    // a caller for the method it adds.
+    expect(Object.keys(built)).toEqual(['getProblem', 'listProjects', 'listProblems', 'search']);
   });
 });
 
@@ -446,6 +447,32 @@ describe('answers this contract cannot read', () => {
         failure: 'RESOURCE_MALFORMED',
       });
     }
+  });
+
+  it('refuses a Problem carrying a field this contract does not describe', async () => {
+    // The server declares the resource closed. A body with something extra in
+    // it means the two ends disagree about what a Problem is, and a predicate
+    // that passed it would let the disagreement travel into whatever reads the
+    // Problem next.
+    for (const body of [
+      { ...PROBLEM, escalated: true },
+      { ...PROBLEM, assigned_to: null },
+      { ...PROBLEM, memory_write_enabled_at: '2026-01-01T00:00:00.000Z' },
+    ]) {
+      const { fetch } = recordingFetch(() => jsonResponse(200, body));
+      await expect(client({ fetch }).getProblem(PROBLEM_ID)).rejects.toMatchObject({
+        name: 'MemoryApiProtocolError',
+        failure: 'RESOURCE_MALFORMED',
+      });
+    }
+  });
+
+  it('still returns an ordinary Problem exactly as it arrived', async () => {
+    // The other half of the closed check: refusing extra fields must not have
+    // narrowed what a valid Problem is.
+    const { fetch } = recordingFetch(() => jsonResponse(200, PROBLEM));
+
+    await expect(client({ fetch }).getProblem(PROBLEM_ID)).resolves.toEqual(PROBLEM);
   });
 
   it('keeps the unreadable body out of the failure', async () => {
