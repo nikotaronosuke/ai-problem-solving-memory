@@ -746,6 +746,60 @@ describe('the Claude adapter, still', () => {
     }
   });
 
+  it('decides a repository boundary from what the owner stored, not from a path', async () => {
+    const shipped = await sourcesOf('claude-code-adapter');
+    const resolver = shipped.find((file) => file.path === 'src/project-resolution.ts');
+    expect(resolver).toBeDefined();
+    const code = codeOnly(resolver?.source ?? '');
+
+    // The boundary now participates in identity, which makes it exactly the
+    // place an absolute path would be tempting. It reads one field the server
+    // stored and compares it against one field the detector produced; nothing
+    // here touches a filesystem, resolves a path, or reads where the process
+    // happens to be.
+    for (const forbidden of [
+      'node:path',
+      'node:fs',
+      'process.cwd',
+      'process.env',
+      'resolve(',
+      'normalize(',
+      'homedir',
+      'projectDir',
+      'CLAUDE_PROJECT_DIR',
+    ]) {
+      expect(`the resolver reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the resolver reaches for ${forbidden}:false`,
+      );
+    }
+
+    // And it still refuses to break a tie by anything but the owner's own
+    // declaration: no ordering, no age, no name.
+    for (const forbidden of ['.sort(', 'created_at', 'updated_at', 'localeCompare']) {
+      expect(`the resolver uses ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the resolver uses ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('keeps the boundary a repository-relative value, wherever it is written', async () => {
+    const shipped = (await sourcesOf('claude-code-adapter')).filter((file) =>
+      file.path.startsWith('src/'),
+    );
+
+    // A second place mapping locations to Projects is the thing this feature
+    // exists to avoid: the server holds the owner's decision, and a local map
+    // beside it would be a rival authority that no other assistant can see.
+    for (const { path, source } of shipped) {
+      const code = codeOnly(source);
+      for (const forbidden of ['monorepoMap', 'projectMap', 'boundaryCache', 'pathToProject']) {
+        expect(`${path} builds a ${forbidden}:${code.includes(forbidden)}`).toBe(
+          `${path} builds a ${forbidden}:false`,
+        );
+      }
+    }
+  });
+
   it('does not decide which Problem a conversation is about', async () => {
     const shipped = await sourcesOf('claude-code-adapter');
     const resolver = shipped.find((file) => file.path === 'src/problem-resolution.ts');

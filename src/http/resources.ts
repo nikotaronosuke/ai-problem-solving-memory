@@ -39,6 +39,7 @@ export interface ProjectResource {
   readonly project_name: string;
   readonly repo: string | null;
   readonly platform: string | null;
+  readonly repo_subpath: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -50,6 +51,7 @@ export function toProjectResource(record: ProjectRecord): ProjectResource {
     project_name: record.projectName,
     repo: record.repo,
     platform: record.platform,
+    repo_subpath: record.repoSubpath,
     created_at: record.createdAt.toISOString(),
     updated_at: record.updatedAt.toISOString(),
   };
@@ -63,6 +65,10 @@ export const PROJECT_RESOURCE_SCHEMA = {
     project_name: { type: 'string' },
     repo: { type: ['string', 'null'] },
     platform: { type: ['string', 'null'] },
+    // Always present, null when the project covers the whole repository.
+    // Which part of a repository a project is for is the owner's decision, and
+    // this is where the answer is kept once they have made it.
+    repo_subpath: { type: ['string', 'null'] },
     created_at: { type: 'string', format: 'date-time' },
     updated_at: { type: 'string', format: 'date-time' },
   },
@@ -72,6 +78,7 @@ export const PROJECT_RESOURCE_SCHEMA = {
     'project_name',
     'repo',
     'platform',
+    'repo_subpath',
     'created_at',
     'updated_at',
   ],

@@ -473,6 +473,7 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         'problems.suspected_boundary',
         'projects.platform',
         'projects.repo',
+        'projects.repo_subpath',
         // A memory that was merely found or read has no outcome yet, and
         // inventing one would be worse than leaving it open.
         'usage_logs.result',

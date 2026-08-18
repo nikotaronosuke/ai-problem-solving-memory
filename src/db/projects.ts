@@ -14,7 +14,12 @@
  */
 
 import type { OwnerContext, OwnerId } from '../domain/owner.js';
-import { generateProjectId, toProjectName, type ProjectId } from '../domain/project.js';
+import {
+  generateProjectId,
+  toOptionalProjectRepoSubpath,
+  toProjectName,
+  type ProjectId,
+} from '../domain/project.js';
 import { normaliseOptionalText } from '../domain/text.js';
 import type { DatabaseExecutor } from './executor.js';
 
@@ -24,6 +29,8 @@ export interface ProjectRecord {
   readonly projectName: string;
   readonly repo: string | null;
   readonly platform: string | null;
+  /** Owner-declared repository boundary, or null for the whole repository. */
+  readonly repoSubpath: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -38,6 +45,7 @@ export interface CreateProjectInput {
   readonly projectName: string;
   readonly repo?: string | null;
   readonly platform?: string | null;
+  readonly repoSubpath?: string | null;
 }
 
 interface ProjectRow {
@@ -46,6 +54,7 @@ interface ProjectRow {
   project_name: string;
   repo: string | null;
   platform: string | null;
+  repo_subpath: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -58,19 +67,22 @@ function toRecord(row: ProjectRow): ProjectRecord {
     projectName: row.project_name,
     repo: row.repo,
     platform: row.platform,
+    repoSubpath: row.repo_subpath,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
 const PROJECT_COLUMNS =
-  'project_id, owner_id, project_name, repo, platform, created_at, updated_at';
+  'project_id, owner_id, project_name, repo, platform, repo_subpath, created_at, updated_at';
 
 /**
  * Creates a project owned by the context's owner.
  *
  * The name is required and must not be blank; `repo` and `platform` collapse
- * to null when absent or empty.
+ * to null when absent or empty. A repository boundary is validated rather than
+ * tidied — it is compared in order to decide things, so a nearly-right value is
+ * a boundary that silently matches nothing.
  */
 export async function createProject(
   executor: DatabaseExecutor,
@@ -80,13 +92,14 @@ export async function createProject(
   const projectName = toProjectName(input.projectName);
   const repo = normaliseOptionalText(input.repo);
   const platform = normaliseOptionalText(input.platform);
+  const repoSubpath = toOptionalProjectRepoSubpath(input.repoSubpath);
   const projectId = generateProjectId();
 
   const result = await executor.query<ProjectRow>(
-    `insert into public.projects (project_id, owner_id, project_name, repo, platform)
-          values ($1, $2, $3, $4, $5)
+    `insert into public.projects (project_id, owner_id, project_name, repo, platform, repo_subpath)
+          values ($1, $2, $3, $4, $5, $6)
        returning ${PROJECT_COLUMNS}`,
-    [projectId, context.ownerId, projectName, repo, platform],
+    [projectId, context.ownerId, projectName, repo, platform, repoSubpath],
   );
 
   const row = result.rows[0];
@@ -156,6 +169,7 @@ export interface UpdateProjectInput {
   readonly projectName?: string;
   readonly repo?: string | null;
   readonly platform?: string | null;
+  readonly repoSubpath?: string | null;
 }
 
 /** Raised when an update would change nothing. */
@@ -206,6 +220,11 @@ export async function updateProject(
   }
   if (input.platform !== undefined) {
     assign('platform', normaliseOptionalText(input.platform));
+  }
+  if (input.repoSubpath !== undefined) {
+    // Explicit null clears the boundary back to the whole repository, which is
+    // a real thing to say and not the same as leaving the field alone.
+    assign('repo_subpath', toOptionalProjectRepoSubpath(input.repoSubpath));
   }
 
   if (assignments.length === 0) {
