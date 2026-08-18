@@ -7,17 +7,31 @@
  * the gap between "a JavaScript object" and "a JSON object" is where a client
  * quietly sends something other than what it was handed.
  *
- * `JSON.stringify` does not fail on the difference — it papers over it.
- * `undefined`, a function and a symbol vanish from an object; `NaN` and
- * `Infinity` become `null`; a `Date` becomes a string; a `Map` becomes `{}`; a
- * `bigint` throws only sometimes, depending on where it sits. Every one of
- * those is a snapshot that records something the caller did not say, stored
- * permanently as though they had.
+ * `JSON.stringify` does not fail on the difference — it papers over it. Values
+ * disappear (`undefined`, functions, symbols, non-enumerable properties,
+ * anything under a symbol key), values change (`NaN` and `Infinity` become
+ * `null`, a `Date` becomes a string, a hole in an array becomes `null`), and a
+ * `Map` becomes `{}`. Every one of those is a snapshot that records something
+ * the caller did not say, stored permanently as though they had.
  *
  * So a snapshot is checked before it is serialised, and nothing is coerced. A
  * value this contract cannot carry is a mistake to report, not a value to
  * convert on somebody's behalf — the caller knows whether that timestamp should
  * have been an ISO string or a number of seconds, and this module does not.
+ *
+ * ## Why descriptors rather than values
+ *
+ * The obvious way to walk an object is `Object.values`, and it is wrong twice.
+ * It cannot see a symbol key or a non-enumerable property, so both pass
+ * validation and then vanish on the wire. And it *invokes getters* — so a
+ * validator built on it runs arbitrary caller code while deciding whether that
+ * code's result is data, which is both a side effect nobody asked for and an
+ * answer about a value that will be computed again later, possibly differently.
+ *
+ * Reading a property descriptor answers the same question without either
+ * problem. An accessor's descriptor carries `get` and `set` and no `value`, so
+ * it is refused by shape rather than by evaluation, and the getter is never
+ * called.
  */
 
 /** The scalars JSON has. */
@@ -41,6 +55,82 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 function isPlainObject(value: object): boolean {
   const prototype: unknown = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Whether an own property is one `JSON.stringify` would write out as data.
+ *
+ * Three ways to fail, and each of them is silent in serialisation: an accessor
+ * is computed rather than stored, a non-enumerable property is skipped, and a
+ * missing descriptor means the key was not really there.
+ */
+function isDataProperty(descriptor: PropertyDescriptor | undefined): boolean {
+  return descriptor !== undefined && 'value' in descriptor && descriptor.enumerable === true;
+}
+
+/**
+ * Whether an array is dense plain data.
+ *
+ * The count check first, and it is what keeps this cheap: `Reflect.ownKeys`
+ * returns one entry per property that actually exists, so a million-element
+ * sparse array reports a handful of keys against a huge `length` and is refused
+ * without walking anything. Only an array whose key count already matches its
+ * length is worth iterating, which bounds the work to the elements that are
+ * genuinely there.
+ *
+ * What that count rules out, together: a hole anywhere, an extra property
+ * hung off the array, and a symbol key. The per-index pass then rules out an
+ * accessor or a non-enumerable index, and checks the values.
+ */
+function isJsonArray(value: readonly unknown[], seen: Set<object>): boolean {
+  const keys = Reflect.ownKeys(value);
+
+  // Every index, plus `length` itself, and nothing else.
+  if (keys.length !== value.length + 1) {
+    return false;
+  }
+  // Stated rather than left to the count, because "a symbol key is refused" is
+  // the rule, and a rule that holds only as a side effect of arithmetic is one
+  // somebody can break without noticing.
+  if (keys.some((key) => typeof key === 'symbol')) {
+    return false;
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    if (!isDataProperty(descriptor)) {
+      return false;
+    }
+    if (!isJsonValue(descriptor?.value, seen)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/** Whether a plain object holds nothing but string-keyed JSON data. */
+function isJsonRecord(value: object, seen: Set<object>): boolean {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  for (const key of Reflect.ownKeys(value)) {
+    // A symbol-keyed property is invisible to serialisation, so a snapshot
+    // carrying one would arrive missing something the caller put in it.
+    if (typeof key === 'symbol') {
+      return false;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!isDataProperty(descriptor)) {
+      return false;
+    }
+    if (!isJsonValue(descriptor?.value, seen)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -83,16 +173,7 @@ function isJsonValue(value: unknown, seen: Set<object>): boolean {
   }
   seen.add(value);
   try {
-    if (Array.isArray(value)) {
-      return value.every((entry) => isJsonValue(entry, seen));
-    }
-    if (!isPlainObject(value)) {
-      return false;
-    }
-    // `Object.values` skips symbol-keyed properties, which is what serialisation
-    // does too, so a symbol key is not a reason to refuse an otherwise good
-    // object — its value was never going to travel and nothing is lost.
-    return Object.values(value).every((entry) => isJsonValue(entry, seen));
+    return Array.isArray(value) ? isJsonArray(value, seen) : isJsonRecord(value, seen);
   } finally {
     seen.delete(value);
   }

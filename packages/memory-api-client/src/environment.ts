@@ -49,9 +49,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Whether a parsed body is an Environment this contract describes.
  *
  * Exact key set, because the server declares the resource closed. The snapshot
- * is checked for being an object rather than for its contents: what came back
- * was parsed from JSON, so it is JSON by construction, and the keys inside are
- * the caller's own from when it was written.
+ * is checked with the same predicate an outbound one is: this type declares it
+ * a `JsonObject`, and a value that does not satisfy that is not one whatever
+ * direction it arrived from.
+ *
+ * "It was parsed from JSON, so it is JSON" is nearly true and not true enough.
+ * `JSON.parse` reads `1e999` as `Infinity`, so a body from a proxy, a
+ * rewriting intermediary or a server this contract does not describe can hand
+ * back a number JavaScript has and JSON does not — and it would then be
+ * returned as a `JsonObject` that cannot be serialised back into one.
  */
 export function isEnvironmentResource(value: unknown): value is EnvironmentResource {
   if (!isRecord(value)) {
@@ -70,7 +76,7 @@ export function isEnvironmentResource(value: unknown): value is EnvironmentResou
     typeof value['environment_id'] === 'string' &&
     typeof value['owner_id'] === 'string' &&
     typeof value['project_id'] === 'string' &&
-    isRecord(value['snapshot']) &&
+    isJsonObject(value['snapshot']) &&
     typeof value['created_at'] === 'string'
   );
 }
