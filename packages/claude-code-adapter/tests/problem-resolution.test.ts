@@ -17,10 +17,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createMemoryApiClient,
   MemoryApiError,
   MemoryApiProtocolError,
   MemoryApiUnreachableError,
   PROBLEM_STATUSES,
+  type FetchLike,
   type ProblemResource,
   type ProblemStatus,
 } from '@ai-problem-solving-memory/api-client';
@@ -547,5 +549,70 @@ describe('what a resolution is allowed to carry', () => {
     const resolution = await resolveCurrentProblem(client, PROJECT_ID);
 
     expect(Object.keys(resolution)).toEqual(['kind']);
+  });
+});
+
+describe('revalidating a binding through the real client', () => {
+  /** Synthetic. Nothing authenticates it; it only has to look like one. */
+  const CREDENTIAL = 'memory_test_0000000000000000000000000000';
+
+  /** A transport that answers every GET with the same body, whatever was asked. */
+  function answering(body: unknown): FetchLike {
+    return () =>
+      Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+  }
+
+  it('refuses an answer describing a Problem other than the bound one', async () => {
+    // Driven through the real client rather than a double, because the property
+    // is the client's: the route named one Problem and the body describes
+    // another. The resolver has no second opinion about that and should not
+    // grow one — what it must not do is come out the other side with an
+    // ordinary answer.
+    const bound: ProblemBindingHint = {
+      projectId: PROJECT_ID,
+      problemId: 'aaaaaaaa-1111-4222-8333-444444444444',
+    };
+    const impostor = problem({ problem_id: 'bbbbbbbb-1111-4222-8333-444444444444' });
+    const memory = createMemoryApiClient({ credential: CREDENTIAL, fetch: answering(impostor) });
+
+    await expect(resolveCurrentProblem(memory, PROJECT_ID, bound)).rejects.toBeInstanceOf(
+      MemoryApiProtocolError,
+    );
+  });
+
+  it('refuses an answer at a version no record could be at', async () => {
+    const bound: ProblemBindingHint = {
+      projectId: PROJECT_ID,
+      problemId: 'aaaaaaaa-1111-4222-8333-444444444444',
+    };
+    const memory = createMemoryApiClient({
+      credential: CREDENTIAL,
+      fetch: answering(problem({ version: 0 })),
+    });
+
+    await expect(resolveCurrentProblem(memory, PROJECT_ID, bound)).rejects.toBeInstanceOf(
+      MemoryApiProtocolError,
+    );
+  });
+
+  it('still resolves when the answer is about the Problem that was asked for', async () => {
+    const bound: ProblemBindingHint = {
+      projectId: PROJECT_ID,
+      problemId: 'aaaaaaaa-1111-4222-8333-444444444444',
+    };
+    const memory = createMemoryApiClient({
+      credential: CREDENTIAL,
+      fetch: answering(problem()),
+    });
+
+    await expect(resolveCurrentProblem(memory, PROJECT_ID, bound)).resolves.toEqual({
+      kind: 'RESOLVED',
+      problemId: 'aaaaaaaa-1111-4222-8333-444444444444',
+    });
   });
 });

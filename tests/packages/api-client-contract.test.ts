@@ -117,6 +117,18 @@ describe('the Problem the client expects', () => {
     }
   });
 
+  it('agrees that a version starts at one', () => {
+    // The client refuses a version below this, and it is worth pinning against
+    // the schema rather than against a number written twice: the value is a
+    // write's concurrency token, and a client that accepted `0` from a
+    // malformed answer would hand it back on a transition and have the *caller*
+    // blamed for it.
+    expect(PROBLEM_RESOURCE_SCHEMA.properties.version).toEqual({
+      type: 'integer',
+      minimum: 1,
+    });
+  });
+
   it('knows about every field the schema describes', () => {
     // The other direction, which the required-field comparison above does not
     // cover on its own: a property the server documents and the client has

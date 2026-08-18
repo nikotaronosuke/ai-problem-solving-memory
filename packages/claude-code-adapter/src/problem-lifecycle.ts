@@ -108,6 +108,23 @@ export const RESUME_PROBLEM_TARGET_STATUSES = [
 
 export type ResumeProblemTargetStatus = (typeof RESUME_PROBLEM_TARGET_STATUSES)[number];
 
+/**
+ * Whether a value is one of those two, checked rather than merely declared.
+ *
+ * The type says it and the type is not enough. This primitive sits under a tool
+ * boundary where a status arrives as text somebody or something chose, and the
+ * client deliberately accepts any canonical status because transition legality
+ * is the server's — so a `CLOSED_UNRESOLVED` reaching here would be a *legal*
+ * move from `PAUSED`. It would close the Problem, bind the session to it, and
+ * hand back a result whose word for what happened is "resumed". Nothing would
+ * fail, and the record would say the work was abandoned.
+ *
+ * Derived from the same list the type is, so the two cannot come apart.
+ */
+function isResumeProblemTargetStatus(value: unknown): value is ResumeProblemTargetStatus {
+  return (RESUME_PROBLEM_TARGET_STATUSES as readonly string[]).includes(value as string);
+}
+
 /** What continuing an already-working Problem concluded. */
 export type ProblemSelectionResult =
   | {
@@ -143,6 +160,24 @@ export type StartNewProblemResult =
       readonly reason: ReconsiderReason;
       readonly candidates: readonly ProblemCandidate[];
     };
+
+/**
+ * Raised when an argument cannot describe the operation being asked for.
+ *
+ * A caller's mistake rather than a condition to handle, and separate from the
+ * client's own argument error on purpose: this is an *adapter* policy about
+ * what "resume" means, not a claim about what the Memory API accepts. It names
+ * the argument and never the value.
+ */
+export class ProblemLifecycleArgumentError extends Error {
+  readonly argument: string;
+
+  constructor(argument: string) {
+    super(`${argument} is not usable.`);
+    this.name = 'ProblemLifecycleArgumentError';
+    this.argument = argument;
+  }
+}
 
 /**
  * Raised when the world is in a state that cannot happen.
@@ -283,6 +318,10 @@ export async function continueProblem(
  * which assistant moved the Problem, and a value a caller could set would say
  * what that caller wished to be recorded as.
  *
+ * The target status is checked before anything else happens, because the type
+ * that restricts it does not survive to runtime and the server would accept
+ * more than this operation means.
+ *
  * A `409` is not handled here, and that is the handling. It means somebody else
  * wrote to this Problem between the read and the transition, so the answer to
  * "should this be resumed" was decided against a record that no longer exists.
@@ -302,6 +341,13 @@ export async function resumeProblem(
   problemId: string,
   targetStatus: ResumeProblemTargetStatus,
 ): Promise<ResumeProblemResult> {
+  // First, before the store is touched and before anything is read. A resume
+  // that turned out not to be a resume must cost nothing and leave nothing:
+  // no request, no note, no partially performed operation to explain.
+  if (!isResumeProblemTargetStatus(targetStatus)) {
+    throw new ProblemLifecycleArgumentError('resume target status');
+  }
+
   await requireUsableBindingKey(store, sessionId, projectId);
 
   let problem: ProblemResource;

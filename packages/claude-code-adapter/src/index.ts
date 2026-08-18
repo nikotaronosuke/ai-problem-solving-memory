@@ -80,7 +80,6 @@ export {
 
 export {
   CONTINUABLE_PROBLEM_STATUSES,
-  isProblemGone,
   resolveCurrentProblem,
   type ContinuableProblemStatus,
   type CurrentProblemReader,
@@ -92,6 +91,7 @@ export {
 
 export {
   continueProblem,
+  ProblemLifecycleArgumentError,
   ProblemLifecycleInvariantError,
   RESUME_PROBLEM_TARGET_STATUSES,
   resolveProblemForSession,
