@@ -229,6 +229,145 @@ describe.skipIf(databaseUrl === undefined)('Project and Environment API', () => 
     });
   });
 
+  describe('a repository boundary, through the real service', () => {
+    it('stores and returns a boundary', async () => {
+      const actor = await makeActor();
+
+      const created = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'web', repo: 'github.com/acme/widget', repo_subpath: 'apps/web' },
+      });
+
+      expect(created.statusCode).toBe(201);
+      expect(created.json()).toMatchObject({ repo_subpath: 'apps/web' });
+    });
+
+    it('answers with no boundary when none was sent', async () => {
+      const actor = await makeActor();
+
+      const created = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'whole' },
+      });
+
+      expect(created.json()).toMatchObject({ repo_subpath: null });
+    });
+
+    it.each([
+      ['a leading separator', '/apps/web'],
+      ['a trailing separator', 'apps/web/'],
+      ['a parent segment', 'apps/../web'],
+      ['an empty segment', 'apps//web'],
+      ['an empty string', ''],
+      ['a Windows path', 'C:' + String.fromCharCode(92) + 'checkout'],
+      ['a POSIX absolute path', '/home/someone/checkout'],
+    ])('refuses %s with a 400', async (_name, repoSubpath) => {
+      // The shape rule lives in the domain, so this is the layer that proves a
+      // caller gets a refusal rather than a 500 — the route schema deliberately
+      // does not carry a second copy of the pattern.
+      const actor = await makeActor();
+
+      const response = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'bad', repo_subpath: repoSubpath },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: { code: 'INVALID_REQUEST' } });
+    });
+
+    it('keeps the refused value out of the answer', async () => {
+      const planted = '/home/someone-private/clients/acme/checkout';
+      const actor = await makeActor();
+
+      const response = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'bad', repo_subpath: planted },
+      });
+
+      expect(response.body.includes(planted)).toBe(false);
+      expect(response.body.includes('someone-private')).toBe(false);
+    });
+
+    it('leaves a boundary alone when a patch does not mention it', async () => {
+      const actor = await makeActor();
+      const created = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'web', repo_subpath: 'apps/web' },
+      });
+      const projectId = created.json<{ project_id: string }>().project_id;
+
+      const patched = await actor.app.inject({
+        method: 'PATCH',
+        url: `/v1/projects/${projectId}`,
+        payload: { project_name: 'renamed' },
+      });
+
+      expect(patched.json()).toMatchObject({ repo_subpath: 'apps/web' });
+    });
+
+    it('clears a boundary back to the whole repository', async () => {
+      const actor = await makeActor();
+      const created = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'web', repo_subpath: 'apps/web' },
+      });
+      const projectId = created.json<{ project_id: string }>().project_id;
+
+      const patched = await actor.app.inject({
+        method: 'PATCH',
+        url: `/v1/projects/${projectId}`,
+        payload: { repo_subpath: null },
+      });
+
+      expect(patched.json()).toMatchObject({ repo_subpath: null });
+    });
+
+    it('refuses a malformed boundary on a patch', async () => {
+      const actor = await makeActor();
+      const created = await actor.app.inject({
+        method: 'POST',
+        url: '/v1/projects',
+        payload: { project_name: 'web', repo_subpath: 'apps/web' },
+      });
+      const projectId = created.json<{ project_id: string }>().project_id;
+
+      const patched = await actor.app.inject({
+        method: 'PATCH',
+        url: `/v1/projects/${projectId}`,
+        payload: { repo_subpath: '../escape' },
+      });
+
+      expect(patched.statusCode).toBe(400);
+
+      // And the stored boundary is untouched.
+      const read = await actor.app.inject({ method: 'GET', url: `/v1/projects/${projectId}` });
+      expect(read.json()).toMatchObject({ repo_subpath: 'apps/web' });
+    });
+
+    it('lets two projects on one repository claim the same boundary', async () => {
+      const actor = await makeActor();
+      const payload = {
+        project_name: 'twin',
+        repo: 'github.com/acme/duplicated',
+        repo_subpath: 'apps/web',
+      };
+
+      const first = await actor.app.inject({ method: 'POST', url: '/v1/projects', payload });
+      const second = await actor.app.inject({ method: 'POST', url: '/v1/projects', payload });
+
+      // Storage does not settle this; the resolver surfaces it as ambiguity so
+      // the owner can merge them.
+      expect([first.statusCode, second.statusCode]).toEqual([201, 201]);
+    });
+  });
+
   describe('listing', () => {
     it('returns an empty list for an owner with no projects', async () => {
       const actor = await makeActor();

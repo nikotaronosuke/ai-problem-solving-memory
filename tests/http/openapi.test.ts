@@ -262,10 +262,12 @@ describe('the document itself', () => {
 
     expect(info.title).toBe('AI Problem-Solving Memory API');
     expect(info.version).toMatch(/^\d+\.\d+\.\d+$/);
-    // Moved by P3-06: the surface gained the export. The export's own
-    // `schema_version` is a different number for a different question and does
-    // not move with this one.
-    expect(info.version).toBe('0.5.0');
+    // Moved by P3-06 when the surface gained the export, and again when the
+    // Project resource gained its repository boundary: the resource is a closed
+    // object, so a field added to it changes the shape every client reads. The
+    // export's own `schema_version` is a different number for a different
+    // question and does not move with this one.
+    expect(info.version).toBe('0.6.0');
   });
 
   it('says how a caller reaches it and what a 404 means', async () => {
@@ -288,6 +290,65 @@ describe('the document itself', () => {
 
     expect([...used].filter((tag) => !declared.has(tag))).toEqual([]);
     expect([...declared].filter((tag) => !used.has(tag))).toEqual([]);
+  });
+});
+
+describe('a project’s repository boundary in the published contract', () => {
+  /** The response schema the document publishes for an operation. */
+  function responseSchema(
+    document: Document,
+    operationId: string,
+    status: string,
+  ): { properties: Record<string, unknown>; required?: readonly string[] } {
+    const found = operations(document).find((entry) => entry.operation.operationId === operationId);
+    expect(found, operationId).toBeDefined();
+    const responses = (
+      found?.operation as unknown as {
+        responses: Record<string, { content?: Record<string, { schema: unknown }> }>;
+      }
+    ).responses;
+    return (responses[status]?.content?.['application/json']?.schema ?? {}) as never;
+  }
+
+  /** The request body schema the document publishes for an operation. */
+  function requestSchema(
+    document: Document,
+    operationId: string,
+  ): {
+    properties: Record<string, unknown>;
+    required?: readonly string[];
+    additionalProperties?: boolean;
+  } {
+    const found = operations(document).find((entry) => entry.operation.operationId === operationId);
+    expect(found, operationId).toBeDefined();
+    const body = (
+      found?.operation as unknown as {
+        requestBody?: { content: Record<string, { schema: unknown }> };
+      }
+    ).requestBody;
+    return (body?.content['application/json']?.schema ?? {}) as never;
+  }
+
+  it('is a required field on every project a caller reads', async () => {
+    const schema = responseSchema(await documentPromise, 'createProject', '201');
+
+    expect(Object.keys(schema.properties)).toContain('repo_subpath');
+    expect([...(schema.required ?? [])]).toContain('repo_subpath');
+    expect(
+      [...(schema.properties['repo_subpath'] as { type: readonly string[] }).type].sort(),
+    ).toEqual(['null', 'string']);
+  });
+
+  it('is optional on the way in, on both routes that accept one', async () => {
+    const document = await documentPromise;
+
+    for (const operationId of ['createProject', 'updateProject']) {
+      const schema = requestSchema(document, operationId);
+      expect(Object.keys(schema.properties), operationId).toContain('repo_subpath');
+      expect([...(schema.required ?? [])], operationId).not.toContain('repo_subpath');
+      // The bodies stay closed: a new optional field is not an opening.
+      expect(schema.additionalProperties, operationId).toBe(false);
+    }
   });
 });
 

@@ -60,7 +60,14 @@ export function registerProjectRoutes(
   scope: FastifyInstance,
   service: ProjectEnvironmentService,
 ): void {
-  scope.post<{ Body: { project_name: string; repo?: string | null; platform?: string | null } }>(
+  scope.post<{
+    Body: {
+      project_name: string;
+      repo?: string | null;
+      platform?: string | null;
+      repo_subpath?: string | null;
+    };
+  }>(
     '/projects',
     {
       schema: {
@@ -73,6 +80,11 @@ export function registerProjectRoutes(
             project_name: NON_BLANK_STRING_SCHEMA,
             repo: NULLABLE_TEXT_SCHEMA,
             platform: NULLABLE_TEXT_SCHEMA,
+            // Which part of a repository this project is for. Absent and null
+            // both mean the whole of it. The shape is checked in the domain
+            // rather than here: it is one rule, and a schema pattern beside it
+            // would be a second place for it to drift from.
+            repo_subpath: NULLABLE_TEXT_SCHEMA,
           },
           required: ['project_name'],
           // Ownership, identity and timestamps are not the caller's to set.
@@ -88,6 +100,9 @@ export function registerProjectRoutes(
         projectName: request.body.project_name,
         ...(request.body.repo !== undefined ? { repo: request.body.repo } : {}),
         ...(request.body.platform !== undefined ? { platform: request.body.platform } : {}),
+        ...(request.body.repo_subpath !== undefined
+          ? { repoSubpath: request.body.repo_subpath }
+          : {}),
       });
 
       return reply.code(201).send(toProjectResource(project));
@@ -137,7 +152,12 @@ export function registerProjectRoutes(
 
   scope.patch<{
     Params: { project_id: string };
-    Body: { project_name?: string; repo?: string | null; platform?: string | null };
+    Body: {
+      project_name?: string;
+      repo?: string | null;
+      platform?: string | null;
+      repo_subpath?: string | null;
+    };
   }>(
     '/projects/:project_id',
     {
@@ -154,6 +174,9 @@ export function registerProjectRoutes(
             project_name: NON_BLANK_STRING_SCHEMA,
             repo: NULLABLE_TEXT_SCHEMA,
             platform: NULLABLE_TEXT_SCHEMA,
+            // Null clears the boundary back to the whole repository, which is
+            // a real thing to say and not the same as leaving it alone.
+            repo_subpath: NULLABLE_TEXT_SCHEMA,
           },
           // A patch that changes nothing is a mistake worth reporting: it
           // would still move `updated_at`, recording a change that never
@@ -173,6 +196,9 @@ export function registerProjectRoutes(
           : {}),
         ...(request.body.repo !== undefined ? { repo: request.body.repo } : {}),
         ...(request.body.platform !== undefined ? { platform: request.body.platform } : {}),
+        ...(request.body.repo_subpath !== undefined
+          ? { repoSubpath: request.body.repo_subpath }
+          : {}),
       };
 
       const project = await service.updateProject(

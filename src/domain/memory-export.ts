@@ -20,7 +20,7 @@
  */
 
 /** The version of the export format itself. Not the API contract version. */
-export const MEMORY_EXPORT_SCHEMA_VERSION = '1';
+export const MEMORY_EXPORT_SCHEMA_VERSION = '2';
 
 /**
  * An export, as JSON text.

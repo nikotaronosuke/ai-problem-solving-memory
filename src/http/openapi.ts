@@ -60,7 +60,7 @@ export const OPENAPI_PATH = '/openapi.json';
  * Tying it to the package version would make every unrelated release look like
  * a contract change to anything watching this number.
  */
-export const API_CONTRACT_VERSION = '0.5.0';
+export const API_CONTRACT_VERSION = '0.6.0';
 
 /**
  * Groupings, for readers and generators that sort by them.

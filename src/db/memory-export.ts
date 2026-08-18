@@ -83,6 +83,7 @@ const PROJECTS = collection(
        'project_name', p.project_name,
        'repo', p.repo,
        'platform', p.platform,
+       'repo_subpath', p.repo_subpath,
        'created_at', ${ts('p.created_at')},
        'updated_at', ${ts('p.updated_at')}`,
   'projects',

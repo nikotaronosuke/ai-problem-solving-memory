@@ -56,6 +56,7 @@ function projectRecord(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
     projectName: 'checkout-web',
     repo: null,
     platform: null,
+    repoSubpath: null,
     createdAt: CREATED_AT,
     updatedAt: UPDATED_AT,
     ...overrides,
@@ -167,6 +168,7 @@ describe('POST /v1/projects', () => {
       project_name: 'checkout-web',
       repo: null,
       platform: null,
+      repo_subpath: null,
       created_at: '2026-01-01T00:00:00.000Z',
       updated_at: '2026-01-02T00:00:00.000Z',
     });
@@ -253,6 +255,114 @@ describe('POST /v1/projects', () => {
   });
 });
 
+describe('a project’s repository boundary', () => {
+  it('answers with no boundary when none was sent', async () => {
+    const calls: ServiceCalls = {};
+    const app = buildApp(serviceRecording(calls));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/projects',
+      payload: { project_name: 'checkout-web' },
+    });
+
+    expect(response.json()).toMatchObject({ repo_subpath: null });
+    // Absent must not reach the service as a value: absent and null are the
+    // same answer here, and forwarding a key nobody sent is how they stop
+    // being distinguishable elsewhere.
+    expect(calls.createProject && 'repoSubpath' in calls.createProject).toBe(false);
+  });
+
+  it.each([
+    ['a plain boundary', 'apps/web'],
+    ['a deep boundary', 'services/payments/worker'],
+  ])('carries %s through to the service and back', async (_name, repoSubpath) => {
+    const calls: ServiceCalls = {};
+    const app = buildApp(serviceRecording(calls));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/projects',
+      payload: { project_name: 'checkout-web', repo_subpath: repoSubpath },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(calls.createProject).toMatchObject({ repoSubpath });
+  });
+
+  it('passes an explicit null through as the whole repository', async () => {
+    const calls: ServiceCalls = {};
+    const app = buildApp(serviceRecording(calls));
+
+    await app.inject({
+      method: 'POST',
+      url: '/v1/projects',
+      payload: { project_name: 'checkout-web', repo_subpath: null },
+    });
+
+    expect(calls.createProject).toMatchObject({ repoSubpath: null });
+  });
+
+  // A boundary whose *shape* is wrong reaches the domain rather than the
+  // schema — one rule, in one place — so those cases live in the integration
+  // suite, where the real service runs. What is checked here is the mapping:
+  // which command the transport builds from which body.
+
+  it('refuses a boundary that is not text at all', async () => {
+    const app = buildApp(serviceRecording({}));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/projects',
+      payload: { project_name: 'checkout-web', repo_subpath: 7 },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('leaves the boundary alone when a patch does not mention it', async () => {
+    const calls: ServiceCalls = {};
+    const app = buildApp(serviceRecording(calls));
+
+    await app.inject({
+      method: 'PATCH',
+      url: `/v1/projects/${PROJECT_ID}`,
+      payload: { project_name: 'renamed' },
+    });
+
+    expect(calls.updateProject && 'repoSubpath' in calls.updateProject.command).toBe(false);
+  });
+
+  it.each([
+    ['a new boundary', 'apps/api'],
+    ['no boundary', null],
+  ])('sends %s on a patch that names it', async (_name, repoSubpath) => {
+    const calls: ServiceCalls = {};
+    const app = buildApp(serviceRecording(calls));
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/projects/${PROJECT_ID}`,
+      payload: { repo_subpath: repoSubpath },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(calls.updateProject?.command).toMatchObject({ repoSubpath });
+  });
+
+  it('still refuses a patch that changes nothing', async () => {
+    const app = buildApp(serviceRecording({}));
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/v1/projects/${PROJECT_ID}`,
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+});
+
 describe('GET /v1/projects', () => {
   it('returns the owner’s projects under a projects key', async () => {
     const app = buildApp(serviceRecording({}));
@@ -268,6 +378,7 @@ describe('GET /v1/projects', () => {
           project_name: 'checkout-web',
           repo: null,
           platform: null,
+          repo_subpath: null,
           created_at: '2026-01-01T00:00:00.000Z',
           updated_at: '2026-01-02T00:00:00.000Z',
         },

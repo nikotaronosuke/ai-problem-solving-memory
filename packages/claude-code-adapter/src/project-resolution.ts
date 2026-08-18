@@ -27,6 +27,21 @@
  * is real evidence and it produces `AMBIGUOUS`: somebody who can see both
  * repositories decides, once, instead of this code deciding wrongly every time.
  *
+ * ## Detected location is evidence; a stored boundary is a decision
+ *
+ * A repository can hold several Projects, and whether it does is the owner's
+ * call rather than something a directory layout announces — which is why the
+ * subpath a session is launched from still never splits a repository on its
+ * own. What changed is that the owner's answer now has somewhere to live: a
+ * Project records the part of the repository it covers, and once it does, that
+ * is a decision already made rather than a guess to re-make.
+ *
+ * So among Projects on one repository, the stored boundaries decide, and the
+ * most specific one that contains the session wins. That is not a tie-break
+ * heuristic dressed up: it is the owner's own declaration applied, and where
+ * they have declared nothing that covers this session, the answer is a question
+ * rather than an answer.
+ *
  * ## Why nothing picks the first or the newest candidate
  *
  * Both are stable, both look reasonable, and both are a coin flip wearing a
@@ -95,6 +110,19 @@ export const PROJECT_AMBIGUITY_REASONS = [
    * directories called `api` are not one Project.
    */
   'NAME_ONLY_MATCH',
+  /**
+   * The repository is recorded, and no stored boundary covers this session.
+   *
+   * The owner has split this repository into parts and the session is in none
+   * of them — above them at the root, or beside them in a directory nobody has
+   * claimed. Three different things could be true: this location wants a
+   * Project of its own, it belongs to one of the existing ones despite being
+   * launched outside it, or the owner wants a Project for the repository as a
+   * whole. Nothing here can tell those apart, and answering `UNREGISTERED`
+   * would invite the next step to create a Project from a directory layout,
+   * which is the failure the owner-decides rule exists to prevent.
+   */
+  'NO_MATCHING_REPO_BOUNDARY',
 ] as const;
 
 export type ProjectAmbiguityReason = (typeof PROJECT_AMBIGUITY_REASONS)[number];
@@ -104,11 +132,18 @@ export type ProjectAmbiguityReason = (typeof PROJECT_AMBIGUITY_REASONS)[number];
  *
  * `canonicalRepo` rather than the stored string: what is stored is free-form and
  * may be anything a person typed, including a URL with a credential in it.
+ *
+ * `repoSubpath` is here because somebody resolving an ambiguity between two
+ * Projects on one repository is choosing between boundaries, and a list that
+ * showed only names would be asking them to choose without the thing they are
+ * choosing by. It is repository-relative by the server's own validation — a
+ * directory anybody with the repository can see, which an absolute path is not.
  */
 export interface ProjectCandidate {
   readonly projectId: string;
   readonly projectName: string;
   readonly canonicalRepo: string | null;
+  readonly repoSubpath: string | null;
 }
 
 /** What to call a Project that does not exist yet, and what to record on it. */
@@ -152,6 +187,77 @@ function toCandidate(project: ProjectResource): ProjectCandidate {
     projectId: project.project_id,
     projectName: project.project_name,
     canonicalRepo: project.repo === null ? null : (canonicaliseGitRemote(project.repo) ?? null),
+    repoSubpath: project.repo_subpath,
+  };
+}
+
+/**
+ * Whether a Project's stored boundary covers where this session is.
+ *
+ * A null boundary is the repository root and covers everything in it. A stored
+ * boundary covers the session when it is the same directory or an ancestor of
+ * it — compared segment by segment, so `apps/web` covers `apps/web/client` and
+ * does **not** cover `apps/web-old`. A raw string prefix would say otherwise,
+ * and the two directories are unrelated.
+ */
+function boundaryContains(boundary: string | null, location: string | null): boolean {
+  if (boundary === null) {
+    return true;
+  }
+  if (location === null) {
+    return false;
+  }
+  return location === boundary || location.startsWith(`${boundary}/`);
+}
+
+/**
+ * How specific a boundary is, counted in repository path segments.
+ *
+ * The root is zero, `apps` is one, `apps/web` is two. Specificity is the whole
+ * of the ordering: nothing consults which Project was created first, or last,
+ * or what it is called.
+ */
+function boundaryDepth(boundary: string | null): number {
+  return boundary === null ? 0 : boundary.split('/').length;
+}
+
+/**
+ * Chooses among Projects on one repository by the boundaries their owner
+ * declared.
+ *
+ * Three outcomes and each is a different situation. One most-specific covering
+ * boundary is an answer the owner already gave. Several tied at that depth is a
+ * duplicate they will want to merge, and less specific Projects are not offered
+ * beside them — they were shadowed by a decision, not in competition with it.
+ * None covering the session is the question described on
+ * `NO_MATCHING_REPO_BOUNDARY`.
+ */
+function resolveByBoundary(
+  onRepo: readonly ProjectResource[],
+  location: string | null,
+): ProjectResolution {
+  const covering = onRepo.filter((project) => boundaryContains(project.repo_subpath, location));
+
+  if (covering.length === 0) {
+    return {
+      kind: 'AMBIGUOUS',
+      reason: 'NO_MATCHING_REPO_BOUNDARY',
+      candidates: onRepo.map(toCandidate),
+    };
+  }
+
+  const deepest = Math.max(...covering.map((project) => boundaryDepth(project.repo_subpath)));
+  const best = covering.filter((project) => boundaryDepth(project.repo_subpath) === deepest);
+
+  const only = best[0];
+  if (best.length === 1 && only !== undefined) {
+    return { kind: 'RESOLVED', projectId: only.project_id };
+  }
+
+  return {
+    kind: 'AMBIGUOUS',
+    reason: 'MULTIPLE_PROJECTS_FOR_REMOTE',
+    candidates: best.map(toCandidate),
   };
 }
 
@@ -207,23 +313,12 @@ export async function resolveProject(
   if (signals.primaryRemote !== null) {
     const onPrimary = matchingRemote(projects, [signals.primaryRemote]);
 
-    if (onPrimary.length === 1) {
-      const project = onPrimary[0];
-      if (project !== undefined) {
-        // The list entry was the material for deciding; the identity is what
-        // comes out. Copying the field rather than the record is the whole of
-        // the correction, and it is deliberately the only place a resolution is
-        // built.
-        return { kind: 'RESOLVED', projectId: project.project_id };
-      }
-    }
-
-    if (onPrimary.length > 1) {
-      return {
-        kind: 'AMBIGUOUS',
-        reason: 'MULTIPLE_PROJECTS_FOR_REMOTE',
-        candidates: onPrimary.map(toCandidate),
-      };
+    if (onPrimary.length > 0) {
+      // The repository is recorded. Which of its Projects this session belongs
+      // to is decided by the boundaries the owner declared — including when
+      // there is only one Project, because a single Project claiming `apps/web`
+      // says nothing about a session sitting in `apps/api`.
+      return resolveByBoundary(onPrimary, signals.monorepoSubpath);
     }
 
     // Nothing recorded this repository. A neighbouring one may be recorded, and

@@ -152,6 +152,21 @@ describe('the Project the client expects', () => {
     expect(PROJECT_RESOURCE_SCHEMA.additionalProperties).toBe(false);
   });
 
+  it('agrees a project carries the boundary its owner declared', () => {
+    // The field the resolver tells two projects on one repository apart by. If
+    // the client stopped expecting it, every project would read as malformed;
+    // if the server stopped sending it, the same. One list, checked against
+    // the schema the routes validate with.
+    expect([...PROJECT_RESOURCE_FIELDS]).toContain('repo_subpath');
+    expect(Object.keys(PROJECT_RESOURCE_SCHEMA.properties)).toContain('repo_subpath');
+    expect([...PROJECT_RESOURCE_SCHEMA.required]).toContain('repo_subpath');
+
+    const declared = PROJECT_RESOURCE_SCHEMA.properties.repo_subpath as {
+      type: readonly string[];
+    };
+    expect([...declared.type].sort()).toEqual(['null', 'string']);
+  });
+
   it('agrees that a repository and a platform may be absent', () => {
     // P5-03 compares Projects by repository, and a Project without one is
     // ordinary. A client that required it would reject those Projects as

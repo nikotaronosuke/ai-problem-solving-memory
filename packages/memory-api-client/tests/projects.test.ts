@@ -28,6 +28,7 @@ const FIRST = {
   project_name: 'widget',
   repo: 'github.com/acme/widget',
   platform: 'typescript',
+  repo_subpath: 'apps/web',
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-02T00:00:00.000Z',
 };
@@ -38,6 +39,7 @@ const SECOND = {
   project_name: 'gadget',
   repo: null,
   platform: null,
+  repo_subpath: null,
   created_at: '2026-02-01T00:00:00.000Z',
   updated_at: '2026-02-01T00:00:00.000Z',
 };
@@ -175,6 +177,51 @@ describe('what listing Projects returns', () => {
     expect(Object.keys(projects[0] ?? {}).sort()).toEqual([...PROJECT_RESOURCE_FIELDS].sort());
     expect(projects[0]?.repo).toBeNull();
     expect(projects[0]?.platform).toBeNull();
+  });
+});
+
+describe('a project’s repository boundary', () => {
+  it('carries a stated boundary through unchanged', async () => {
+    const { memory } = answering(200, { projects: [FIRST] });
+
+    const projects = await memory.listProjects();
+
+    expect(projects[0]?.repo_subpath).toBe('apps/web');
+  });
+
+  it('carries an absent boundary through as null', async () => {
+    const { memory } = answering(200, { projects: [SECOND] });
+
+    const projects = await memory.listProjects();
+
+    expect(projects[0]?.repo_subpath).toBeNull();
+  });
+
+  it('refuses a Project that does not carry one at all', async () => {
+    // Required on the wire, so a body without it is a server this client does
+    // not understand rather than a Project with a field missing.
+    const withoutBoundary = Object.fromEntries(
+      Object.entries(FIRST).filter(([key]) => key !== 'repo_subpath'),
+    );
+    const { memory } = answering(200, { projects: [withoutBoundary] });
+
+    await expect(memory.listProjects()).rejects.toBeInstanceOf(MemoryApiProtocolError);
+  });
+
+  it('refuses a boundary that is not text or null', async () => {
+    const { memory } = answering(200, { projects: [{ ...FIRST, repo_subpath: 7 }] });
+
+    await expect(memory.listProjects()).rejects.toBeInstanceOf(MemoryApiProtocolError);
+  });
+
+  it('does not interpret the boundary it carries', async () => {
+    // The server validated the shape. This package compares nothing and parses
+    // nothing — what a boundary means is a question for whoever is comparing
+    // them, exactly as with the repository itself.
+    const odd = { ...FIRST, repo_subpath: 'a b/c d' };
+    const { memory } = answering(200, { projects: [odd] });
+
+    await expect(memory.listProjects()).resolves.toEqual([odd]);
   });
 });
 

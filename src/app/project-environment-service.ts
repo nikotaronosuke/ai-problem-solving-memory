@@ -30,12 +30,14 @@ export interface CreateProjectCommand {
   readonly projectName: string;
   readonly repo?: string | null;
   readonly platform?: string | null;
+  readonly repoSubpath?: string | null;
 }
 
 export interface UpdateProjectCommand {
   readonly projectName?: string;
   readonly repo?: string | null;
   readonly platform?: string | null;
+  readonly repoSubpath?: string | null;
 }
 
 export interface CreateEnvironmentCommand {
@@ -112,6 +114,7 @@ export function createProjectEnvironmentService(): ProjectEnvironmentService {
         projectName: command.projectName,
         ...(command.repo !== undefined ? { repo: command.repo } : {}),
         ...(command.platform !== undefined ? { platform: command.platform } : {}),
+        ...(command.repoSubpath !== undefined ? { repoSubpath: command.repoSubpath } : {}),
       });
     },
 
@@ -130,6 +133,7 @@ export function createProjectEnvironmentService(): ProjectEnvironmentService {
         ...(command.projectName !== undefined ? { projectName: command.projectName } : {}),
         ...(command.repo !== undefined ? { repo: command.repo } : {}),
         ...(command.platform !== undefined ? { platform: command.platform } : {}),
+        ...(command.repoSubpath !== undefined ? { repoSubpath: command.repoSubpath } : {}),
       };
 
       if (Object.keys(patch).length === 0) {

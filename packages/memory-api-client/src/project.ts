@@ -11,6 +11,12 @@
  * `repo` is a string the server stored, not a URL this package parses, and
  * whether two strings mean the same repository is a question for whoever is
  * comparing them.
+ *
+ * `repo_subpath` is different in kind and the same here: the server validates
+ * it as a repository-relative boundary, and this package carries it without
+ * looking at it. What a boundary *means* — which project a session belongs to
+ * when a repository holds several — is a question for whoever is comparing
+ * them, exactly like the repository itself.
  */
 
 /**
@@ -26,6 +32,7 @@ export interface ProjectResource {
   readonly project_name: string;
   readonly repo: string | null;
   readonly platform: string | null;
+  readonly repo_subpath: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -37,6 +44,7 @@ export const PROJECT_RESOURCE_FIELDS = [
   'project_name',
   'repo',
   'platform',
+  'repo_subpath',
   'created_at',
   'updated_at',
 ] as const;
@@ -72,6 +80,7 @@ export function isProjectResource(value: unknown): value is ProjectResource {
     typeof value['project_name'] === 'string' &&
     (value['repo'] === null || typeof value['repo'] === 'string') &&
     (value['platform'] === null || typeof value['platform'] === 'string') &&
+    (value['repo_subpath'] === null || typeof value['repo_subpath'] === 'string') &&
     typeof value['created_at'] === 'string' &&
     typeof value['updated_at'] === 'string'
   );

@@ -169,7 +169,7 @@ asking is settled by the credential.
 
 ```json
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "exported_at": "2026-08-14T07:37:29.381865Z",
   "source_owner_id": "…",
   "projects": [],

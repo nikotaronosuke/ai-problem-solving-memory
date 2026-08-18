@@ -158,6 +158,7 @@ function echoingProjectService(): ProjectEnvironmentService {
         projectName: command.projectName,
         repo: command.repo ?? null,
         platform: command.platform ?? null,
+        repoSubpath: command.repoSubpath ?? null,
         createdAt: new Date(0),
         updatedAt: new Date(0),
       } as ProjectRecord),
