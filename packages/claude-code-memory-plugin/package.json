@@ -1,0 +1,21 @@
+{
+  "name": "@ai-problem-solving-memory/claude-code-memory-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Claude Code plugin runtime for the Memory. Carries the host and protocol knowledge the deterministic adapter deliberately does not have.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-problem-solving-memory/api-client": "*",
+    "@ai-problem-solving-memory/claude-code-adapter": "*",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "^4.4.3"
+  }
+}

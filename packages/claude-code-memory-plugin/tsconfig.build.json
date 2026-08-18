@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Built against the workspace packages' own builds, like any dependency —
+    // not against their source trees, which would land second copies here.
+    "paths": {},
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src"]
+}
