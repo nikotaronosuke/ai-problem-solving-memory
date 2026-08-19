@@ -19,6 +19,22 @@
  * protocol metadata of the call it is serving, derives the same name, and
  * claims that one record.
  *
+ * ## What makes the claim exactly once
+ *
+ * Creating one file that cannot already exist. Each call has a single marker
+ * name derived from the same hash as its record, and the claim is the
+ * *creation* of that marker with `wx` — the one primitive here that the
+ * platform genuinely serialises. Whoever creates it reads the record; everyone
+ * else stops without reading anything.
+ *
+ * This replaced an earlier design in which claiming meant renaming the record
+ * to a unique name and treating a successful rename as ownership. Measured on
+ * Windows, that is not true: concurrent renames of one source report success to
+ * several callers — four of ten in a direct probe — and under load two of them
+ * ended up with a real file and the same valid session, twelve times in two
+ * thousand rounds. A uniquely-named destination per contender is the tell:
+ * nobody was contending for the same object.
+ *
  * It is **not** a token the hook passes through the tool's input. That design
  * was built, measured, and rejected: a record minted for a call whose handler
  * never ran — because schema validation refused the input, or another rule
@@ -40,8 +56,8 @@
  * same change attach somebody's work to another conversation.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readdir, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, open, readdir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -49,7 +65,8 @@ import {
   CALL_CONTEXT_FORMAT_VERSION,
   CALL_CONTEXT_MAX_AGE_MS,
   CALL_CONTEXT_MAX_BYTES,
-  CLAIMED_PREFIX,
+  CLAIM_MARKER_PREFIX,
+  CLAIM_MARKER_SUFFIX,
   PENDING_PREFIX,
   RECORD_SUFFIX,
 } from './runtime-constants.js';
@@ -116,7 +133,19 @@ export function callContextFilename(hostCallId: string, prefix: string = PENDING
 }
 
 /**
- * The two shapes this component generates, and nothing else.
+ * The marker whose creation is this call's one chance to be consumed.
+ *
+ * Derived from the same hash as the record, with nothing random in it: every
+ * contender for one call must contend for exactly the same path, or there is
+ * no contention to win.
+ */
+export function claimMarkerFilename(hostCallId: string): string {
+  const digest = createHash('sha256').update(hostCallId, 'utf8').digest('hex');
+  return `${CLAIM_MARKER_PREFIX}${digest}${CLAIM_MARKER_SUFFIX}`;
+}
+
+/**
+ * The shapes this component generates, plus one it only cleans up.
  *
  * Written beside the function that builds those names so the two cannot drift:
  * a digest, and a digest followed by the identifier a claim adds. Recognising
@@ -125,7 +154,7 @@ export function callContextFilename(hostCallId: string, prefix: string = PENDING
  * somebody else's file out of a directory this component merely shares.
  */
 const OWNED_FILENAME =
-  /^(?:pending-[0-9a-f]{64}|claimed-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json$/u;
+  /^(?:pending-[0-9a-f]{64}\.json|claim-[0-9a-f]{64}\.lock|claimed-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json)$/u;
 
 /** Whether a directory entry is one of ours, by name alone. */
 export function isOwnedCallContextFilename(entry: string): boolean {
@@ -218,10 +247,22 @@ export async function mintCallContext(options: {
 /**
  * Claims the record for this call, if there is one, and reads the session from it.
  *
- * The claim is a rename, and the rename is what makes it exactly once: two
- * processes can both see the file and only one can move it. Reading first and
- * deleting after would let both read before either deleted, which is the same
- * bug wearing a different shape.
+ * The claim happens before anything is read, and it is the creation of one
+ * marker that cannot already exist. A loser learns only that it lost: it never
+ * opens the record, so trusted session context is read by exactly one caller.
+ *
+ * ## The marker is not removed when the call finishes
+ *
+ * It is a tombstone meaning "this call has already had its one attempt", and it
+ * outlives the attempt on purpose. Removing it would put correctness back on
+ * the record's deletion having succeeded — and a failed unlink, a record that
+ * reappeared, or a first attempt that found the record malformed would each
+ * reopen an identity that has already been spent. Housekeeping removes the
+ * marker later, on age, like any other litter.
+ *
+ * It holds nothing: no session, no work, not even the identifier it is named
+ * after. Its existence is the whole of what it says, and it can say it about no
+ * other call, because another call hashes to another name.
  *
  * Nothing about the record is returned except the session. A caller that could
  * see the rest would eventually put some of it somewhere.
@@ -233,19 +274,18 @@ export async function claimCallContext(options: {
   readonly now: number;
 }): Promise<HostCallContextClaim> {
   const pending = join(options.directory, callContextFilename(options.hostCallId));
-  const claimed = join(
-    options.directory,
-    callContextFilename(options.hostCallId, CLAIMED_PREFIX).replace(
-      RECORD_SUFFIX,
-      `-${randomUUID()}${RECORD_SUFFIX}`,
-    ),
-  );
+  const marker = join(options.directory, claimMarkerFilename(options.hostCallId));
 
   try {
-    await rename(pending, claimed);
+    // The whole of the exclusion, and it happens first. `wx` creates the file
+    // or fails because it is already there; the platform decides that once, for
+    // everybody. Nothing about the record is touched until this has been won.
+    const handle = await open(marker, 'wx', 0o600);
+    await handle.close();
   } catch {
-    // Absent, already claimed, or unreadable. There is no second place to
-    // look: a record under another name belongs to another call.
+    // Somebody already has this call, or the directory cannot be written to.
+    // Both mean the same thing here, and neither is worth describing: there is
+    // no second marker to look for and nothing to retry.
     return { kind: 'UNAVAILABLE' };
   }
 
@@ -254,12 +294,12 @@ export async function claimCallContext(options: {
     // and measuring the string afterwards is not a bound at all — whatever was
     // in the file is already in memory by then, and these records are a few
     // hundred bytes written by this component.
-    const description = await stat(claimed);
+    const description = await stat(pending);
     if (!description.isFile() || description.size > CALL_CONTEXT_MAX_BYTES) {
       return { kind: 'UNAVAILABLE' };
     }
 
-    const parsed: unknown = JSON.parse(await readFile(claimed, 'utf8'));
+    const parsed: unknown = JSON.parse(await readFile(pending, 'utf8'));
     if (!isHostCallContext(parsed)) {
       return { kind: 'UNAVAILABLE' };
     }
@@ -273,9 +313,10 @@ export async function claimCallContext(options: {
   } catch {
     return { kind: 'UNAVAILABLE' };
   } finally {
-    // Best effort. A claimed file left behind by a crash is litter the sweep
-    // collects, and never a thing that can authenticate anything.
-    await unlink(claimed).catch(() => undefined);
+    // The record has had its one attempt, whatever came of it. The marker is
+    // deliberately left where it is: it, and not this unlink, is what makes a
+    // second attempt impossible.
+    await unlink(pending).catch(() => undefined);
   }
 }
 
@@ -299,6 +340,8 @@ export async function sweepCallContexts(options: {
   }
 
   for (const entry of entries) {
+    // Including the previous version's claimed records, which are removed on
+    // age and never read: they are litter, not state this version acts on.
     if (!isOwnedCallContextFilename(entry)) {
       continue;
     }

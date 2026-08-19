@@ -60,8 +60,18 @@ export const CALL_CONTEXT_FIELDS = [
 ] as const;
 
 export const PENDING_PREFIX = 'pending-';
-export const CLAIMED_PREFIX = 'claimed-';
 export const RECORD_SUFFIX = '.json';
+
+/**
+ * The marker whose creation *is* the claim.
+ *
+ * One name per host call, derived from the same hash as the record it guards,
+ * with nothing random in it — every contender for a call has to contend for
+ * exactly the same filesystem object, and a unique name per contender would
+ * mean nobody contends for anything.
+ */
+export const CLAIM_MARKER_PREFIX = 'claim-';
+export const CLAIM_MARKER_SUFFIX = '.lock';
 
 /**
  * How old a record may be before it is swept, and refused.

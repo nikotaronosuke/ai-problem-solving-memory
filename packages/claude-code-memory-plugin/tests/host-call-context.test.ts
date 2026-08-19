@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import {
   callContextFilename,
   claimCallContext,
+  claimMarkerFilename,
   hostCallIdOf,
   isHostCallContext,
   isOwnedCallContextFilename,
@@ -175,7 +176,9 @@ describe('claiming', () => {
 
     await expect(claim()).resolves.toMatchObject({ kind: 'CLAIMED' });
     await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
-    expect(await readdir(directory)).toEqual([]);
+    // The record is gone and the marker stays: it is what closes this call,
+    // and it outlives the attempt on purpose.
+    expect(await readdir(directory)).toEqual([claimMarkerFilename(CALL_ID)]);
   });
 
   it('refuses a call nothing was minted for', async () => {
@@ -188,8 +191,11 @@ describe('claiming', () => {
     await mint(OTHER_CALL_ID);
 
     await expect(claim(CALL_ID)).resolves.toEqual({ kind: 'UNAVAILABLE' });
-    // And the other call's record is untouched, still there for its own call.
-    expect(await readdir(directory)).toEqual([callContextFilename(OTHER_CALL_ID)]);
+    // The other call's record is untouched, still there for its own call. This
+    // call spent its own attempt and has a marker of its own to show for it.
+    expect((await readdir(directory)).sort()).toEqual(
+      [callContextFilename(OTHER_CALL_ID), claimMarkerFilename(CALL_ID)].sort(),
+    );
   });
 
   it('gives one record to exactly one of ten simultaneous claimants', async () => {
@@ -199,6 +205,113 @@ describe('claiming', () => {
 
     expect(claims.filter((c) => c.kind === 'CLAIMED')).toHaveLength(1);
     expect(claims.filter((c) => c.kind === 'UNAVAILABLE')).toHaveLength(9);
+  });
+
+  it('keeps doing so over many rounds', async () => {
+    // Repeated because the failure it replaced was a race that showed up only
+    // sometimes. This is not the proof on its own — the marker is created or it
+    // is not, and the platform decides that once — but a mechanism that only
+    // usually excludes would show here.
+    for (let round = 0; round < 50; round += 1) {
+      const id = `toolu_round_${String(round)}`;
+      await mint(id);
+
+      const claims = await Promise.all(Array.from({ length: 8 }, () => claim(id)));
+
+      expect(
+        `round ${String(round)}: ${String(claims.filter((c) => c.kind === 'CLAIMED').length)}`,
+      ).toBe(`round ${String(round)}: 1`);
+    }
+  });
+
+  it('refuses a record put back after the call was already claimed', async () => {
+    // The reason the marker outlives the call. If the claim were only the
+    // record's disappearance, anything that made it reappear — a failed unlink,
+    // a restored backup, a second hook — would reopen an identity that has
+    // already been spent.
+    await mint();
+    await expect(claim()).resolves.toMatchObject({ kind: 'CLAIMED' });
+
+    await mintCallContext({
+      directory,
+      hostCallId: CALL_ID,
+      sessionId: SESSION_ID,
+      toolName: HOST_TOOL_NAME,
+      now: NOW,
+    });
+
+    await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
+  });
+
+  it('does not reopen a call whose record turned out to be malformed', async () => {
+    // The first claimant won the call and found nothing usable. That is the
+    // call's one attempt: repairing the record afterwards must not buy another.
+    await writeFile(join(directory, callContextFilename(CALL_ID)), 'not json', 'utf8');
+    await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
+
+    await mint();
+
+    await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
+  });
+
+  it('leaves the marker behind and takes the record away', async () => {
+    await mint();
+
+    await claim();
+
+    expect(await readdir(directory)).toEqual([claimMarkerFilename(CALL_ID)]);
+  });
+
+  it('refuses when the marker is there and the record is not', async () => {
+    await writeFile(join(directory, claimMarkerFilename(CALL_ID)), '', 'utf8');
+
+    await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
+  });
+
+  it('reads nothing when it loses', async () => {
+    // A loser stops at the marker. The record it never opened is still there,
+    // untouched, which is what "the winner alone reads trusted context" looks
+    // like from outside.
+    await writeFile(join(directory, claimMarkerFilename(CALL_ID)), '', 'utf8');
+    await mint();
+
+    await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
+    expect((await readdir(directory)).sort()).toEqual(
+      [callContextFilename(CALL_ID), claimMarkerFilename(CALL_ID)].sort(),
+    );
+  });
+
+  it('never reads what the previous version left behind', async () => {
+    // Those files are litter, not state. A claim that consulted one would
+    // resurrect a session from a plugin version that is no longer running, for
+    // a call that has nothing to do with it.
+    await writeFile(
+      join(
+        directory,
+        callContextFilename(CALL_ID, 'claimed-').replace('.json', `-${randomUUID()}.json`),
+      ),
+      JSON.stringify({
+        format_version: 1,
+        session_id: SESSION_ID,
+        tool_name: HOST_TOOL_NAME,
+        minted_at: NOW,
+      }),
+      'utf8',
+    );
+
+    // Nothing was minted for this call, so there is nothing to claim — however
+    // convincing the old file looks.
+    await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
+  });
+
+  it('holds a marker for one call and no other', async () => {
+    await mint();
+    await mint(OTHER_CALL_ID);
+
+    await expect(claim()).resolves.toMatchObject({ kind: 'CLAIMED' });
+
+    // The other call has its own name and is untouched by any of it.
+    await expect(claim(OTHER_CALL_ID)).resolves.toMatchObject({ kind: 'CLAIMED' });
   });
 
   it('lets ten distinct calls succeed independently', async () => {
@@ -292,10 +405,19 @@ describe('claiming', () => {
 });
 
 describe('recognising this component’s own files', () => {
-  it('accepts exactly the two shapes it generates', () => {
+  it('accepts the shapes it generates', () => {
     const digest = 'a'.repeat(64);
 
     expect(isOwnedCallContextFilename(`pending-${digest}.json`)).toBe(true);
+    expect(isOwnedCallContextFilename(`claim-${digest}.lock`)).toBe(true);
+  });
+
+  it('accepts what an earlier version left behind, for cleanup only', () => {
+    // That version claimed a call by renaming its record to a unique name. The
+    // data directory survives plugin updates, so a crash under the old code can
+    // leave one here. Nothing reads it; the sweep removes it when it is old.
+    const digest = 'a'.repeat(64);
+
     expect(isOwnedCallContextFilename(`claimed-${digest}-${randomUUID()}.json`)).toBe(true);
   });
 
@@ -305,8 +427,10 @@ describe('recognising this component’s own files', () => {
     ['a digest that is too short', `pending-${'a'.repeat(63)}.json`],
     ['a digest that is not hex', `pending-${'g'.repeat(64)}.json`],
     ['an uppercase digest', `pending-${'A'.repeat(64)}.json`],
-    ['a claim with no identifier', `claimed-${'a'.repeat(64)}.json`],
-    ['a claim whose identifier is not one', `claimed-${'a'.repeat(64)}-abc.json`],
+    ['a legacy claim with no identifier', `claimed-${'a'.repeat(64)}.json`],
+    ['a legacy claim whose identifier is not one', `claimed-${'a'.repeat(64)}-abc.json`],
+    ['a marker with the wrong extension', `claim-${'a'.repeat(64)}.json`],
+    ['a marker with a short digest', `claim-${'a'.repeat(63)}.lock`],
     ['something else entirely', 'notes.txt'],
   ])('refuses %s', (_name, entry) => {
     expect(isOwnedCallContextFilename(entry)).toBe(false);
@@ -332,7 +456,7 @@ describe('sweeping', () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
-  it('removes claimed records a crash left behind', async () => {
+  it('removes the previous version’s claimed records when they are old', async () => {
     const name = claimedName(CALL_ID);
     await writeFile(join(directory, name), '{}', 'utf8');
     await age(name, CALL_CONTEXT_MAX_AGE_MS + 60_000);
@@ -340,6 +464,36 @@ describe('sweeping', () => {
     await sweepCallContexts({ directory, now: Date.now() });
 
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('leaves a fresh one from the previous version alone', async () => {
+    const name = claimedName(CALL_ID);
+    await writeFile(join(directory, name), '{}', 'utf8');
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([name]);
+  });
+
+  it('removes an old claim marker', async () => {
+    // The marker is a tombstone, not a lease. It is collected on age like any
+    // other litter, and until then it keeps its call closed.
+    const name = claimMarkerFilename(CALL_ID);
+    await writeFile(join(directory, name), '', 'utf8');
+    await age(name, CALL_CONTEXT_MAX_AGE_MS + 60_000);
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('leaves a fresh claim marker', async () => {
+    const name = claimMarkerFilename(CALL_ID);
+    await writeFile(join(directory, name), '', 'utf8');
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([name]);
   });
 
   it('leaves a record that is still current', async () => {
@@ -482,8 +636,8 @@ describe('how much of a claimed record is read', () => {
     );
 
     await expect(claim(CALL_ID, NOW)).resolves.toEqual({ kind: 'UNAVAILABLE' });
-    // And the oversized file does not stay behind.
-    expect(await readdir(directory)).toEqual([]);
+    // The oversized record does not stay behind, and the call is spent.
+    expect(await readdir(directory)).toEqual([claimMarkerFilename(CALL_ID)]);
   });
 
   it('accepts an ordinary record', async () => {
