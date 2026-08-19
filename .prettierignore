@@ -3,6 +3,13 @@ dist/
 coverage/
 package-lock.json
 
+# Generated distribution artifacts. These are produced byte-for-byte by the
+# plugin's bundle script and are checked against a fresh build, which is a
+# stronger statement about them than any formatting rule. Reformatting them
+# would make that check fail for a reason nobody meant.
+packages/claude-code-memory-plugin/bundle/
+packages/claude-code-memory-plugin/THIRD_PARTY_NOTICES.txt
+
 # Supabase CLI working state. Generated, git-ignored via supabase/.gitignore,
 # and not ours to format.
 supabase/.temp/

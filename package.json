@@ -14,6 +14,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run build -w @ai-problem-solving-memory/api-client && npm run build -w @ai-problem-solving-memory/claude-code-adapter && npm run build -w @ai-problem-solving-memory/claude-code-memory-plugin",
+    "bundle": "npm run bundle -w @ai-problem-solving-memory/claude-code-memory-plugin",
+    "bundle:check": "npm run bundle:check -w @ai-problem-solving-memory/claude-code-memory-plugin",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc --noEmit && npm run typecheck -w @ai-problem-solving-memory/api-client && npm run typecheck -w @ai-problem-solving-memory/claude-code-adapter && npm run typecheck -w @ai-problem-solving-memory/claude-code-memory-plugin",
@@ -23,7 +25,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run bundle:check && npm run test",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "db:status": "supabase status",

@@ -406,29 +406,31 @@ the pool. It reports the host but never the connection string.
 
 ## Commands
 
-| Command                     | Purpose                                           |
-| --------------------------- | ------------------------------------------------- |
-| `npm run dev`               | Run the server from TypeScript, with watch        |
-| `npm run build`             | Compile `src/` to `dist/`                         |
-| `npm start`                 | Run the compiled server                           |
-| `npm run typecheck`         | Type-check `src/` and `tests/` without emitting   |
-| `npm run lint`              | ESLint (type-aware rules enabled)                 |
-| `npm run lint:fix`          | ESLint with autofix                               |
-| `npm run format`            | Prettier, writing changes                         |
-| `npm run format:check`      | Prettier, verifying only                          |
-| `npm test`                  | Vitest, single run                                |
-| `npm run test:watch`        | Vitest, watch mode                                |
-| `npm run check`             | typecheck + lint + format:check + test            |
-| `npm run supabase:start`    | Start the local Supabase stack                    |
-| `npm run supabase:stop`     | Stop the local Supabase stack                     |
-| `npm run db:status`         | Show local stack URLs                             |
-| `npm run db:reset`          | Rebuild the local DB from migrations              |
-| `npm run db:migrate`        | Apply pending migrations                          |
-| `npm run db:migration:new`  | Create a new migration file                       |
-| `npm run db:check`          | Verify the service can reach PostgreSQL           |
-| `npm run owner:bootstrap`   | Create the local owner named by `MEMORY_OWNER_ID` |
-| `npm run credential:issue`  | Issue a client credential, printed once           |
-| `npm run credential:revoke` | Revoke one credential by id                       |
+| Command                     | Purpose                                               |
+| --------------------------- | ----------------------------------------------------- |
+| `npm run dev`               | Run the server from TypeScript, with watch            |
+| `npm run build`             | Compile `src/` to `dist/`                             |
+| `npm start`                 | Run the compiled server                               |
+| `npm run typecheck`         | Type-check `src/` and `tests/` without emitting       |
+| `npm run lint`              | ESLint (type-aware rules enabled)                     |
+| `npm run lint:fix`          | ESLint with autofix                                   |
+| `npm run format`            | Prettier, writing changes                             |
+| `npm run format:check`      | Prettier, verifying only                              |
+| `npm test`                  | Vitest, single run                                    |
+| `npm run test:watch`        | Vitest, watch mode                                    |
+| `npm run check`             | typecheck + lint + format:check + bundle:check + test |
+| `npm run bundle`            | Rebuild the plugin's committed distribution bundle    |
+| `npm run bundle:check`      | Verify the committed bundle matches a fresh build     |
+| `npm run supabase:start`    | Start the local Supabase stack                        |
+| `npm run supabase:stop`     | Stop the local Supabase stack                         |
+| `npm run db:status`         | Show local stack URLs                                 |
+| `npm run db:reset`          | Rebuild the local DB from migrations                  |
+| `npm run db:migrate`        | Apply pending migrations                              |
+| `npm run db:migration:new`  | Create a new migration file                           |
+| `npm run db:check`          | Verify the service can reach PostgreSQL               |
+| `npm run owner:bootstrap`   | Create the local owner named by `MEMORY_OWNER_ID`     |
+| `npm run credential:issue`  | Issue a client credential, printed once               |
+| `npm run credential:revoke` | Revoke one credential by id                           |
 
 Run `npm run check` before reporting a task complete.
 
@@ -453,6 +455,56 @@ Run `npm run check` before reporting a task complete.
 | `db/`                  | Database notes                                         |
 | `docs/`                | Implementation documentation                           |
 | `packages/`            | Workspace packages — the API client and the adapter    |
+| `.claude-plugin/`      | The plugin marketplace catalog this repository hosts   |
+
+## The Claude Code plugin
+
+`packages/claude-code-memory-plugin/` is both the MCP runtime and the plugin
+root. What ships is not what a workspace build produces:
+
+| Path                       | What it is                                                |
+| -------------------------- | --------------------------------------------------------- |
+| `src/`                     | The authority. Typechecked, linted, and under test        |
+| `dist/`                    | Ordinary TypeScript build output. Ignored, not shipped    |
+| `bundle/server.js`         | Committed, generated. The MCP server an install runs      |
+| `bundle/pre-tool-use.js`   | Committed, generated. The PreToolUse hook an install runs |
+| `THIRD_PARTY_NOTICES.txt`  | Committed, generated. Licences of the code inside them    |
+| `scripts/build-bundle.mjs` | The one definition of how those are produced              |
+
+An install copies the plugin directory and nothing around it — no sibling
+packages, no repository root, no `node_modules`, and no install step. So the
+two entrypoints are bundled with their whole dependency closure, and their only
+unresolved imports are Node's own built-ins.
+
+**After changing anything under `packages/claude-code-memory-plugin/src/` or any
+package it imports:**
+
+```bash
+npm run bundle        # regenerate the committed artifact
+npm run bundle:check  # confirm it matches a fresh build, byte for byte
+```
+
+`npm run check` runs `bundle:check` too, so a source change without a
+regenerated bundle fails there rather than on somebody's machine.
+
+Never edit anything under `bundle/` by hand. It is overwritten on the next
+build, the type checker does not see it, and no test in this repository reads it
+as source. A behaviour change is always source → tests → regenerate.
+
+For development you can load the local checkout directly:
+
+```bash
+claude --plugin-dir packages/claude-code-memory-plugin
+```
+
+That runs the same committed bundle an installed copy would, so what you are
+testing is what a user receives. It is a development path only; the installation
+path is the marketplace one in the README.
+
+Neither `plugin.json` nor the marketplace entry pins a version. While this is
+pre-MVP and git-hosted, Claude Code resolves the version from the commit the
+plugin was built from, so every commit can be an update. The npm workspace
+package's own `0.0.0` is unrelated to that and is private build metadata.
 
 ## End-to-end tests
 

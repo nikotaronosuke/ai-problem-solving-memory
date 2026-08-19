@@ -61,7 +61,9 @@ describe('the shipped hook manifest', () => {
       // call context is.
       expect(entry.hooks[0]).toEqual({
         type: 'command',
-        command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/pre-tool-use.js"',
+        // The committed distribution bundle, not the workspace build output:
+        // an installed copy has only the former.
+        command: 'node "${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js"',
         timeout: 15,
       });
     }
