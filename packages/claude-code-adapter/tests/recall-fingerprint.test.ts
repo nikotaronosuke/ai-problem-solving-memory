@@ -510,7 +510,7 @@ describe('the string that is actually hashed', () => {
     expect(first).not.toBe(second);
   });
 
-  it('carries every one of the seven feature lists', () => {
+  it('carries every one of the seven structural fields', () => {
     const base = requestFor();
     const fields = [
       'problem_domain',

@@ -221,7 +221,7 @@ describe('what the model is asked for', () => {
     }
   });
 
-  it('asks for seven kinds of feature and no eighth', () => {
+  it('asks for seven structural fields and no eighth', () => {
     const schema = recallTool().inputSchema ?? {};
     const features = ((schema['properties'] ?? {}) as Record<string, Record<string, unknown>>)[
       'current_features'

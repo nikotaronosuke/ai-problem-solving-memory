@@ -34,7 +34,7 @@
 
 import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import type {
   RecallFingerprintRead,
@@ -110,8 +110,20 @@ function isRecord(value: unknown): value is RecallFingerprintRecord {
 export function createRecallFingerprintStore(options: {
   readonly directory: string;
 }): RecallFingerprintStore {
+  // Absolute, and checked here as well as at the composition that supplies it.
+  // A relative directory would resolve against whatever the process's working
+  // directory happened to be — which for a tool running inside somebody's
+  // editor is their repository, so the first thing that would happen is this
+  // runtime's private state appearing in their checkout. The same rule the
+  // binding store applies, for the same reason, and the message names the
+  // argument rather than the value.
+  const directory = options.directory;
+  if (typeof directory !== 'string' || !/\S/u.test(directory) || !isAbsolute(directory)) {
+    throw new Error('recall fingerprint store: directory must be an absolute path');
+  }
+
   const pathFor = (problemId: string): string =>
-    join(options.directory, recallFingerprintFilename(problemId));
+    join(directory, recallFingerprintFilename(problemId));
 
   return {
     async readFingerprint(problemId: string): Promise<RecallFingerprintRead> {
@@ -153,7 +165,7 @@ export function createRecallFingerprintStore(options: {
       } satisfies RecallFingerprintRecord);
 
       try {
-        await mkdir(options.directory, { recursive: true });
+        await mkdir(directory, { recursive: true });
         const handle = await open(temporary, 'wx', 0o600);
         try {
           await handle.writeFile(body, 'utf8');

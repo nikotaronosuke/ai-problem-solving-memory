@@ -108,17 +108,35 @@ const PROJECT_DECISION_SCHEMA = z.discriminatedUnion('kind', [
 ]);
 
 /**
- * One entry in a structural feature list, as the model wrote it.
+ * A string the model wrote, checked and then left alone.
+ *
+ * The checking is deliberately not a cleaning. A schema that trimmed would
+ * change the request before anything saw it, and that is wrong twice over: the
+ * search that goes out is no longer the one the model composed, and a string
+ * whose real length is over what the Memory accepts becomes acceptable merely
+ * because trimming shortened it — so this tool would stop enforcing the
+ * contract on what was actually sent. Both failures are silent.
+ *
+ * So the length checked is the string's own, the blank test asks whether there
+ * is any non-whitespace character in it rather than removing anything, and the
+ * value that comes out is the value that went in. That is the same rule the
+ * common client applies when it validates the request it is handed, which is
+ * why an accepted request here is one that client accepts too.
  *
  * Bounds come from the common client rather than being restated here: the
  * server that will read this request already publishes what it accepts, and a
  * second copy of a number is a second thing to keep in step.
  */
-const FEATURE_ENTRY_SCHEMA = z
-  .string()
-  .trim()
-  .min(1)
-  .max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH);
+const boundedNonBlank = (maxLength: number): z.ZodType<string> =>
+  z
+    .string()
+    .max(maxLength)
+    .refine((value) => /\S/u.test(value), {
+      // Says what was wrong, never what was sent.
+      message: 'must contain at least one non-whitespace character',
+    });
+
+const FEATURE_ENTRY_SCHEMA = boundedNonBlank(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH);
 const FEATURE_LIST_SCHEMA = z
   .array(FEATURE_ENTRY_SCHEMA)
   .max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_ITEMS);
@@ -126,18 +144,15 @@ const FEATURE_LIST_SCHEMA = z
 /**
  * How the model describes what it currently understands.
  *
- * Seven fields and no eighth. `schema_version` is deliberately absent: which
- * vocabulary these words are written in is the runtime's to state, and a caller
- * that could name it could claim to be speaking a version it is not.
+ * Seven fields and no eighth: one scalar domain, which may be absent because a
+ * model may genuinely not know yet, and six lists. `schema_version` is
+ * deliberately absent: which vocabulary these words are written in is the
+ * runtime's to state, and a caller that could name it could claim to be
+ * speaking a version it is not.
  */
 const RECALL_FEATURES_SCHEMA = z
   .object({
-    problem_domain: z
-      .string()
-      .trim()
-      .min(1)
-      .max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH)
-      .nullable(),
+    problem_domain: boundedNonBlank(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH).nullable(),
     symptom_patterns: FEATURE_LIST_SCHEMA,
     suspected_boundaries: FEATURE_LIST_SCHEMA,
     occurrence_conditions: FEATURE_LIST_SCHEMA,
@@ -440,6 +455,20 @@ export interface AuthenticatedCall {
   readonly bindingStore: ProblemBindingStore;
   readonly sessionId: string;
   readonly projectDir: string;
+  /**
+   * This plugin's own state directory, as validated for *this* call.
+   *
+   * Handed on rather than left to be looked up again. A second read of the
+   * environment is a second answer: it can disagree with the one the call
+   * context was claimed against, it can come back absent, and an absent one
+   * that is patched up with a default becomes a relative path anchored on
+   * whatever directory the process happens to be in. One authenticated call has
+   * one state directory, and this is it.
+   *
+   * Internal composition only. It reaches no result, no error, no log, no
+   * record and no Memory request.
+   */
+  readonly pluginData: string;
 }
 
 /**
@@ -507,6 +536,8 @@ export async function serveAuthenticated<T>(
       // saying nothing. The same value goes to Project detection and to
       // Environment capture, so the two cannot describe different places.
       projectDir: claim.currentDirectory,
+      // The same validated directory the claim above was made against.
+      pluginData: paths.pluginData,
     });
   } catch (error) {
     return { kind: 'ERROR', code: classify(error) };
@@ -667,12 +698,13 @@ export async function handleRecallSimilarExperience(
   },
 ): Promise<RecallSimilarExperienceToolResult> {
   return serveAuthenticated(request, options, RECALL_SIMILAR_EXPERIENCE_TOOL, async (call) => {
-    const paths = runtimeStatePathsOf(options.environment);
     const outcome = await recallSimilarExperience({
       client: call.client,
       bindingStore: call.bindingStore,
       fingerprintStore: createRecallFingerprintStore({
-        directory: join(paths?.pluginData ?? '', RECALL_FINGERPRINT_DIRECTORY),
+        // The call's own validated directory, not a second reading of the
+        // environment. See `AuthenticatedCall.pluginData`.
+        directory: join(call.pluginData, RECALL_FINGERPRINT_DIRECTORY),
       }),
       sessionId: call.sessionId,
       projectDir: call.projectDir,
@@ -800,8 +832,8 @@ export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): Mcp
         'from this machine. Reports how the lookup went, not what it found.',
       inputSchema: z
         .object({
-          lexical_text: z.string().trim().min(1).max(MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH),
-          semantic_text: z.string().trim().min(1).max(MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH),
+          lexical_text: boundedNonBlank(MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH),
+          semantic_text: boundedNonBlank(MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH),
           current_features: RECALL_FEATURES_SCHEMA,
         })
         .strict(),

@@ -25,7 +25,8 @@
  *
  * ## What the model says, and what the runtime says
  *
- * The two texts and the seven feature lists are the *model's* current
+ * The two texts and the seven structural fields — a problem domain, which
+ * may be absent, and six lists — are the *model's* current
  * understanding, in its own words. Nothing here composes them out of stored
  * fields: a query assembled by joining columns describes what was written down
  * once, not what somebody has just realised. What the runtime owns instead is

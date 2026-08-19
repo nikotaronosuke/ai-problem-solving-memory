@@ -282,3 +282,46 @@ describe('two writers at once', () => {
     expect([DIGEST, OTHER_DIGEST]).toContain((read as { fingerprint: string }).fingerprint);
   });
 });
+
+describe('the directory it is built over', () => {
+  it.each([
+    ['a relative path', 'recall-fingerprints'],
+    ['a path relative to here', './state'],
+    ['a path relative to above', '../state'],
+    ['an empty string', ''],
+    ['nothing but spaces', '   '],
+  ])('refuses %s at construction', (_label, bad) => {
+    // Refused where the store is built, not where it is used. A relative
+    // directory resolves against whatever the process's working directory
+    // happens to be, and for a tool running inside somebody's editor that is
+    // their repository — so the first thing that would happen is this runtime's
+    // private state appearing in their checkout. The production composition
+    // already passes the directory validated for the call; this is the check
+    // that direct misuse cannot get around it.
+    expect(() => createRecallFingerprintStore({ directory: bad })).toThrow();
+  });
+
+  it('accepts the absolute directory it is given, and uses exactly that one', async () => {
+    const built = createRecallFingerprintStore({ directory });
+    await built.writeFingerprint(PROBLEM_ID, DIGEST);
+
+    expect(await readdir(directory)).toHaveLength(1);
+  });
+
+  it('says which argument was wrong without repeating it', () => {
+    // A path is not a secret, but it is somebody's machine, and an error is the
+    // one thing here that travels furthest.
+    const bad = 'a-relative-directory-nobody-should-see-in-a-log';
+
+    try {
+      createRecallFingerprintStore({ directory: bad });
+      expect.unreachable('building over a relative directory should have thrown');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message.includes('directory')).toBe(true);
+      expect(`the message repeats the value:${String(message.includes(bad))}`).toBe(
+        'the message repeats the value:false',
+      );
+    }
+  });
+});

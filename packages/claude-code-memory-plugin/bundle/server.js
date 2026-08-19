@@ -12,7 +12,7 @@ var __export = (target, all) => {
 
 // src/server.ts
 import { realpathSync } from "node:fs";
-import { isAbsolute as isAbsolute4, join as join4 } from "node:path";
+import { isAbsolute as isAbsolute5, join as join4 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ../memory-api-client/src/config.ts
@@ -22181,7 +22181,7 @@ function toError(value) {
 // src/recall-fingerprint-store.ts
 import { mkdir as mkdir2, open as open2, readFile as readFile2, rename as rename2, stat, unlink as unlink2 } from "node:fs/promises";
 import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
-import { join as join2 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join2 } from "node:path";
 
 // src/runtime-constants.ts
 var PLUGIN_NAME = "problem-solving-memory";
@@ -22247,7 +22247,11 @@ function isRecord4(value) {
   return record2["format_version"] === RECALL_FINGERPRINT_FORMAT_VERSION && typeof record2["fingerprint"] === "string" && DIGEST.test(record2["fingerprint"]);
 }
 function createRecallFingerprintStore(options) {
-  const pathFor = (problemId) => join2(options.directory, recallFingerprintFilename(problemId));
+  const directory = options.directory;
+  if (typeof directory !== "string" || !/\S/u.test(directory) || !isAbsolute3(directory)) {
+    throw new Error("recall fingerprint store: directory must be an absolute path");
+  }
+  const pathFor = (problemId) => join2(directory, recallFingerprintFilename(problemId));
   return {
     async readFingerprint(problemId) {
       const path = pathFor(problemId);
@@ -22273,7 +22277,7 @@ function createRecallFingerprintStore(options) {
         fingerprint
       });
       try {
-        await mkdir2(options.directory, { recursive: true });
+        await mkdir2(directory, { recursive: true });
         const handle = await open2(temporary, "wx", 384);
         try {
           await handle.writeFile(body, "utf8");
@@ -22436,13 +22440,13 @@ async function currentProblem(input) {
 // src/host-call-context.ts
 import { createHash as createHash4 } from "node:crypto";
 import { mkdir as mkdir3, open as open3, readdir, readFile as readFile3, stat as stat2, unlink as unlink3 } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, join as join3 } from "node:path";
+import { isAbsolute as isAbsolute4, join as join3 } from "node:path";
 var HOST_CALL_ID_META_KEY = "claudecode/toolUseId";
 function isNonBlank2(value) {
   return typeof value === "string" && /\S/.test(value);
 }
 function isAbsolutePath(value) {
-  return isNonBlank2(value) && isAbsolute3(value);
+  return isNonBlank2(value) && isAbsolute4(value);
 }
 function hostCallIdOf(request) {
   if (typeof request !== "object" || request === null) {
@@ -22646,10 +22650,14 @@ var PROJECT_DECISION_SCHEMA = discriminatedUnion("kind", [
   object({ kind: literal("REPOSITORY_BOUNDARY"), repo_subpath: string2().min(1) }).strict(),
   object({ kind: literal("REGISTER_WITHOUT_REPOSITORY") }).strict()
 ]);
-var FEATURE_ENTRY_SCHEMA = string2().trim().min(1).max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH);
+var boundedNonBlank = (maxLength) => string2().max(maxLength).refine((value) => /\S/u.test(value), {
+  // Says what was wrong, never what was sent.
+  message: "must contain at least one non-whitespace character"
+});
+var FEATURE_ENTRY_SCHEMA = boundedNonBlank(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH);
 var FEATURE_LIST_SCHEMA = array(FEATURE_ENTRY_SCHEMA).max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_ITEMS);
 var RECALL_FEATURES_SCHEMA = object({
-  problem_domain: string2().trim().min(1).max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH).nullable(),
+  problem_domain: boundedNonBlank(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH).nullable(),
   symptom_patterns: FEATURE_LIST_SCHEMA,
   suspected_boundaries: FEATURE_LIST_SCHEMA,
   occurrence_conditions: FEATURE_LIST_SCHEMA,
@@ -22791,7 +22799,7 @@ function classify(error2) {
 }
 function runtimeStatePathsOf(environment) {
   const pluginData = environment[PLUGIN_DATA_ENV];
-  if (pluginData === void 0 || !isAbsolute4(pluginData)) {
+  if (pluginData === void 0 || !isAbsolute5(pluginData)) {
     return void 0;
   }
   return { pluginData };
@@ -22836,7 +22844,9 @@ async function serveAuthenticated(request, options, tool, work) {
       // answers confidently about the wrong Project, which is worse than
       // saying nothing. The same value goes to Project detection and to
       // Environment capture, so the two cannot describe different places.
-      projectDir: claim.currentDirectory
+      projectDir: claim.currentDirectory,
+      // The same validated directory the claim above was made against.
+      pluginData: paths.pluginData
     });
   } catch (error2) {
     return { kind: "ERROR", code: classify(error2) };
@@ -22946,12 +22956,13 @@ async function handleStartProblem(request, options, args) {
 }
 async function handleRecallSimilarExperience(request, options, input) {
   return serveAuthenticated(request, options, RECALL_SIMILAR_EXPERIENCE_TOOL, async (call) => {
-    const paths = runtimeStatePathsOf(options.environment);
     const outcome = await recallSimilarExperience({
       client: call.client,
       bindingStore: call.bindingStore,
       fingerprintStore: createRecallFingerprintStore({
-        directory: join4(paths?.pluginData ?? "", RECALL_FINGERPRINT_DIRECTORY)
+        // The call's own validated directory, not a second reading of the
+        // environment. See `AuthenticatedCall.pluginData`.
+        directory: join4(call.pluginData, RECALL_FINGERPRINT_DIRECTORY)
       }),
       sessionId: call.sessionId,
       projectDir: call.projectDir,
@@ -23039,8 +23050,8 @@ function buildMemoryMcpServer(options) {
     {
       description: "Look up what past problem-solving has already learned that bears on the problem this session is working on. Describe your current understanding in your own words: short search terms, a fuller description, and the structural features you would compare against. Which project and problem this attaches to come from the host, never from you. Summarize \u2014 do not paste credentials, raw terminal or command output, or absolute paths from this machine. Reports how the lookup went, not what it found.",
       inputSchema: object({
-        lexical_text: string2().trim().min(1).max(MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH),
-        semantic_text: string2().trim().min(1).max(MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH),
+        lexical_text: boundedNonBlank(MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH),
+        semantic_text: boundedNonBlank(MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH),
         current_features: RECALL_FEATURES_SCHEMA
       }).strict(),
       outputSchema: RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA
