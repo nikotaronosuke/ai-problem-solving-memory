@@ -897,13 +897,22 @@ describe('the Claude adapter', () => {
     const code = codeOnly(server?.source ?? '');
     const declared = codeOnly(constants?.source ?? '');
 
-    for (const tool of ['current_problem', 'continue_problem', 'resume_problem', 'start_problem']) {
+    for (const tool of [
+      'current_problem',
+      'continue_problem',
+      'resume_problem',
+      'start_problem',
+      // The fifth is the first that is not about which Problem this session is
+      // on. It is still named for a goal — look up what is already known — and
+      // not for the call underneath it.
+      'recall_similar_experience',
+    ]) {
       expect(`the runtime declares ${tool}:${declared.includes(tool)}`).toBe(
         `the runtime declares ${tool}:true`,
       );
     }
     expect(`tools registered:${(code.match(/server\.registerTool\(/gu) ?? []).length}`).toBe(
-      'tools registered:4',
+      'tools registered:5',
     );
 
     // No plumbing. A surface made of steps would ask the model to assemble a
@@ -1058,7 +1067,11 @@ describe('the Claude adapter', () => {
 
   it('reaches the Memory only through the common client', async () => {
     for (const { path, source } of await sourcesOf('claude-code-adapter')) {
-      for (const specifier of importsOf(source)) {
+      // Read from the code rather than the whole file. Prose explaining a
+      // design routinely contains the words `from "one thing"`, and a guard
+      // that reported those as forbidden imports would train somebody to work
+      // around it — which is how a guard stops being read at all.
+      for (const specifier of importsOf(codeOnly(source))) {
         // A relative specifier is allowed only while it stays inside this
         // package. `../../../src/app/index.js` is relative too, and it is the
         // exact violation this guard exists for: an adapter that imports an
@@ -1087,25 +1100,44 @@ describe('the Claude adapter, still', () => {
 
     // The adapter returns the client it built, so `search()` reached it for free
     // the moment the client grew one. What it must not have grown is *policy*:
-    // when to search, how to present a result. Each of those is a later task
-    // with its own decisions, and doing any of them here would settle them by
-    // accident.
+    // when to search, how to present a result.
+    //
+    // One module now searches, and it is named here rather than the rule being
+    // relaxed. What it composes is deterministic: which Problem, whether that
+    // Problem may be read, and whether this exact question was already asked.
+    // *When* to ask is still not settled anywhere in this package — no trigger,
+    // no schedule, nothing watching a conversation — and `autoSearch` stays
+    // forbidden everywhere, this module included, because that decision belongs
+    // to a later task and would otherwise be made here by accident.
+    const RECALL = 'src/similar-experience-recall.ts';
+    expect(shipped.map((file) => file.path)).toContain(RECALL);
     for (const { path, source } of shipped) {
       const code = codeOnly(source);
-      for (const forbidden of ['.search(', 'autoSearch']) {
+      const forbids = path === RECALL ? ['autoSearch'] : ['.search(', 'autoSearch'];
+      for (const forbidden of forbids) {
         expect(`${path} does ${forbidden}:${code.includes(forbidden)}`).toBe(
           `${path} does ${forbidden}:false`,
         );
       }
     }
 
+    // And it searches once per call. A loop or a retry here would be this
+    // package deciding how hard to try, which is the Memory's own answer to
+    // give — a degraded provider is already reported as a status rather than
+    // as a failure worth repeating.
+    const recall = codeOnly(shipped.find((file) => file.path === RECALL)?.source ?? '');
+    expect(`searches issued per call:${(recall.match(/\.search\(/gu) ?? []).length}`).toBe(
+      'searches issued per call:1',
+    );
+
     // `source_ai` narrowed rather than dropped. Starting a Problem stamps this
-    // adapter's own name on it, which is the one module with a reason to say
-    // so; anywhere else the field would mean the package had started deciding
-    // what to call itself per call. The start module's own guard pins the value
-    // to the constant, so it cannot come from a caller even there.
+    // adapter's own name on it, and a search says which AI is asking so the
+    // Memory can weigh its own record; those are the two modules with a reason
+    // to say so. Anywhere else the field would mean the package had started
+    // deciding what to call itself per call. Both modules' own guards pin the
+    // value to the constant, so it cannot come from a caller in either.
     for (const { path, source } of shipped) {
-      if (path === 'src/problem-start.ts') {
+      if (path === 'src/problem-start.ts' || path === RECALL) {
         continue;
       }
       const code = codeOnly(source);
@@ -1179,14 +1211,28 @@ describe('the Claude adapter, still', () => {
     // store did not put it. So `sessionId` is narrowed to that module by name
     // and everything else — the filesystem, the hashing, the wire spelling —
     // stays forbidden there too.
+    // A second module now hashes, and it is named here for the same reason.
+    // What it computes is a digest of the question it is about to ask, so that
+    // the same question is not asked twice; it never touches a file, and where
+    // that digest is kept is somebody else's decision entirely. So `createHash`
+    // is narrowed to it by name while the filesystem stays forbidden there —
+    // which is what keeps "hashes something" from becoming "keeps state".
+    //
+    // It takes a session identifier for the same reason the lifecycle module
+    // does: it passes one through to resolve which Problem this session is on.
     const LIFECYCLE = 'src/problem-lifecycle.ts';
+    const RECALL = 'src/similar-experience-recall.ts';
+    expect(shipped.map((file) => file.path)).toContain(RECALL);
     for (const { path, source } of shipped) {
       if (path === STORE) {
         continue;
       }
       const code = codeOnly(source);
       const owns = ['node:fs', 'writeFile', 'readFile', 'mkdir', 'session_id', 'createHash'];
-      for (const forbidden of path === LIFECYCLE ? owns : [...owns, 'sessionId']) {
+      const persistence = ['node:fs', 'writeFile', 'readFile', 'mkdir', 'session_id'];
+      const forbids =
+        path === LIFECYCLE ? owns : path === RECALL ? persistence : [...owns, 'sessionId'];
+      for (const forbidden of forbids) {
         expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
           `${path} reaches for ${forbidden}:false`,
         );

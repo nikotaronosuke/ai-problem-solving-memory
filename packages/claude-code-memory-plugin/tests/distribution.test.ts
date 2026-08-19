@@ -187,7 +187,7 @@ async function driveInstalledServer(requests: readonly unknown[]): Promise<{
 }
 
 describe('the server, run from the installed copy', () => {
-  it('starts, lists exactly the four tools, and resolves every import', async () => {
+  it('starts, lists exactly the published tools, and resolves every import', async () => {
     const { replies, stderr, nonProtocol } = await driveInstalledServer([
       {
         jsonrpc: '2.0',

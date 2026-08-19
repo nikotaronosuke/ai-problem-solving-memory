@@ -93,7 +93,7 @@ API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にありま�
 
 - `packages/claude-code-adapter` の Project 自動判定。git remote から Project 同一性を導き、確信が持てないときは推測せず候補と理由を返します
 
-まだないもの: 自動検索・Event の自動記録。
+まだないもの: 検索を AI が自分で呼ぶ判断の自動化・Event の自動記録。
 
 ## Claude Code へのインストール
 
@@ -104,7 +104,7 @@ claude plugin marketplace add nikotaronosuke/ai-problem-solving-memory
 claude plugin install problem-solving-memory@ai-problem-solving-memory
 ```
 
-インストール後、main session で次の 4 つが使えます。
+インストール後、main session で次の 5 つが使えます。
 
 | Tool               | 何をするか                                                   |
 | ------------------ | ------------------------------------------------------------ |
@@ -112,6 +112,16 @@ claude plugin install problem-solving-memory@ai-problem-solving-memory
 | `continue_problem` | すでに開いている Problem の続きに入る                        |
 | `resume_problem`   | 一時停止していた Problem を作業状態に戻す                    |
 | `start_problem`    | まだ開いていない困りごとを新しい Problem として始める        |
+| `recall_similar_experience` | いま取り組んでいる Problem について、過去の問題解決が何を知っているかを引く |
+
+前の 4 つが Problem への入口で、最後の 1 つは入ったあとに使うものです。どの Project・どの
+Problem を対象にするかは host の call context から決まり、model が指定することはできません。
+model が渡すのは、いま何が起きていると理解しているかを自分の言葉で書いたものだけです。
+
+`recall_similar_experience` は **AI が自分で呼ぶ tool** です。「似た経験がありそうだ」と判断して
+呼び出す仕組み自体はまだありません。今は明示的に依頼したときに呼ばれます。同じ Problem に
+ついて同じ内容を二度引いたときは検索せずその旨だけを返すので、繰り返し呼んでも Memory を
+無駄に読みません。
 
 必要なもの:
 
@@ -122,11 +132,11 @@ claude plugin install problem-solving-memory@ai-problem-solving-memory
 token は環境から渡すだけにしてください。commit してはいけません。credential の発行と失効は
 `docs/development.md` の Credentials を参照してください。
 
-Memory が設定されていない場合、4 つの tool はすべて `MEMORY_NOT_CONFIGURED` を返して止まります。
+Memory が設定されていない場合、5 つの tool はすべて `MEMORY_NOT_CONFIGURED` を返して止まります。
 壊れた状態で先に進むことはありません。
 
-現時点の plugin が持っているのは Problem の入口と継続だけです。自動検索も Event の自動記録も
-まだありません。
+現時点の plugin が持っているのは、Problem の入口と継続、そして明示的な過去経験の引き出しです。
+検索を AI が自分で呼ぶ判断の自動化と、Event の自動記録はまだありません。
 
 ## Development
 

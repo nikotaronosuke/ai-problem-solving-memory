@@ -34,7 +34,7 @@ async function manifest(): Promise<{ hooks: { PreToolUse: readonly HookEntry[] }
 }
 
 describe('the shipped hook manifest', () => {
-  it('matches the four tools by their exact names and nothing else', async () => {
+  it('matches every tool by its exact name and nothing else', async () => {
     const entries = (await manifest()).hooks.PreToolUse;
 
     expect(entries.map((entry) => entry.matcher)).toEqual(HOST_TOOL_NAMES);
@@ -57,7 +57,7 @@ describe('the shipped hook manifest', () => {
 
     for (const entry of entries) {
       expect(entry.hooks).toHaveLength(1);
-      // One implementation, so the four cannot come to disagree about what a
+      // One implementation, so the tools cannot come to disagree about what a
       // call context is.
       expect(entry.hooks[0]).toEqual({
         type: 'command',
