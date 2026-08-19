@@ -4,7 +4,7 @@
  * An installed plugin is a *copy* of this directory and nothing else: no
  * sibling workspace packages, no repository root, no `node_modules`, and no
  * install step the host would have to be trusted to run. So everything the
- * four tools execute has to already be inside the directory, which is what
+ * the tools execute has to already be inside the directory, which is what
  * this produces — two self-contained ES modules whose only unresolved imports
  * are Node's own built-ins.
  *

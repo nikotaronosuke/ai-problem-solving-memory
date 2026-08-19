@@ -90,6 +90,18 @@ export {
 } from './problem-resolution.js';
 
 export {
+  recallFingerprintOf,
+  recallSimilarExperience,
+  type RecallFingerprintRead,
+  type RecallFingerprintStore,
+  type RecallFingerprintWrite,
+  type RecallQuery,
+  type RecallQueryFeatures,
+  type RecallSimilarExperienceInput,
+  type RecallSimilarExperienceOutcome,
+} from './similar-experience-recall.js';
+
+export {
   continueProblem,
   ProblemLifecycleArgumentError,
   ProblemLifecycleInvariantError,

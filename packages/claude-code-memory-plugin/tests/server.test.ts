@@ -43,6 +43,7 @@ import {
   CURRENT_PROBLEM_OUTPUT_SCHEMA,
   handleContinueProblem,
   handleCurrentProblem,
+  handleRecallSimilarExperience,
   handleResumeProblem,
   handleStartProblem,
   RESUME_PROBLEM_OUTPUT_SCHEMA,
@@ -445,6 +446,24 @@ describe('a call context belongs to one operation', () => {
           symptoms: 's',
         },
       ),
+    recall_similar_experience: (req: unknown) =>
+      handleRecallSimilarExperience(
+        req,
+        { environment: environment(), now: () => NOW },
+        {
+          lexical_text: 'export empty file',
+          semantic_text: 'the scheduled export writes an empty file while reporting success',
+          current_features: {
+            problem_domain: null,
+            symptom_patterns: [],
+            suspected_boundaries: [],
+            occurrence_conditions: [],
+            successful_directions: [],
+            dead_end_directions: [],
+            environment_facts: [],
+          },
+        },
+      ),
   } as const;
 
   it.each([
@@ -452,6 +471,13 @@ describe('a call context belongs to one operation', () => {
     ['resume_problem', 'continue_problem'],
     ['current_problem', 'start_problem'],
     ['start_problem', 'current_problem'],
+    // The fifth is not a special case: a context minted to look something up
+    // must not authenticate an operation that changes a Problem, and one
+    // minted to change a Problem must not authenticate a lookup.
+    ['recall_similar_experience', 'start_problem'],
+    ['start_problem', 'recall_similar_experience'],
+    ['current_problem', 'recall_similar_experience'],
+    ['recall_similar_experience', 'current_problem'],
   ] as const)('refuses a %s context presented to %s', async (minted, presented) => {
     // The call identifier alone is not enough. A record says which operation it
     // was minted for, so a context for one tool cannot hand another tool a
@@ -689,7 +715,7 @@ describe('where the call is answered from', () => {
     expect(seen).toEqual([projectDir, elsewhere]);
   });
 
-  it('gives every one of the four the same one location', async () => {
+  it('gives every one of the tools the same one location', async () => {
     // One value feeds Project detection and Environment capture alike, so no
     // pair of them can describe different places.
     for (const [index, tool] of MEMORY_TOOLS.entries()) {

@@ -131,7 +131,7 @@ function isContinuable(status: ProblemStatus): status is ContinuableProblemStatu
  * and the transition, and the Memory would show a Problem that was never
  * resumed accumulating work.
  */
-function isWorking(status: ProblemStatus): boolean {
+export function isWorkingProblemStatus(status: ProblemStatus): boolean {
   return CURRENT_PROBLEM_STATUS_CLASS[status] === 'WORKING';
 }
 
@@ -274,7 +274,7 @@ async function resolveBinding(
     return undefined;
   }
 
-  return isWorking(problem.status) ? problem.problem_id : undefined;
+  return isWorkingProblemStatus(problem.status) ? problem.problem_id : undefined;
 }
 
 /**

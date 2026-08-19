@@ -110,7 +110,7 @@ function toolNamed(tools: readonly PublishedTool[], name: string): PublishedTool
 }
 
 describe('what the model is told these tools take', () => {
-  it('publishes the four, and no others', async () => {
+  it('publishes exactly the declared tools, and no others', async () => {
     const tools = await publishedTools();
 
     expect(tools.map((tool) => tool.name)).toEqual([...MEMORY_TOOLS]);

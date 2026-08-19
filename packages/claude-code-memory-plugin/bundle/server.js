@@ -12,7 +12,7 @@ var __export = (target, all) => {
 
 // src/server.ts
 import { realpathSync } from "node:fs";
-import { isAbsolute as isAbsolute4, join as join3 } from "node:path";
+import { isAbsolute as isAbsolute4, join as join4 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ../memory-api-client/src/config.ts
@@ -1634,7 +1634,7 @@ function isContinuable(status) {
       return false;
   }
 }
-function isWorking(status) {
+function isWorkingProblemStatus(status) {
   return CURRENT_PROBLEM_STATUS_CLASS[status] === "WORKING";
 }
 var CONTINUABLE_PROBLEM_STATUSES = Object.keys(CURRENT_PROBLEM_STATUS_CLASS).filter(isContinuable);
@@ -1664,7 +1664,7 @@ async function resolveBinding(client, projectId, binding) {
   if (problem.project_id !== projectId) {
     return void 0;
   }
-  return isWorking(problem.status) ? problem.problem_id : void 0;
+  return isWorkingProblemStatus(problem.status) ? problem.problem_id : void 0;
 }
 async function resolveCurrentProblem(client, projectId, binding) {
   if (binding !== void 0) {
@@ -1679,6 +1679,9 @@ async function resolveCurrentProblem(client, projectId, binding) {
   );
   return candidates.length === 0 ? { kind: "NONE" } : { kind: "CANDIDATES", candidates };
 }
+
+// ../claude-code-adapter/src/similar-experience-recall.ts
+import { createHash as createHash2 } from "node:crypto";
 
 // ../claude-code-adapter/src/problem-lifecycle.ts
 var RESUME_PROBLEM_TARGET_STATUSES = [
@@ -1801,6 +1804,116 @@ async function startNewProblem(client, store, sessionId, input, expectedCandidat
     status: started.status,
     continuity: await bind(store, sessionId, input.projectId, started.problemId)
   };
+}
+
+// ../claude-code-adapter/src/similar-experience-recall.ts
+function recallFingerprintOf(problemId, problemVersion, request, digest) {
+  const features = request.current_features;
+  const canonical = JSON.stringify([
+    "recall-fingerprint/1",
+    problemId,
+    problemVersion,
+    request.source_ai,
+    request.lexical_text,
+    request.semantic_text,
+    [
+      features.schema_version,
+      features.problem_domain,
+      features.symptom_patterns,
+      features.suspected_boundaries,
+      features.occurrence_conditions,
+      features.successful_directions,
+      features.dead_end_directions,
+      features.environment_facts
+    ]
+  ]);
+  return digest(canonical);
+}
+function requestOf(query) {
+  return {
+    // Neither of these is the model's to choose. One says which assistant is
+    // asking, and the other which vocabulary the features are written in.
+    source_ai: CLAUDE_CODE_SOURCE_AI,
+    lexical_text: query.lexicalText,
+    semantic_text: query.semanticText,
+    current_features: {
+      schema_version: MEMORY_SEARCH_STRUCTURAL_FEATURE_SCHEMA_VERSION,
+      problem_domain: query.features.problemDomain,
+      symptom_patterns: query.features.symptomPatterns,
+      suspected_boundaries: query.features.suspectedBoundaries,
+      occurrence_conditions: query.features.occurrenceConditions,
+      successful_directions: query.features.successfulDirections,
+      dead_end_directions: query.features.deadEndDirections,
+      environment_facts: query.features.environmentFacts
+    }
+  };
+}
+async function freshWorkingProblem(client, projectId, problemId) {
+  const problem = await client.getProblem(problemId);
+  return problem.project_id === projectId && isWorkingProblemStatus(problem.status) ? problem : void 0;
+}
+async function recallSimilarExperience(input) {
+  const client = input.client;
+  const digest = input.digest ?? defaultDigest;
+  const signals = await detectProjectSignals({
+    projectDir: input.projectDir,
+    ...input.runGit === void 0 ? {} : { runGit: input.runGit }
+  });
+  const project = await resolveProject(client, signals);
+  if (project.kind !== "RESOLVED") {
+    return { kind: "NO_CURRENT_PROBLEM" };
+  }
+  const resolution = await resolveProblemForSession(
+    client,
+    input.bindingStore,
+    input.sessionId,
+    project.projectId
+  );
+  if (resolution.kind !== "RESOLVED") {
+    return { kind: "NO_CURRENT_PROBLEM" };
+  }
+  let problem;
+  try {
+    problem = await freshWorkingProblem(client, project.projectId, resolution.problemId);
+  } catch (error2) {
+    if (isProblemNotFound(error2)) {
+      return { kind: "CURRENT_PROBLEM_NOT_AVAILABLE" };
+    }
+    throw error2;
+  }
+  if (problem === void 0) {
+    return { kind: "NO_CURRENT_PROBLEM" };
+  }
+  const request = requestOf(input.query);
+  const fingerprint = recallFingerprintOf(problem.problem_id, problem.version, request, digest);
+  const remembered = await input.fingerprintStore.readFingerprint(problem.problem_id);
+  if (remembered.kind === "FOUND" && remembered.fingerprint === fingerprint) {
+    return { kind: "ALREADY_RECALLED" };
+  }
+  const outcome = await client.search(problem.problem_id, request);
+  switch (outcome.kind) {
+    case "SEARCHED":
+      await input.fingerprintStore.writeFingerprint(problem.problem_id, fingerprint);
+      return {
+        kind: "RECALLED",
+        candidateCount: outcome.candidates.length,
+        semanticStatus: outcome.semantic_status,
+        structuralStatus: outcome.structural_status
+      };
+    case "MEMORY_READ_DISABLED":
+      await input.fingerprintStore.writeFingerprint(problem.problem_id, fingerprint);
+      return { kind: "MEMORY_READ_DISABLED" };
+    case "CURRENT_SOURCE_CHANGED":
+      return { kind: "CURRENT_SOURCE_CHANGED" };
+    case "CURRENT_PROBLEM_NOT_AVAILABLE":
+      return { kind: "CURRENT_PROBLEM_NOT_AVAILABLE" };
+  }
+}
+function defaultDigest(canonical) {
+  return createHash2("sha256").update(canonical, "utf8").digest("hex");
+}
+function isProblemNotFound(error2) {
+  return error2 instanceof MemoryApiError && error2.status === 404 && error2.code === "NOT_FOUND";
 }
 
 // ../../node_modules/@modelcontextprotocol/server/dist/chunk-Br0eD_fh.mjs
@@ -22065,6 +22178,121 @@ function toError(value) {
   return value instanceof Error ? value : new Error(String(value));
 }
 
+// src/recall-fingerprint-store.ts
+import { mkdir as mkdir2, open as open2, readFile as readFile2, rename as rename2, stat, unlink as unlink2 } from "node:fs/promises";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import { join as join2 } from "node:path";
+
+// src/runtime-constants.ts
+var PLUGIN_NAME = "problem-solving-memory";
+var MCP_SERVER_KEY = "memory";
+var CURRENT_PROBLEM_TOOL = "current_problem";
+var CONTINUE_PROBLEM_TOOL = "continue_problem";
+var RESUME_PROBLEM_TOOL = "resume_problem";
+var START_PROBLEM_TOOL = "start_problem";
+var RECALL_SIMILAR_EXPERIENCE_TOOL = "recall_similar_experience";
+var MEMORY_TOOLS = [
+  CURRENT_PROBLEM_TOOL,
+  CONTINUE_PROBLEM_TOOL,
+  RESUME_PROBLEM_TOOL,
+  START_PROBLEM_TOOL,
+  RECALL_SIMILAR_EXPERIENCE_TOOL
+];
+function hostToolName(tool) {
+  return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
+}
+var HOST_TOOL_NAMES = MEMORY_TOOLS.map(hostToolName);
+var PLUGIN_DATA_ENV = "MEMORY_CLAUDE_PLUGIN_DATA";
+var BINDINGS_DIRECTORY = "bindings";
+var CALL_CONTEXT_DIRECTORY = "call-context";
+var RECALL_FINGERPRINT_DIRECTORY = "recall-fingerprints";
+var CALL_CONTEXT_FORMAT_VERSION = 2;
+var CALL_CONTEXT_FIELDS = [
+  "format_version",
+  "session_id",
+  "tool_name",
+  "current_directory",
+  "minted_at"
+];
+var PENDING_PREFIX = "pending-";
+var RECORD_SUFFIX = ".json";
+var CLAIM_MARKER_PREFIX = "claim-";
+var CLAIM_MARKER_SUFFIX = ".lock";
+var CALL_CONTEXT_MAX_AGE_MS = 60 * 60 * 1e3;
+var CALL_CONTEXT_MAX_BYTES = 4096;
+
+// src/recall-fingerprint-store.ts
+var RECALL_FINGERPRINT_FORMAT_VERSION = 1;
+var RECALL_FINGERPRINT_FIELDS = ["format_version", "fingerprint"];
+var RECALL_FINGERPRINT_MAX_BYTES = 512;
+var DIGEST = /^[0-9a-f]{64}$/u;
+function recallFingerprintFilename(problemId) {
+  const key = createHash3("sha256").update(`recall-fingerprint/${problemId}`, "utf8").digest("hex");
+  return `recall-${key}.json`;
+}
+function isRecord4(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record2 = value;
+  const keys = Object.keys(record2);
+  if (keys.length !== RECALL_FINGERPRINT_FIELDS.length) {
+    return false;
+  }
+  for (const field of RECALL_FINGERPRINT_FIELDS) {
+    if (!(field in record2)) {
+      return false;
+    }
+  }
+  return record2["format_version"] === RECALL_FINGERPRINT_FORMAT_VERSION && typeof record2["fingerprint"] === "string" && DIGEST.test(record2["fingerprint"]);
+}
+function createRecallFingerprintStore(options) {
+  const pathFor = (problemId) => join2(options.directory, recallFingerprintFilename(problemId));
+  return {
+    async readFingerprint(problemId) {
+      const path = pathFor(problemId);
+      try {
+        const entry = await stat(path);
+        if (!entry.isFile() || entry.size > RECALL_FINGERPRINT_MAX_BYTES) {
+          return { kind: "UNAVAILABLE" };
+        }
+        const parsed = JSON.parse(await readFile2(path, "utf8"));
+        return isRecord4(parsed) ? { kind: "FOUND", fingerprint: parsed.fingerprint } : { kind: "UNAVAILABLE" };
+      } catch (error2) {
+        return isMissing(error2) ? { kind: "MISSING" } : { kind: "UNAVAILABLE" };
+      }
+    },
+    async writeFingerprint(problemId, fingerprint) {
+      if (!DIGEST.test(fingerprint)) {
+        return { kind: "NOT_PERSISTED" };
+      }
+      const path = pathFor(problemId);
+      const temporary = `${path}.${randomUUID2()}.tmp`;
+      const body = JSON.stringify({
+        format_version: RECALL_FINGERPRINT_FORMAT_VERSION,
+        fingerprint
+      });
+      try {
+        await mkdir2(options.directory, { recursive: true });
+        const handle = await open2(temporary, "wx", 384);
+        try {
+          await handle.writeFile(body, "utf8");
+        } finally {
+          await handle.close();
+        }
+        await rename2(temporary, path);
+        return { kind: "PERSISTED" };
+      } catch {
+        await unlink2(temporary).catch(() => void 0);
+        return { kind: "NOT_PERSISTED" };
+      }
+    }
+  };
+}
+function isMissing(error2) {
+  return typeof error2 === "object" && error2 !== null && error2.code === "ENOENT";
+}
+
 // src/project-decision.ts
 function choiceOf(decision) {
   switch (decision.kind) {
@@ -22206,46 +22434,9 @@ async function currentProblem(input) {
 }
 
 // src/host-call-context.ts
-import { createHash as createHash2 } from "node:crypto";
-import { mkdir as mkdir2, open as open2, readdir, readFile as readFile2, stat, unlink as unlink2 } from "node:fs/promises";
-import { isAbsolute as isAbsolute3, join as join2 } from "node:path";
-
-// src/runtime-constants.ts
-var PLUGIN_NAME = "problem-solving-memory";
-var MCP_SERVER_KEY = "memory";
-var CURRENT_PROBLEM_TOOL = "current_problem";
-var CONTINUE_PROBLEM_TOOL = "continue_problem";
-var RESUME_PROBLEM_TOOL = "resume_problem";
-var START_PROBLEM_TOOL = "start_problem";
-var MEMORY_TOOLS = [
-  CURRENT_PROBLEM_TOOL,
-  CONTINUE_PROBLEM_TOOL,
-  RESUME_PROBLEM_TOOL,
-  START_PROBLEM_TOOL
-];
-function hostToolName(tool) {
-  return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
-}
-var HOST_TOOL_NAMES = MEMORY_TOOLS.map(hostToolName);
-var PLUGIN_DATA_ENV = "MEMORY_CLAUDE_PLUGIN_DATA";
-var BINDINGS_DIRECTORY = "bindings";
-var CALL_CONTEXT_DIRECTORY = "call-context";
-var CALL_CONTEXT_FORMAT_VERSION = 2;
-var CALL_CONTEXT_FIELDS = [
-  "format_version",
-  "session_id",
-  "tool_name",
-  "current_directory",
-  "minted_at"
-];
-var PENDING_PREFIX = "pending-";
-var RECORD_SUFFIX = ".json";
-var CLAIM_MARKER_PREFIX = "claim-";
-var CLAIM_MARKER_SUFFIX = ".lock";
-var CALL_CONTEXT_MAX_AGE_MS = 60 * 60 * 1e3;
-var CALL_CONTEXT_MAX_BYTES = 4096;
-
-// src/host-call-context.ts
+import { createHash as createHash4 } from "node:crypto";
+import { mkdir as mkdir3, open as open3, readdir, readFile as readFile3, stat as stat2, unlink as unlink3 } from "node:fs/promises";
+import { isAbsolute as isAbsolute3, join as join3 } from "node:path";
 var HOST_CALL_ID_META_KEY = "claudecode/toolUseId";
 function isNonBlank2(value) {
   return typeof value === "string" && /\S/.test(value);
@@ -22265,11 +22456,11 @@ function hostCallIdOf(request) {
   return isNonBlank2(value) ? value : void 0;
 }
 function callContextFilename(hostCallId, prefix = PENDING_PREFIX) {
-  const digest = createHash2("sha256").update(hostCallId, "utf8").digest("hex");
+  const digest = createHash4("sha256").update(hostCallId, "utf8").digest("hex");
   return `${prefix}${digest}${RECORD_SUFFIX}`;
 }
 function claimMarkerFilename(hostCallId) {
-  const digest = createHash2("sha256").update(hostCallId, "utf8").digest("hex");
+  const digest = createHash4("sha256").update(hostCallId, "utf8").digest("hex");
   return `${CLAIM_MARKER_PREFIX}${digest}${CLAIM_MARKER_SUFFIX}`;
 }
 var OWNED_FILENAME = /^(?:pending-[0-9a-f]{64}\.json|claim-[0-9a-f]{64}\.lock|claimed-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json)$/u;
@@ -22303,20 +22494,20 @@ function isExpired(context, now) {
   return context.minted_at > now || now - context.minted_at > CALL_CONTEXT_MAX_AGE_MS;
 }
 async function claimCallContext(options) {
-  const pending = join2(options.directory, callContextFilename(options.hostCallId));
-  const marker = join2(options.directory, claimMarkerFilename(options.hostCallId));
+  const pending = join3(options.directory, callContextFilename(options.hostCallId));
+  const marker = join3(options.directory, claimMarkerFilename(options.hostCallId));
   try {
-    const handle = await open2(marker, "wx", 384);
+    const handle = await open3(marker, "wx", 384);
     await handle.close();
   } catch {
     return { kind: "UNAVAILABLE" };
   }
   try {
-    const description = await stat(pending);
+    const description = await stat2(pending);
     if (!description.isFile() || description.size > CALL_CONTEXT_MAX_BYTES) {
       return { kind: "UNAVAILABLE" };
     }
-    const parsed = JSON.parse(await readFile2(pending, "utf8"));
+    const parsed = JSON.parse(await readFile3(pending, "utf8"));
     if (!isHostCallContext(parsed)) {
       return { kind: "UNAVAILABLE" };
     }
@@ -22334,7 +22525,7 @@ async function claimCallContext(options) {
   } catch {
     return { kind: "UNAVAILABLE" };
   } finally {
-    await unlink2(pending).catch(() => void 0);
+    await unlink3(pending).catch(() => void 0);
   }
 }
 async function sweepCallContexts(options) {
@@ -22348,10 +22539,10 @@ async function sweepCallContexts(options) {
     if (!isOwnedCallContextFilename(entry)) {
       continue;
     }
-    const path = join2(options.directory, entry);
+    const path = join3(options.directory, entry);
     let description;
     try {
-      description = await stat(path);
+      description = await stat2(path);
     } catch {
       continue;
     }
@@ -22362,7 +22553,7 @@ async function sweepCallContexts(options) {
     if (age <= CALL_CONTEXT_MAX_AGE_MS) {
       continue;
     }
-    await unlink2(path).catch(() => void 0);
+    await unlink3(path).catch(() => void 0);
   }
 }
 
@@ -22455,6 +22646,17 @@ var PROJECT_DECISION_SCHEMA = discriminatedUnion("kind", [
   object({ kind: literal("REPOSITORY_BOUNDARY"), repo_subpath: string2().min(1) }).strict(),
   object({ kind: literal("REGISTER_WITHOUT_REPOSITORY") }).strict()
 ]);
+var FEATURE_ENTRY_SCHEMA = string2().trim().min(1).max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH);
+var FEATURE_LIST_SCHEMA = array(FEATURE_ENTRY_SCHEMA).max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_ITEMS);
+var RECALL_FEATURES_SCHEMA = object({
+  problem_domain: string2().trim().min(1).max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH).nullable(),
+  symptom_patterns: FEATURE_LIST_SCHEMA,
+  suspected_boundaries: FEATURE_LIST_SCHEMA,
+  occurrence_conditions: FEATURE_LIST_SCHEMA,
+  successful_directions: FEATURE_LIST_SCHEMA,
+  dead_end_directions: FEATURE_LIST_SCHEMA,
+  environment_facts: FEATURE_LIST_SCHEMA
+}).strict();
 var RUNTIME_ERROR_CODES = [
   "HOST_CONTEXT_UNAVAILABLE",
   "MEMORY_NOT_CONFIGURED",
@@ -22549,6 +22751,24 @@ var START_PROBLEM_OUTPUT_SCHEMA = discriminatedUnion("kind", [
   PROJECT_SELECTION_STALE_VARIANT,
   ERROR_VARIANT
 ]);
+var RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA = discriminatedUnion("kind", [
+  object({
+    kind: literal("RECALLED"),
+    candidate_count: number2().int().nonnegative(),
+    semantic_status: _enum(MEMORY_SEARCH_SEMANTIC_STATUSES),
+    structural_status: _enum(MEMORY_SEARCH_STRUCTURAL_STATUSES)
+  }).strict(),
+  // The same question about the same Problem, already asked and answered.
+  object({ kind: literal("ALREADY_RECALLED") }).strict(),
+  // Nothing authoritative to attach a search to. Deliberately one answer for
+  // every reason: a recall does not ask Project or Problem questions, and
+  // listing candidates here would be `current_problem`'s job done badly.
+  object({ kind: literal("NO_CURRENT_PROBLEM") }).strict(),
+  object({ kind: literal("MEMORY_READ_DISABLED") }).strict(),
+  object({ kind: literal("CURRENT_SOURCE_CHANGED") }).strict(),
+  object({ kind: literal("CURRENT_PROBLEM_NOT_AVAILABLE") }).strict(),
+  ERROR_VARIANT
+]);
 function classify(error2) {
   if (error2 instanceof MissingMemoryCredentialError) {
     return "MEMORY_NOT_CONFIGURED";
@@ -22594,7 +22814,7 @@ async function serveAuthenticated(request, options, tool, work) {
     return { kind: "ERROR", code: "HOST_CONTEXT_UNAVAILABLE" };
   }
   const claim = await claimCallContext({
-    directory: join3(paths.pluginData, CALL_CONTEXT_DIRECTORY),
+    directory: join4(paths.pluginData, CALL_CONTEXT_DIRECTORY),
     hostCallId,
     toolName: hostToolName(tool),
     now: options.now()
@@ -22605,7 +22825,7 @@ async function serveAuthenticated(request, options, tool, work) {
   try {
     const client = createClaudeCodeMemoryClient(options.environment);
     const bindingStore = createProblemBindingStore({
-      directory: join3(paths.pluginData, BINDINGS_DIRECTORY)
+      directory: join4(paths.pluginData, BINDINGS_DIRECTORY)
     });
     return await work({
       client,
@@ -22724,6 +22944,39 @@ async function handleStartProblem(request, options, args) {
       return outcome;
   }
 }
+async function handleRecallSimilarExperience(request, options, input) {
+  return serveAuthenticated(request, options, RECALL_SIMILAR_EXPERIENCE_TOOL, async (call) => {
+    const paths = runtimeStatePathsOf(options.environment);
+    const outcome = await recallSimilarExperience({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      fingerprintStore: createRecallFingerprintStore({
+        directory: join4(paths?.pluginData ?? "", RECALL_FINGERPRINT_DIRECTORY)
+      }),
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      query: {
+        lexicalText: input.lexical_text,
+        semanticText: input.semantic_text,
+        features: {
+          problemDomain: input.current_features.problem_domain,
+          symptomPatterns: input.current_features.symptom_patterns,
+          suspectedBoundaries: input.current_features.suspected_boundaries,
+          occurrenceConditions: input.current_features.occurrence_conditions,
+          successfulDirections: input.current_features.successful_directions,
+          deadEndDirections: input.current_features.dead_end_directions,
+          environmentFacts: input.current_features.environment_facts
+        }
+      }
+    });
+    return outcome.kind === "RECALLED" ? {
+      kind: "RECALLED",
+      candidate_count: outcome.candidateCount,
+      semantic_status: outcome.semanticStatus,
+      structural_status: outcome.structuralStatus
+    } : { kind: outcome.kind };
+  });
+}
 function buildMemoryMcpServer(options) {
   const server = new McpServer({ name: "memory", version: "0.0.0" });
   server.registerTool(
@@ -22781,13 +23034,29 @@ function buildMemoryMcpServer(options) {
     },
     async (args, extra) => resultOf(await handleStartProblem(extra?.mcpReq, options, args))
   );
+  server.registerTool(
+    RECALL_SIMILAR_EXPERIENCE_TOOL,
+    {
+      description: "Look up what past problem-solving has already learned that bears on the problem this session is working on. Describe your current understanding in your own words: short search terms, a fuller description, and the structural features you would compare against. Which project and problem this attaches to come from the host, never from you. Summarize \u2014 do not paste credentials, raw terminal or command output, or absolute paths from this machine. Reports how the lookup went, not what it found.",
+      inputSchema: object({
+        lexical_text: string2().trim().min(1).max(MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH),
+        semantic_text: string2().trim().min(1).max(MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH),
+        current_features: RECALL_FEATURES_SCHEMA
+      }).strict(),
+      outputSchema: RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA
+      // Deliberately no `readOnlyHint`. A search is a read of the Memory, but
+      // the server records that it happened, and telling a client otherwise
+      // would be a lie it might act on.
+    },
+    async (args, extra) => resultOf(await handleRecallSimilarExperience(extra?.mcpReq, options, args))
+  );
   return server;
 }
 async function main() {
   const paths = runtimeStatePathsOf(process.env);
   if (paths !== void 0) {
     await sweepCallContexts({
-      directory: join3(paths.pluginData, CALL_CONTEXT_DIRECTORY),
+      directory: join4(paths.pluginData, CALL_CONTEXT_DIRECTORY),
       now: Date.now()
     }).catch(() => void 0);
   }
@@ -22810,6 +23079,7 @@ if (isEntrypoint()) {
 export {
   CONTINUE_PROBLEM_OUTPUT_SCHEMA,
   CURRENT_PROBLEM_OUTPUT_SCHEMA,
+  RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA,
   RESUME_PROBLEM_OUTPUT_SCHEMA,
   RUNTIME_ERROR_CODES,
   START_PROBLEM_OUTPUT_SCHEMA,
@@ -22817,6 +23087,7 @@ export {
   classify,
   handleContinueProblem,
   handleCurrentProblem,
+  handleRecallSimilarExperience,
   handleResumeProblem,
   handleStartProblem,
   resultOf,

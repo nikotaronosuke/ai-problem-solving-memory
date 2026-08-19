@@ -22,11 +22,13 @@ var CURRENT_PROBLEM_TOOL = "current_problem";
 var CONTINUE_PROBLEM_TOOL = "continue_problem";
 var RESUME_PROBLEM_TOOL = "resume_problem";
 var START_PROBLEM_TOOL = "start_problem";
+var RECALL_SIMILAR_EXPERIENCE_TOOL = "recall_similar_experience";
 var MEMORY_TOOLS = [
   CURRENT_PROBLEM_TOOL,
   CONTINUE_PROBLEM_TOOL,
   RESUME_PROBLEM_TOOL,
-  START_PROBLEM_TOOL
+  START_PROBLEM_TOOL,
+  RECALL_SIMILAR_EXPERIENCE_TOOL
 ];
 function hostToolName(tool) {
   return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
