@@ -732,27 +732,128 @@ describe('the Claude adapter', () => {
     );
   });
 
-  it('offers exactly one Memory tool, and no input for the model to fill', async () => {
+  it('offers exactly four Memory tools, named for goals rather than for calls', async () => {
     const shipped = await sourcesOf('claude-code-memory-plugin');
+    const constants = shipped.find((file) => file.path === 'src/runtime-constants.ts');
     const server = shipped.find((file) => file.path === 'src/server.ts');
     const code = codeOnly(server?.source ?? '');
+    const declared = codeOnly(constants?.source ?? '');
 
-    expect(code).toContain('inputSchema: z.object({}).strict()');
-    // The operations that act on an answer arrive with their own task, and so
-    // do the inputs they need. A field added now would be a guess about a call
-    // nobody makes. `readOnlyHint` is absent deliberately: the deterministic
-    // path can register a Project, which is a durable write.
+    for (const tool of ['current_problem', 'continue_problem', 'resume_problem', 'start_problem']) {
+      expect(`the runtime declares ${tool}:${declared.includes(tool)}`).toBe(
+        `the runtime declares ${tool}:true`,
+      );
+    }
+    expect(`tools registered:${(code.match(/server\.registerTool\(/gu) ?? []).length}`).toBe(
+      'tools registered:4',
+    );
+
+    // No plumbing. A surface made of steps would ask the model to assemble a
+    // lifecycle out of API calls, which is the thing every rule in the adapter
+    // exists to keep it from doing.
     for (const absent of [
-      'continue_problem',
-      'resume_problem',
-      'start_problem',
-      'project_decision',
+      'resolve_project',
+      'register_project',
+      'select_project',
+      'create_environment',
+      'create_problem',
+      'transition_problem_status',
+      'list_problems',
+      'get_problem',
+      // Absent deliberately: the deterministic path can register a Project,
+      // which is a durable write, so no tool may claim to be read-only.
       'readOnlyHint',
     ]) {
       expect(`the runtime declares ${absent}:${code.includes(absent)}`).toBe(
         `the runtime declares ${absent}:false`,
       );
     }
+  });
+
+  it('lets one operation answer Project questions, and the rest only confirm', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const server = codeOnly(shipped.find((file) => file.path === 'src/server.ts')?.source ?? '');
+    const actions = codeOnly(
+      shipped.find((file) => file.path === 'src/problem-actions.ts')?.source ?? '',
+    );
+
+    // Deciding a Project should exist is a conversation, and a tool that
+    // changes a Problem is not where somebody is having it. So registration
+    // lives in exactly one place and the three mutations only ever confirm an
+    // identity they were handed.
+    for (const forbidden of ['registerProject', 'ProjectRegistrationChoice', 'project_decision']) {
+      expect(`the actions reach for ${forbidden}:${actions.includes(forbidden)}`).toBe(
+        `the actions reach for ${forbidden}:false`,
+      );
+    }
+    expect(actions).toContain('selectSuppliedProject');
+
+    // And only the asking operation accepts an answer.
+    expect(server).toContain('project_decision: PROJECT_DECISION_SCHEMA.optional()');
+    expect(`decision inputs declared:${(server.match(/project_decision/gu) ?? []).length}`).toBe(
+      'decision inputs declared:2',
+    );
+  });
+
+  it('accepts no Project material a caller could invent', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const server = codeOnly(shipped.find((file) => file.path === 'src/server.ts')?.source ?? '');
+    const opens = server.indexOf('const PROJECT_DECISION_SCHEMA');
+    const schema = server.slice(opens, server.indexOf(']);', opens));
+
+    // Asserted as the whole field set rather than by searching for words, so a
+    // field added later has to appear here. A repository, a remote, a name, a
+    // platform or a path from this machine are all things the detector
+    // observes; a caller supplying one would be describing somebody's machine
+    // from memory.
+    const fields = [...schema.matchAll(/([a-z_]+):/gu)].map((match) => match[1]);
+    expect([...new Set(fields)].sort()).toEqual(['kind', 'project_id', 'repo_subpath']);
+  });
+
+  it('takes nothing from a caller that the host or the adapter owns', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const server = codeOnly(shipped.find((file) => file.path === 'src/server.ts')?.source ?? '');
+    const inputs = server
+      .split('inputSchema:')
+      .slice(1)
+      .map((part) => part.slice(0, part.indexOf('outputSchema:')))
+      .join('\n');
+
+    // The session, the Project root, the provenance, the concurrency token and
+    // the local note are each owned somewhere a caller cannot see. A field for
+    // any of them would be a way to say something untrue about this machine.
+    for (const forbidden of [
+      'session',
+      'projectDir',
+      'project_dir',
+      'source_ai',
+      'changed_by',
+      'expected_version',
+      'environment_id',
+      'binding',
+      '_meta',
+      'tool_use_id',
+      '_memory_host_proof',
+    ]) {
+      expect(`a tool accepts ${forbidden}:${inputs.includes(forbidden)}`).toBe(
+        `a tool accepts ${forbidden}:false`,
+      );
+    }
+  });
+
+  it('mints host identity for exactly the four tools', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const hook = codeOnly(
+      shipped.find((file) => file.path === 'src/pre-tool-use.ts')?.source ?? '',
+    );
+
+    // The list is the gate. A matcher is configuration and can be widened by
+    // accident; this decides whether a session identity is created at all.
+    expect(hook).toContain('HOST_TOOL_NAMES.includes(toolName)');
+    // And the record names the operation it was minted for, so one tool's
+    // context cannot authenticate another's call.
+    expect(hook).toContain('toolName,');
+    expect(hook.includes('updatedInput')).toBe(false);
   });
 
   it('has no MCP dependency yet, because it has no protocol code yet', async () => {

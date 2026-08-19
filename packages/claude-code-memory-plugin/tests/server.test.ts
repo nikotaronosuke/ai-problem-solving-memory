@@ -31,17 +31,26 @@ import { callContextFilename } from '../src/host-call-context.js';
 import {
   CALL_CONTEXT_DIRECTORY,
   CURRENT_PROBLEM_TOOL,
-  HOST_TOOL_NAME,
+  hostToolName,
+  MEMORY_TOOLS,
   PLUGIN_DATA_ENV,
   PROJECT_DIR_ENV,
+  type MemoryTool,
 } from '../src/runtime-constants.js';
 import {
   buildMemoryMcpServer,
   classify,
+  CONTINUE_PROBLEM_OUTPUT_SCHEMA,
   CURRENT_PROBLEM_OUTPUT_SCHEMA,
+  handleContinueProblem,
   handleCurrentProblem,
+  handleResumeProblem,
+  handleStartProblem,
+  RESUME_PROBLEM_OUTPUT_SCHEMA,
+  resultOf,
   runtimePathsOf,
   RUNTIME_ERROR_CODES,
+  START_PROBLEM_OUTPUT_SCHEMA,
 } from '../src/server.js';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
@@ -50,6 +59,9 @@ const NOW = 1_800_000_000_000;
 
 /** Synthetic. Shaped like a credential and not one. */
 const FAKE_TOKEN = 'memory_test_0000000000000000000000000000';
+
+/** Synthetic. Stands in for anything a result must not restate in prose. */
+const PLANTED_TITLE = 'a-title-nobody-should-see-in-a-transcript-line';
 
 let pluginData: string;
 let projectDir: string;
@@ -79,7 +91,10 @@ function request(hostCallId: string = CALL_ID): unknown {
 }
 
 /** Records a context the way the trusted hook would have. */
-async function mintFor(hostCallId: string = CALL_ID, toolName = HOST_TOOL_NAME): Promise<void> {
+async function mintFor(
+  hostCallId: string = CALL_ID,
+  toolName = hostToolName(CURRENT_PROBLEM_TOOL),
+): Promise<void> {
   const directory = join(pluginData, CALL_CONTEXT_DIRECTORY);
   await mkdir(directory, { recursive: true });
   await writeFile(
@@ -124,6 +139,7 @@ describe('the tool this runtime exposes', () => {
       'NO_PROJECT_SIGNAL',
       'PROBLEM_CANDIDATES',
       'PROJECT_AMBIGUOUS',
+      'PROJECT_DECISION_STALE',
     ]);
   });
 
@@ -370,5 +386,246 @@ describe('what a failure is allowed to say', () => {
     for (const secret of [FAKE_TOKEN, pluginData, projectDir, SESSION_ID, CALL_ID]) {
       expect(printed.includes(secret)).toBe(false);
     }
+  });
+});
+
+describe('a call context belongs to one operation', () => {
+  /** Records a context the way the hook would, for a named tool. */
+  async function mintForTool(tool: MemoryTool, hostCallId: string = CALL_ID): Promise<void> {
+    const directory = join(pluginData, CALL_CONTEXT_DIRECTORY);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, callContextFilename(hostCallId)),
+      JSON.stringify({
+        format_version: 1,
+        session_id: SESSION_ID,
+        tool_name: hostToolName(tool),
+        minted_at: NOW,
+      }),
+      'utf8',
+    );
+  }
+
+  const handlers = {
+    current_problem: (req: unknown) =>
+      handleCurrentProblem(req, { environment: environment(), now: () => NOW }),
+    continue_problem: (req: unknown) =>
+      handleContinueProblem(
+        req,
+        { environment: environment(), now: () => NOW },
+        {
+          project_id: 'p',
+          problem_id: 'q',
+        },
+      ),
+    resume_problem: (req: unknown) =>
+      handleResumeProblem(
+        req,
+        { environment: environment(), now: () => NOW },
+        {
+          project_id: 'p',
+          problem_id: 'q',
+          target_status: 'INVESTIGATING',
+        },
+      ),
+    start_problem: (req: unknown) =>
+      handleStartProblem(
+        req,
+        { environment: environment(), now: () => NOW },
+        {
+          project_id: 'p',
+          title: 't',
+          symptoms: 's',
+        },
+      ),
+  } as const;
+
+  it.each([
+    ['continue_problem', 'resume_problem'],
+    ['resume_problem', 'continue_problem'],
+    ['current_problem', 'start_problem'],
+    ['start_problem', 'current_problem'],
+  ] as const)('refuses a %s context presented to %s', async (minted, presented) => {
+    // The call identifier alone is not enough. A record says which operation it
+    // was minted for, so a context for one tool cannot hand another tool a
+    // session — which would let an answer about reading become permission to
+    // write.
+    await mintForTool(minted);
+
+    await expect(handlers[presented](request())).resolves.toEqual({
+      kind: 'ERROR',
+      code: 'HOST_CONTEXT_UNAVAILABLE',
+    });
+  });
+
+  it.each(MEMORY_TOOLS)('accepts its own context, for %s', async (tool) => {
+    await mintForTool(tool);
+
+    const result = await handlers[tool](request());
+
+    // Past the gate, and stopped by the next thing instead: no credential.
+    expect(result).not.toEqual({ kind: 'ERROR', code: 'HOST_CONTEXT_UNAVAILABLE' });
+  });
+
+  it.each(MEMORY_TOOLS)('refuses %s with no host context at all', async (tool) => {
+    await expect(handlers[tool]({ method: 'tools/call' })).resolves.toEqual({
+      kind: 'ERROR',
+      code: 'HOST_CONTEXT_UNAVAILABLE',
+    });
+  });
+
+  it.each(MEMORY_TOOLS)('tells nobody whether a Memory is configured, for %s', async (tool) => {
+    const withToken = await handlers[tool]({ method: 'tools/call' });
+    const without = await handleCurrentProblem(
+      { method: 'tools/call' },
+      { environment: environment({ MEMORY_API_TOKEN: undefined }), now: () => NOW },
+    );
+
+    expect(withToken).toEqual(without);
+  });
+});
+
+describe('what each operation may conclude', () => {
+  const kindsOf = (schema: { options: readonly { shape: { kind: { value: string } } }[] }) =>
+    schema.options.map((option) => option.shape.kind.value).sort();
+
+  it('lets the asking operation report a stale answer', () => {
+    expect(kindsOf(CURRENT_PROBLEM_OUTPUT_SCHEMA)).toEqual([
+      'BOUNDARY_REQUIRED',
+      'CURRENT_PROBLEM',
+      'ERROR',
+      'EXPLICIT_REGISTRATION_REQUIRED',
+      'NO_PROBLEM',
+      'NO_PROJECT_SIGNAL',
+      'PROBLEM_CANDIDATES',
+      'PROJECT_AMBIGUOUS',
+      'PROJECT_DECISION_STALE',
+    ]);
+  });
+
+  it('keeps each mutation narrow', () => {
+    // Not one union shared by everything. A schema that let `continue` answer
+    // `RECONSIDER`, or `start` answer `PROBLEM_SELECTION_STALE`, would describe
+    // conclusions those operations cannot reach — and a client would have to
+    // handle answers that never come.
+    expect(kindsOf(CONTINUE_PROBLEM_OUTPUT_SCHEMA)).toEqual([
+      'CONTINUED',
+      'ERROR',
+      'PROBLEM_SELECTION_STALE',
+      'PROJECT_SELECTION_STALE',
+    ]);
+    expect(kindsOf(RESUME_PROBLEM_OUTPUT_SCHEMA)).toEqual([
+      'ERROR',
+      'PROBLEM_SELECTION_STALE',
+      'PROJECT_SELECTION_STALE',
+      'RESUMED',
+    ]);
+    // Starting acts on no Problem somebody chose, so there is no chosen
+    // Problem to go stale.
+    expect(kindsOf(START_PROBLEM_OUTPUT_SCHEMA)).toEqual([
+      'ERROR',
+      'PROJECT_SELECTION_STALE',
+      'RECONSIDER',
+      'STARTED',
+    ]);
+  });
+
+  it.each([
+    [
+      'a continuation',
+      CONTINUE_PROBLEM_OUTPUT_SCHEMA,
+      { kind: 'CONTINUED', project_id: 'p', problem_id: 'q', continuity: 'PERSISTED' },
+    ],
+    [
+      'a resume',
+      RESUME_PROBLEM_OUTPUT_SCHEMA,
+      {
+        kind: 'RESUMED',
+        project_id: 'p',
+        problem_id: 'q',
+        status: 'INVESTIGATING',
+        continuity: 'NOT_PERSISTED',
+      },
+    ],
+    [
+      'a start',
+      START_PROBLEM_OUTPUT_SCHEMA,
+      {
+        kind: 'STARTED',
+        project_id: 'p',
+        problem_id: 'q',
+        status: 'INVESTIGATING',
+        continuity: 'PERSISTED',
+      },
+    ],
+    [
+      'a reconsideration',
+      START_PROBLEM_OUTPUT_SCHEMA,
+      {
+        kind: 'RECONSIDER',
+        reason: 'CANDIDATES_PRESENT',
+        candidates: [{ problem_id: 'q', status: 'PAUSED', title: 't' }],
+      },
+    ],
+  ])('validates %s', (_label, schema, answer) => {
+    expect(schema.safeParse(answer).success).toBe(true);
+  });
+
+  it('refuses an answer carrying a field nobody published', () => {
+    expect(
+      CONTINUE_PROBLEM_OUTPUT_SCHEMA.safeParse({
+        kind: 'CONTINUED',
+        project_id: 'p',
+        problem_id: 'q',
+        continuity: 'PERSISTED',
+        owner_id: 'somebody',
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('what a transcript is left holding', () => {
+  it('says the category and repeats nothing back', () => {
+    // The text half is read by a person, and by whatever logs a session. It is
+    // the one place an answer could be restated in full, so it says one word
+    // and the structured half carries the rest.
+    const answer = {
+      kind: 'CURRENT_PROBLEM',
+      project_id: 'p',
+      problem_id: 'q',
+    } as const;
+
+    const result = resultOf(answer);
+
+    expect(result.content).toEqual([{ type: 'text', text: 'CURRENT_PROBLEM' }]);
+    expect(result.structuredContent).toBe(answer);
+    expect('isError' in result).toBe(false);
+  });
+
+  it('says the code and nothing about what went wrong', () => {
+    // A failure is where a message would come from — an exception's text, a
+    // response body, a path. The text is the category and the code, both of
+    // which are already a closed list.
+    const result = resultOf({ kind: 'ERROR', code: 'MEMORY_UNAVAILABLE' });
+
+    expect(result.content).toEqual([{ type: 'text', text: 'ERROR MEMORY_UNAVAILABLE' }]);
+    expect(result.isError).toBe(true);
+  });
+
+  it.each([...RUNTIME_ERROR_CODES])('renders %s as two words', (code) => {
+    const rendered = resultOf({ kind: 'ERROR', code }).content;
+
+    expect(rendered).toHaveLength(1);
+    expect(rendered[0]?.text.split(' ')).toEqual(['ERROR', code]);
+  });
+
+  it('never renders a candidate list into the text', () => {
+    const result = resultOf({
+      kind: 'PROBLEM_CANDIDATES',
+      project_id: 'p',
+      candidates: [{ problem_id: 'q', status: 'PAUSED', title: PLANTED_TITLE }],
+    });
+
+    expect(result.content).toEqual([{ type: 'text', text: 'PROBLEM_CANDIDATES' }]);
   });
 });

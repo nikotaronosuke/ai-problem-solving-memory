@@ -19,20 +19,45 @@ export const PLUGIN_NAME = 'problem-solving-memory';
 /** The MCP server key, as declared in `.mcp.json`. */
 export const MCP_SERVER_KEY = 'memory';
 
-/** The one tool this runtime exposes. */
+/**
+ * The four things somebody actually does, and the whole surface.
+ *
+ * Named for goals rather than for the calls underneath them: which Problem am
+ * I on, carry on with this one, bring this paused one back, start a new one.
+ * There is deliberately no tool for resolving a Project, creating an
+ * Environment or moving a status — those are steps, and a surface made of
+ * steps asks the model to assemble a lifecycle it has no way to get right.
+ */
 export const CURRENT_PROBLEM_TOOL = 'current_problem';
+export const CONTINUE_PROBLEM_TOOL = 'continue_problem';
+export const RESUME_PROBLEM_TOOL = 'resume_problem';
+export const START_PROBLEM_TOOL = 'start_problem';
+
+/** Every tool this runtime exposes. Exactly these, and a guard says so. */
+export const MEMORY_TOOLS = [
+  CURRENT_PROBLEM_TOOL,
+  CONTINUE_PROBLEM_TOOL,
+  RESUME_PROBLEM_TOOL,
+  START_PROBLEM_TOOL,
+] as const;
+
+export type MemoryTool = (typeof MEMORY_TOOLS)[number];
 
 /**
- * The tool name the host actually exposes, assembled the way it assembles it.
+ * The name the host actually exposes for a tool, assembled the way it does.
  *
- * Written out rather than pattern-matched, because the hook has to decide
- * whether a call is *this* tool before it mints anything, and a loose matcher
- * would mint host identity for whatever else happened to look similar. The
- * shape is measured against the installed host rather than assumed, and a
- * probe re-checks it: if the host ever names tools differently, this constant
- * and the manifest matcher move together.
+ * Built from one rule rather than written out four times, so the hook's
+ * matchers, the record a hook mints and the name a handler claims under cannot
+ * drift apart. The shape is measured against the installed host rather than
+ * assumed, and a probe re-checks all four: if the host ever names tools
+ * differently, this function and the manifest move together.
  */
-export const HOST_TOOL_NAME = `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${CURRENT_PROBLEM_TOOL}`;
+export function hostToolName(tool: MemoryTool): string {
+  return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
+}
+
+/** The four exact host names, which is the only set that may mint identity. */
+export const HOST_TOOL_NAMES: readonly string[] = MEMORY_TOOLS.map(hostToolName);
 
 /**
  * Where the host tells this plugin to keep state that outlives a session.

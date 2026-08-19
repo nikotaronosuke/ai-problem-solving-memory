@@ -35,7 +35,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { mintCallContext, sweepCallContexts } from './host-call-context.js';
-import { CALL_CONTEXT_DIRECTORY, HOST_TOOL_NAME } from './runtime-constants.js';
+import { CALL_CONTEXT_DIRECTORY, HOST_TOOL_NAMES } from './runtime-constants.js';
 
 /** The host's variable, read here because a hook is a host process. */
 const HOST_PLUGIN_DATA_ENV = 'CLAUDE_PLUGIN_DATA';
@@ -94,10 +94,11 @@ export async function runPreToolUse(
   }
   const input = event as Record<string, unknown>;
 
-  // Only this tool. A hook matcher is configuration and can be widened by
-  // accident; this is the check that means the record was minted for the tool
-  // it names.
-  if (input['tool_name'] !== HOST_TOOL_NAME) {
+  // One of these four exactly, and nothing that merely resembles one. A hook
+  // matcher is configuration and can be widened by accident; this is the check
+  // that decides whether session identity is minted at all.
+  const toolName = input['tool_name'];
+  if (typeof toolName !== 'string' || !HOST_TOOL_NAMES.includes(toolName)) {
     return decide('deny', REASONS.UNUSABLE);
   }
 
@@ -128,7 +129,10 @@ export async function runPreToolUse(
     directory,
     hostCallId,
     sessionId,
-    toolName: HOST_TOOL_NAME,
+    // The *actual* tool, not the category. A record minted for one operation
+    // must not authenticate another, so the name it was minted for is part of
+    // what the handler later checks.
+    toolName,
     now,
   });
 
