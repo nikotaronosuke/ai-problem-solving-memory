@@ -7,13 +7,13 @@
 
 // src/pre-tool-use.ts
 import { realpathSync } from "node:fs";
-import { join as join2 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/host-call-context.ts
 import { createHash } from "node:crypto";
 import { mkdir, open, readdir, readFile, stat, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 // src/runtime-constants.ts
 var PLUGIN_NAME = "problem-solving-memory";
@@ -33,7 +33,7 @@ function hostToolName(tool) {
 }
 var HOST_TOOL_NAMES = MEMORY_TOOLS.map(hostToolName);
 var CALL_CONTEXT_DIRECTORY = "call-context";
-var CALL_CONTEXT_FORMAT_VERSION = 1;
+var CALL_CONTEXT_FORMAT_VERSION = 2;
 var PENDING_PREFIX = "pending-";
 var RECORD_SUFFIX = ".json";
 var CALL_CONTEXT_MAX_AGE_MS = 60 * 60 * 1e3;
@@ -53,6 +53,10 @@ async function mintCallContext(options) {
     format_version: CALL_CONTEXT_FORMAT_VERSION,
     session_id: options.sessionId,
     tool_name: options.toolName,
+    // Written as the host gave it. Nothing here canonicalises a repository or
+    // reads git: the hook is transport, and deciding what a directory means
+    // is the adapter's, one process later.
+    current_directory: options.currentDirectory,
     minted_at: options.now
   };
   const path = join(options.directory, callContextFilename(options.hostCallId));
@@ -130,7 +134,8 @@ async function runPreToolUse(event, environment, now) {
   }
   const sessionId = input["session_id"];
   const hostCallId = input["tool_use_id"];
-  if (!isNonBlank(sessionId) || !isNonBlank(hostCallId)) {
+  const currentDirectory = input["cwd"];
+  if (!isNonBlank(sessionId) || !isNonBlank(hostCallId) || !isNonBlank(currentDirectory) || !isAbsolute2(currentDirectory)) {
     return decide("deny", REASONS.UNUSABLE);
   }
   const pluginData = environment[HOST_PLUGIN_DATA_ENV];
@@ -147,6 +152,7 @@ async function runPreToolUse(event, environment, now) {
     // must not authenticate another, so the name it was minted for is part of
     // what the handler later checks.
     toolName,
+    currentDirectory,
     now
   });
   return minted ? decide("allow", REASONS.ALLOW) : decide("deny", REASONS.UNUSABLE);

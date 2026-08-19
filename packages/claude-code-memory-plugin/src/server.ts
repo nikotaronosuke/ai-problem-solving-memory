@@ -74,7 +74,6 @@ import {
   CURRENT_PROBLEM_TOOL,
   hostToolName,
   PLUGIN_DATA_ENV,
-  PROJECT_DIR_ENV,
   RESUME_PROBLEM_TOOL,
   START_PROBLEM_TOOL,
   type MemoryTool,
@@ -296,30 +295,34 @@ export function classify(error: unknown): RuntimeErrorCode {
 }
 
 /** Where the host said this session's Project is, and where state may live. */
-export interface RuntimePaths {
-  readonly projectDir: string;
+/**
+ * Where this plugin's own state lives.
+ *
+ * One path, and deliberately only one. Where the session *is* used to arrive
+ * here too, read once when this process started — which is why a session that
+ * moved mid-run went on being answered about the directory it had left. That
+ * value now comes per call, from the host's own event, and this is left with
+ * the one thing that genuinely does not move: the plugin's data directory.
+ */
+export interface RuntimeStatePaths {
   readonly pluginData: string;
 }
 
 /**
- * The two paths the host supplies, or nothing.
+ * The one path the server's environment supplies, or nothing.
  *
  * Absolute is required rather than resolved: a relative value would be resolved
  * against this process's working directory, which is exactly the thing a
  * Project must never be anchored on.
  */
-export function runtimePathsOf(
+export function runtimeStatePathsOf(
   environment: Record<string, string | undefined>,
-): RuntimePaths | undefined {
-  const projectDir = environment[PROJECT_DIR_ENV];
+): RuntimeStatePaths | undefined {
   const pluginData = environment[PLUGIN_DATA_ENV];
-  if (projectDir === undefined || pluginData === undefined) {
+  if (pluginData === undefined || !isAbsolute(pluginData)) {
     return undefined;
   }
-  if (!isAbsolute(projectDir) || !isAbsolute(pluginData)) {
-    return undefined;
-  }
-  return { projectDir, pluginData };
+  return { pluginData };
 }
 
 export function resultOf(outcome: ToolResult): {
@@ -377,15 +380,18 @@ export async function serveAuthenticated<T>(
     return { kind: 'ERROR', code: 'HOST_CONTEXT_UNAVAILABLE' };
   }
 
-  // 2. The paths, before the context is claimed — because claiming needs the
-  //    directory, and because neither step reveals anything about the Memory.
-  const paths = runtimePathsOf(options.environment);
+  // 2. This plugin's own state directory, before the context is claimed —
+  //    because claiming needs it, and because neither step reveals anything
+  //    about the Memory. Nothing here says where the session is: that arrives
+  //    with the call itself, in step 3.
+  const paths = runtimeStatePathsOf(options.environment);
   if (paths === undefined) {
     return { kind: 'ERROR', code: 'HOST_CONTEXT_UNAVAILABLE' };
   }
 
   // 3. Claim the record for *this* call, and for this operation. Exactly once,
-  //    or not at all.
+  //    or not at all. It yields the session, and where that session was when
+  //    the host announced this call.
   const claim = await claimCallContext({
     directory: join(paths.pluginData, CALL_CONTEXT_DIRECTORY),
     hostCallId,
@@ -408,7 +414,12 @@ export async function serveAuthenticated<T>(
       client,
       bindingStore,
       sessionId: claim.sessionId,
-      projectDir: paths.projectDir,
+      // The call's own location, and the only one. There is deliberately no
+      // fallback to a start-up path: a stale directory does not fail, it
+      // answers confidently about the wrong Project, which is worse than
+      // saying nothing. The same value goes to Project detection and to
+      // Environment capture, so the two cannot describe different places.
+      projectDir: claim.currentDirectory,
     });
   } catch (error) {
     return { kind: 'ERROR', code: classify(error) };
@@ -642,7 +653,7 @@ export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): Mcp
 }
 
 async function main(): Promise<void> {
-  const paths = runtimePathsOf(process.env);
+  const paths = runtimeStatePathsOf(process.env);
   if (paths !== undefined) {
     // One bounded tidy-up of records nobody will claim. Its failure is not a
     // reason to refuse to start.

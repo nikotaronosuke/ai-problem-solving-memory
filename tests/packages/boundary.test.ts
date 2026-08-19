@@ -602,6 +602,45 @@ describe('the Claude adapter', () => {
     expect(runtime.dependencies?.['esbuild']).toBeUndefined();
   });
 
+  it('takes the current location from the call, never from where it started', async () => {
+    const base = join(PACKAGES, 'claude-code-memory-plugin');
+    const mcp = await readFile(join(base, '.mcp.json'), 'utf8');
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const sources = shipped
+      .filter((file) => file.path.startsWith('src/'))
+      .map((file) => `${file.path}\n${codeOnly(file.source)}`)
+      .join('\n');
+
+    // The server learns its environment once, when it starts. A session that
+    // moves afterwards keeps the process it had, so a project directory read
+    // from that environment describes where the session *began* — which is how
+    // a moved session came to be answered about the repository it had left.
+    // The plugin data directory is the one path that genuinely does not move.
+    expect(mcp).toContain('MEMORY_CLAUDE_PLUGIN_DATA');
+    for (const forbidden of ['MEMORY_CLAUDE_PROJECT_DIR', 'CLAUDE_PROJECT_DIR']) {
+      expect(`the shipped MCP config passes ${forbidden}:${mcp.includes(forbidden)}`).toBe(
+        `the shipped MCP config passes ${forbidden}:false`,
+      );
+      expect(`the runtime source names ${forbidden}:${sources.includes(forbidden)}`).toBe(
+        `the runtime source names ${forbidden}:false`,
+      );
+    }
+
+    // And no second-best source either. `process.cwd()` is where this process
+    // happens to be, which is not where the session is; a directory chosen by
+    // the model is a claim about a machine it cannot see.
+    for (const forbidden of ['process.cwd(', 'tool_input']) {
+      expect(`the runtime source reaches for ${forbidden}:${sources.includes(forbidden)}`).toBe(
+        `the runtime source reaches for ${forbidden}:false`,
+      );
+    }
+
+    // What it does read: the host's own directory for this call, carried in
+    // the record the hook minted.
+    expect(sources).toContain('current_directory');
+    expect(sources).toContain('claim.currentDirectory');
+  });
+
   it('ships a runtime that reaches only inside the installed plugin', async () => {
     const base = join(PACKAGES, 'claude-code-memory-plugin');
     const mcp = await readFile(join(base, '.mcp.json'), 'utf8');
