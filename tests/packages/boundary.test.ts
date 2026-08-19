@@ -634,6 +634,34 @@ describe('the Claude adapter', () => {
     expect(codeOnly(hook?.source ?? '').includes('updatedInput')).toBe(false);
   });
 
+  it('tidies by age and name, never by whether a file parses', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const context = shipped.find((file) => file.path === 'src/host-call-context.ts');
+    const code = codeOnly(context?.source ?? '');
+    const sweep = code.slice(code.indexOf('export async function sweepCallContexts'));
+
+    // Housekeeping never reads a record. Two hooks run in parallel, and one of
+    // them is briefly mid-write; a sweep that deleted what it could not parse
+    // would take exactly that file and leave an already-allowed call with
+    // nothing to claim.
+    for (const forbidden of ['JSON.parse', 'readFile', 'isHostCallContext', 'isExpired']) {
+      expect(`the sweep reaches for ${forbidden}:${sweep.includes(forbidden)}`).toBe(
+        `the sweep reaches for ${forbidden}:false`,
+      );
+    }
+    // It asks two questions instead, in this order.
+    expect(sweep).toContain('isOwnedCallContextFilename(entry)');
+    expect(sweep).toContain('mtimeMs');
+
+    // And the claim checks how big a file is before taking its bytes: measuring
+    // a string afterwards is not a bound, because by then it is already read.
+    const claim = code.slice(
+      code.indexOf('export async function claimCallContext'),
+      code.indexOf('export async function sweepCallContexts'),
+    );
+    expect(claim.indexOf('CALL_CONTEXT_MAX_BYTES')).toBeLessThan(claim.indexOf('readFile'));
+  });
+
   it('offers exactly one Memory tool, and no input for the model to fill', async () => {
     const shipped = await sourcesOf('claude-code-memory-plugin');
     const server = shipped.find((file) => file.path === 'src/server.ts');

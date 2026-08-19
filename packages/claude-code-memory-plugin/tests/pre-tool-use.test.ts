@@ -7,7 +7,7 @@
  * that nothing was written when it refused.
  */
 
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,7 +18,6 @@ import { CALL_CONTEXT_DIRECTORY, HOST_TOOL_NAME } from '../src/runtime-constants
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 const CALL_ID = 'toolu_01AAAAAAAAAAAAAAAAAAAAAA';
-const NOW = 1_800_000_000_000;
 
 let pluginData: string;
 
@@ -54,7 +53,7 @@ async function records(): Promise<string[]> {
 
 describe('a main-session call for this tool', () => {
   it('is allowed, and one record is written', async () => {
-    const decision = await runPreToolUse(event(), environment(), NOW);
+    const decision = await runPreToolUse(event(), environment(), Date.now());
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('allow');
     expect(await records()).toHaveLength(1);
@@ -65,7 +64,7 @@ describe('a main-session call for this tool', () => {
     // injected, so nothing travels through the model and nothing lands in a
     // transcript — and this plugin cannot lose an input-rewriting race with
     // another hook, because it does not enter one.
-    const decision = await runPreToolUse(event(), environment(), NOW);
+    const decision = await runPreToolUse(event(), environment(), Date.now());
 
     expect(Object.keys(decision.hookSpecificOutput).sort()).toEqual([
       'hookEventName',
@@ -76,7 +75,7 @@ describe('a main-session call for this tool', () => {
   });
 
   it('says nothing about who or where', async () => {
-    const decision = await runPreToolUse(event(), environment(), NOW);
+    const decision = await runPreToolUse(event(), environment(), Date.now());
     const printed = JSON.stringify(decision);
 
     for (const secret of [SESSION_ID, CALL_ID, pluginData]) {
@@ -93,7 +92,7 @@ describe('what it refuses', () => {
     const decision = await runPreToolUse(
       event({ agent_id: 'a5e407559c30577b3', agent_type: 'general-purpose' }),
       environment(),
-      NOW,
+      Date.now(),
     );
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
@@ -108,7 +107,7 @@ describe('what it refuses', () => {
     ['another tool', { tool_name: 'mcp__plugin_other_memory__current_problem' }],
     ['no tool name at all', { tool_name: undefined }],
   ])('mints nothing when the event has %s', async (_name, overrides) => {
-    const decision = await runPreToolUse(event(overrides), environment(), NOW);
+    const decision = await runPreToolUse(event(overrides), environment(), Date.now());
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
     expect(await records()).toEqual([]);
@@ -119,21 +118,21 @@ describe('what it refuses', () => {
     ['null', null],
     ['nothing', undefined],
   ])('mints nothing when the event is %s', async (_name, malformed) => {
-    const decision = await runPreToolUse(malformed, environment(), NOW);
+    const decision = await runPreToolUse(malformed, environment(), Date.now());
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
     expect(await records()).toEqual([]);
   });
 
   it('denies when the host said nowhere to keep state', async () => {
-    const decision = await runPreToolUse(event(), {}, NOW);
+    const decision = await runPreToolUse(event(), {}, Date.now());
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
   });
 
   it('denies rather than replacing a record already there', async () => {
-    const first = await runPreToolUse(event(), environment(), NOW);
-    const second = await runPreToolUse(event(), environment(), NOW);
+    const first = await runPreToolUse(event(), environment(), Date.now());
+    const second = await runPreToolUse(event(), environment(), Date.now());
 
     expect(first.hookSpecificOutput.permissionDecision).toBe('allow');
     expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
@@ -141,7 +140,7 @@ describe('what it refuses', () => {
   });
 
   it('explains a refusal without describing it', async () => {
-    const decision = await runPreToolUse(event({ session_id: '' }), environment(), NOW);
+    const decision = await runPreToolUse(event({ session_id: '' }), environment(), Date.now());
     const reason = decision.hookSpecificOutput.permissionDecisionReason;
 
     // Fixed prose from a closed set. A reason is shown to a person and to the
@@ -154,17 +153,33 @@ describe('what it refuses', () => {
 describe('tidying up after calls that never ran', () => {
   it('sweeps records nobody will claim while minting the next one', async () => {
     const stale = event({ tool_use_id: 'toolu_stale' });
-    await runPreToolUse(stale, environment(), NOW - 7_200_000);
-    expect(await records()).toHaveLength(1);
+    await runPreToolUse(stale, environment(), Date.now());
+    const staleName = (await records())[0] as string;
+    // Aged on the filesystem, which is what the sweep reads.
+    const when = new Date(Date.now() - 7_200_000);
+    await utimes(join(pluginData, CALL_CONTEXT_DIRECTORY, staleName), when, when);
 
-    await runPreToolUse(event(), environment(), NOW);
+    await runPreToolUse(event(), environment(), Date.now());
 
     // The stale one is gone and only the current call's record remains.
     expect(await records()).toHaveLength(1);
   });
 
+  it('does not sweep a record another hook is still writing', async () => {
+    // Two hooks in parallel: one has created its file and not finished, the
+    // other sweeps on its way to minting. The half-written file must survive,
+    // or a call that was already allowed finds nothing to claim.
+    const partial = join(pluginData, CALL_CONTEXT_DIRECTORY, `pending-${'a'.repeat(64)}.json`);
+    await mkdir(join(pluginData, CALL_CONTEXT_DIRECTORY), { recursive: true });
+    await writeFile(partial, '{', 'utf8');
+
+    await runPreToolUse(event(), environment(), Date.now());
+
+    expect(await records()).toHaveLength(2);
+  });
+
   it('still mints when there is nothing to sweep', async () => {
-    const decision = await runPreToolUse(event(), environment(), NOW);
+    const decision = await runPreToolUse(event(), environment(), Date.now());
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('allow');
   });

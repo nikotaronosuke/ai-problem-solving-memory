@@ -9,21 +9,28 @@
  * rather than in anticipation of it.
  */
 
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { randomUUID } from 'node:crypto';
 
 import {
   callContextFilename,
   claimCallContext,
   hostCallIdOf,
   isHostCallContext,
+  isOwnedCallContextFilename,
   mintCallContext,
   sweepCallContexts,
 } from '../src/host-call-context.js';
-import { CALL_CONTEXT_MAX_AGE_MS, HOST_TOOL_NAME } from '../src/runtime-constants.js';
+import {
+  CALL_CONTEXT_MAX_AGE_MS,
+  CALL_CONTEXT_MAX_BYTES,
+  HOST_TOOL_NAME,
+} from '../src/runtime-constants.js';
 
 /** Synthetic. Shaped like a host call id, and not one. */
 const CALL_ID = 'toolu_01AAAAAAAAAAAAAAAAAAAAAA';
@@ -284,29 +291,53 @@ describe('claiming', () => {
   });
 });
 
-describe('sweeping', () => {
-  it('removes pending records nobody will ever claim', async () => {
-    await mint(CALL_ID, NOW - CALL_CONTEXT_MAX_AGE_MS - 1);
+describe('recognising this component’s own files', () => {
+  it('accepts exactly the two shapes it generates', () => {
+    const digest = 'a'.repeat(64);
 
-    await sweepCallContexts({ directory, now: NOW });
+    expect(isOwnedCallContextFilename(`pending-${digest}.json`)).toBe(true);
+    expect(isOwnedCallContextFilename(`claimed-${digest}-${randomUUID()}.json`)).toBe(true);
+  });
+
+  it.each([
+    ['a name nobody here could have produced', 'pending-not-ours.json'],
+    ['the same, claimed', 'claimed-not-ours.json'],
+    ['a digest that is too short', `pending-${'a'.repeat(63)}.json`],
+    ['a digest that is not hex', `pending-${'g'.repeat(64)}.json`],
+    ['an uppercase digest', `pending-${'A'.repeat(64)}.json`],
+    ['a claim with no identifier', `claimed-${'a'.repeat(64)}.json`],
+    ['a claim whose identifier is not one', `claimed-${'a'.repeat(64)}-abc.json`],
+    ['something else entirely', 'notes.txt'],
+  ])('refuses %s', (_name, entry) => {
+    expect(isOwnedCallContextFilename(entry)).toBe(false);
+  });
+});
+
+describe('sweeping', () => {
+  /** Ages a file by moving its timestamps, which is what the sweep reads. */
+  async function age(name: string, milliseconds: number): Promise<void> {
+    const when = new Date(Date.now() - milliseconds);
+    await utimes(join(directory, name), when, when);
+  }
+
+  const claimedName = (hostCallId: string) =>
+    callContextFilename(hostCallId, 'claimed-').replace('.json', `-${randomUUID()}.json`);
+
+  it('removes pending records nobody will ever claim', async () => {
+    await mint();
+    await age(callContextFilename(CALL_ID), CALL_CONTEXT_MAX_AGE_MS + 60_000);
+
+    await sweepCallContexts({ directory, now: Date.now() });
 
     expect(await readdir(directory)).toEqual([]);
   });
 
   it('removes claimed records a crash left behind', async () => {
-    const name = callContextFilename(CALL_ID, 'claimed-').replace('.json', '-abc.json');
-    await writeFile(
-      join(directory, name),
-      JSON.stringify({
-        format_version: 1,
-        session_id: SESSION_ID,
-        tool_name: HOST_TOOL_NAME,
-        minted_at: NOW - CALL_CONTEXT_MAX_AGE_MS - 1,
-      }),
-      'utf8',
-    );
+    const name = claimedName(CALL_ID);
+    await writeFile(join(directory, name), '{}', 'utf8');
+    await age(name, CALL_CONTEXT_MAX_AGE_MS + 60_000);
 
-    await sweepCallContexts({ directory, now: NOW });
+    await sweepCallContexts({ directory, now: Date.now() });
 
     expect(await readdir(directory)).toEqual([]);
   });
@@ -314,26 +345,90 @@ describe('sweeping', () => {
   it('leaves a record that is still current', async () => {
     await mint();
 
-    await sweepCallContexts({ directory, now: NOW });
+    await sweepCallContexts({ directory, now: Date.now() });
 
     expect(await readdir(directory)).toEqual([callContextFilename(CALL_ID)]);
   });
 
-  it('does not touch files that are not its own', async () => {
-    await writeFile(join(directory, 'somebody-elses.json'), 'x', 'utf8');
-    await writeFile(join(directory, 'pending-not-ours.txt'), 'x', 'utf8');
+  it('leaves a record another hook is still writing', async () => {
+    // The race this rule exists for. Two hooks run in parallel; one has created
+    // its file and not finished writing it, and the other sweeps. A sweep that
+    // judged files by whether they parse would delete exactly that one, and the
+    // first call — perfectly valid, already allowed — would find nothing to
+    // claim. That is an availability failure in the parallel path this runtime
+    // is meant to support, so incompleteness is never a reason to delete.
+    const name = callContextFilename(CALL_ID);
+    await writeFile(join(directory, name), '{', 'utf8');
 
-    await sweepCallContexts({ directory, now: NOW });
+    await sweepCallContexts({ directory, now: Date.now() });
 
-    expect((await readdir(directory)).sort()).toEqual([
-      'pending-not-ours.txt',
-      'somebody-elses.json',
-    ]);
+    expect(await readdir(directory)).toEqual([name]);
+  });
+
+  it('leaves a claim another call is still writing', async () => {
+    const name = claimedName(CALL_ID);
+    await writeFile(join(directory, name), '{"format_ver', 'utf8');
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([name]);
+  });
+
+  it('removes an old record it could never have read', async () => {
+    // Age is the only question a sweep asks. Once a file of ours is genuinely
+    // old, whether its contents parse is beside the point — and not reading
+    // them means housekeeping never parses half-written data at all.
+    const name = callContextFilename(CALL_ID);
+    await writeFile(join(directory, name), 'not json', 'utf8');
+    await age(name, CALL_CONTEXT_MAX_AGE_MS + 60_000);
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('removes an old claim it could never have read', async () => {
+    const name = claimedName(CALL_ID);
+    await writeFile(join(directory, name), 'not json', 'utf8');
+    await age(name, CALL_CONTEXT_MAX_AGE_MS + 60_000);
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it.each([
+    ['pending-not-ours.json'],
+    ['claimed-not-ours.json'],
+    [`pending-${'a'.repeat(63)}.json`],
+  ])('never removes %s, however old', async (name) => {
+    // This directory belongs to the plugin, not to this module. A file it
+    // could not have written is somebody else's, and age is no licence.
+    await writeFile(join(directory, name), 'x', 'utf8');
+    await age(name, CALL_CONTEXT_MAX_AGE_MS * 100);
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([name]);
+  });
+
+  it('never removes a file stamped in the future', async () => {
+    // Further ahead than the cleanup age, deliberately. A distance is not an
+    // age: a file stamped after now was not written long ago, and treating the
+    // gap as one would delete a record whose clock merely disagrees.
+    const name = callContextFilename(CALL_ID);
+    await mint();
+    const ahead = new Date(Date.now() + CALL_CONTEXT_MAX_AGE_MS * 2);
+    await utimes(join(directory, name), ahead, ahead);
+
+    await sweepCallContexts({ directory, now: Date.now() });
+
+    expect(await readdir(directory)).toEqual([name]);
   });
 
   it('does not mind a directory that is not there', async () => {
     await expect(
-      sweepCallContexts({ directory: join(directory, 'absent'), now: NOW }),
+      sweepCallContexts({ directory: join(directory, 'absent'), now: Date.now() }),
     ).resolves.toBeUndefined();
   });
 
@@ -342,8 +437,58 @@ describe('sweeping', () => {
     // this call still fails because no record for *this* call exists.
     await writeFile(join(directory, 'pending-unreadable.json'), '{', 'utf8');
 
-    await sweepCallContexts({ directory, now: NOW });
+    await sweepCallContexts({ directory, now: Date.now() });
 
     await expect(claim()).resolves.toEqual({ kind: 'UNAVAILABLE' });
+  });
+});
+
+describe('minting and sweeping at the same time', () => {
+  it('leaves every minted call claimable', async () => {
+    // Supplementary to the deterministic tests above rather than a substitute:
+    // real interleaving, no sleeps, and the property is that nothing minted
+    // goes missing.
+    const ids = Array.from({ length: 20 }, (_v, index) => `toolu_together_${String(index)}`);
+
+    await Promise.all(
+      ids.flatMap((id) => [
+        mint(id, Date.now()),
+        sweepCallContexts({ directory, now: Date.now() }),
+      ]),
+    );
+
+    const claims = await Promise.all(ids.map((id) => claim(id, Date.now())));
+
+    expect(claims.filter((c) => c.kind === 'CLAIMED')).toHaveLength(ids.length);
+  });
+});
+
+describe('how much of a claimed record is read', () => {
+  it('refuses one larger than a record could be, without parsing it', async () => {
+    // The size is a property of the file, checked before its bytes are taken.
+    // Measuring a string after reading it is not a bound: by then whatever was
+    // there is already in memory.
+    await writeFile(
+      join(directory, callContextFilename(CALL_ID)),
+      JSON.stringify({
+        format_version: 1,
+        session_id: SESSION_ID,
+        tool_name: HOST_TOOL_NAME,
+        minted_at: NOW,
+        // Valid JSON, and far too much of it.
+        filler: 'x'.repeat(CALL_CONTEXT_MAX_BYTES),
+      }),
+      'utf8',
+    );
+
+    await expect(claim(CALL_ID, NOW)).resolves.toEqual({ kind: 'UNAVAILABLE' });
+    // And the oversized file does not stay behind.
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('accepts an ordinary record', async () => {
+    await mint();
+
+    await expect(claim()).resolves.toEqual({ kind: 'CLAIMED', sessionId: SESSION_ID });
   });
 });
