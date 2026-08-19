@@ -194,7 +194,7 @@ describe('tidying up after calls that never ran', () => {
   });
 });
 
-describe('the four tools it will mint for, and nothing else', () => {
+describe('the five tools it will mint for, and nothing else', () => {
   it.each(MEMORY_TOOLS)('mints for %s and records that exact tool', async (tool) => {
     const decision = await runPreToolUse(
       event({ tool_name: hostToolName(tool) }),
@@ -226,10 +226,26 @@ describe('the four tools it will mint for, and nothing else', () => {
       'mcp__plugin_problem-solving-memory_memory__start_problem_v2',
     ],
     ['an unrelated tool entirely', 'Bash'],
+    // The recall tool's name is long enough to be worth writing out wrongly in
+    // several plausible ways, and each of these would be a tool nobody exposes
+    // being handed host identity.
+    [
+      'the recall tool in the plural',
+      'mcp__plugin_problem-solving-memory_memory__recall_similar_experiences',
+    ],
+    [
+      'a shortening of the recall tool',
+      'mcp__plugin_problem-solving-memory_memory__recall_similar',
+    ],
+    ['the recall tool under another plugin', 'mcp__plugin_other_memory__recall_similar_experience'],
+    [
+      'a recall-shaped name nobody exposes',
+      'mcp__plugin_problem-solving-memory_memory__recall_experience',
+    ],
   ])('mints nothing for %s', async (_label, toolName) => {
     // A matcher is configuration and can be widened by accident. This is the
     // check that decides whether host identity is minted at all, so it names
-    // the four exactly rather than describing them.
+    // the five exactly rather than describing them.
     const decision = await runPreToolUse(event({ tool_name: toolName }), environment(), Date.now());
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');

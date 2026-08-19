@@ -40,6 +40,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "mcp__plugin_problem-solving-memory_memory__recall_similar_experience",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
       }
     ]
   }

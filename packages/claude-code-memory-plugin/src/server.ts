@@ -1,5 +1,5 @@
 /**
- * The MCP runtime: four tools, and the order in which they are allowed to fail.
+ * The MCP runtime: five tools, and the order in which they are allowed to fail.
  *
  * ## The order is the design
  *
@@ -39,6 +39,15 @@ import {
   type MemoryApiClient,
 } from '@ai-problem-solving-memory/api-client';
 import {
+  MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH,
+  MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH,
+  MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_ITEMS,
+  MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH,
+  MEMORY_SEARCH_SEMANTIC_STATUSES,
+  MEMORY_SEARCH_STRUCTURAL_STATUSES,
+} from '@ai-problem-solving-memory/api-client';
+import {
+  recallSimilarExperience,
   createClaudeCodeMemoryClient,
   createProblemBindingStore,
   MissingMemoryCredentialError,
@@ -55,6 +64,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 
+import { createRecallFingerprintStore } from './recall-fingerprint-store.js';
 import {
   currentProblem,
   CurrentProblemInvariantError,
@@ -72,6 +82,8 @@ import {
   CALL_CONTEXT_DIRECTORY,
   CONTINUE_PROBLEM_TOOL,
   CURRENT_PROBLEM_TOOL,
+  RECALL_FINGERPRINT_DIRECTORY,
+  RECALL_SIMILAR_EXPERIENCE_TOOL,
   hostToolName,
   PLUGIN_DATA_ENV,
   RESUME_PROBLEM_TOOL,
@@ -94,6 +106,46 @@ const PROJECT_DECISION_SCHEMA = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('REPOSITORY_BOUNDARY'), repo_subpath: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('REGISTER_WITHOUT_REPOSITORY') }).strict(),
 ]);
+
+/**
+ * One entry in a structural feature list, as the model wrote it.
+ *
+ * Bounds come from the common client rather than being restated here: the
+ * server that will read this request already publishes what it accepts, and a
+ * second copy of a number is a second thing to keep in step.
+ */
+const FEATURE_ENTRY_SCHEMA = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH);
+const FEATURE_LIST_SCHEMA = z
+  .array(FEATURE_ENTRY_SCHEMA)
+  .max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_ITEMS);
+
+/**
+ * How the model describes what it currently understands.
+ *
+ * Seven fields and no eighth. `schema_version` is deliberately absent: which
+ * vocabulary these words are written in is the runtime's to state, and a caller
+ * that could name it could claim to be speaking a version it is not.
+ */
+const RECALL_FEATURES_SCHEMA = z
+  .object({
+    problem_domain: z
+      .string()
+      .trim()
+      .min(1)
+      .max(MEMORY_SEARCH_MAX_STRUCTURAL_FEATURE_LENGTH)
+      .nullable(),
+    symptom_patterns: FEATURE_LIST_SCHEMA,
+    suspected_boundaries: FEATURE_LIST_SCHEMA,
+    occurrence_conditions: FEATURE_LIST_SCHEMA,
+    successful_directions: FEATURE_LIST_SCHEMA,
+    dead_end_directions: FEATURE_LIST_SCHEMA,
+    environment_facts: FEATURE_LIST_SCHEMA,
+  })
+  .strict();
 
 /** The categories a failure may be reported as. Closed, and carrying nothing. */
 export const RUNTIME_ERROR_CODES = [
@@ -247,17 +299,52 @@ export const START_PROBLEM_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
   ERROR_VARIANT,
 ]);
 
+/**
+ * What a recall may answer with.
+ *
+ * `RECALLED` says how the search went and nothing about what it found. A count
+ * and the two stage statuses separate "ran and found nothing" from "ran and
+ * found something" from "a provider was degraded", which is what a caller needs
+ * to decide what to do next. What the Memory actually said is somebody else's
+ * to present.
+ */
+export const RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('RECALLED'),
+      candidate_count: z.number().int().nonnegative(),
+      semantic_status: z.enum(MEMORY_SEARCH_SEMANTIC_STATUSES),
+      structural_status: z.enum(MEMORY_SEARCH_STRUCTURAL_STATUSES),
+    })
+    .strict(),
+  // The same question about the same Problem, already asked and answered.
+  z.object({ kind: z.literal('ALREADY_RECALLED') }).strict(),
+  // Nothing authoritative to attach a search to. Deliberately one answer for
+  // every reason: a recall does not ask Project or Problem questions, and
+  // listing candidates here would be `current_problem`'s job done badly.
+  z.object({ kind: z.literal('NO_CURRENT_PROBLEM') }).strict(),
+  z.object({ kind: z.literal('MEMORY_READ_DISABLED') }).strict(),
+  z.object({ kind: z.literal('CURRENT_SOURCE_CHANGED') }).strict(),
+  z.object({ kind: z.literal('CURRENT_PROBLEM_NOT_AVAILABLE') }).strict(),
+  ERROR_VARIANT,
+]);
+
+export type RecallSimilarExperienceToolResult = z.infer<
+  typeof RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA
+>;
+
 export type ContinueProblemToolResult = z.infer<typeof CONTINUE_PROBLEM_OUTPUT_SCHEMA>;
 export type ResumeProblemToolResult = z.infer<typeof RESUME_PROBLEM_OUTPUT_SCHEMA>;
 export type StartProblemToolResult = z.infer<typeof START_PROBLEM_OUTPUT_SCHEMA>;
 
-/** Anything one of the four may answer with. */
+/** Anything one of the tools may answer with. */
 type ToolResult =
   | CurrentProblemOutcome
   | CurrentProblemToolResult
   | ContinueProblemToolResult
   | ResumeProblemToolResult
-  | StartProblemToolResult;
+  | StartProblemToolResult
+  | RecallSimilarExperienceToolResult;
 
 /**
  * Turns a failure into a category, by class and never by prose.
@@ -358,7 +445,7 @@ export interface AuthenticatedCall {
 /**
  * Serves one call, in the order that keeps a failure from telling anybody anything.
  *
- * Written once and shared by all four tools rather than repeated per handler:
+ * Written once and shared by every tool rather than repeated per handler:
  * the order below is the security property, and four copies of it would be
  * four chances for one to drift a step.
  *
@@ -563,6 +650,58 @@ export async function handleStartProblem(
   }
 }
 
+/**
+ * Looks up what the Memory already knows about the Problem in hand.
+ *
+ * Everything about *which* Problem is established here, from the call's own
+ * host context, and nothing about it is a model input. What the model supplies
+ * is the question in its own words.
+ */
+export async function handleRecallSimilarExperience(
+  request: unknown,
+  options: CurrentProblemHandlerOptions,
+  input: {
+    readonly lexical_text: string;
+    readonly semantic_text: string;
+    readonly current_features: z.infer<typeof RECALL_FEATURES_SCHEMA>;
+  },
+): Promise<RecallSimilarExperienceToolResult> {
+  return serveAuthenticated(request, options, RECALL_SIMILAR_EXPERIENCE_TOOL, async (call) => {
+    const paths = runtimeStatePathsOf(options.environment);
+    const outcome = await recallSimilarExperience({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      fingerprintStore: createRecallFingerprintStore({
+        directory: join(paths?.pluginData ?? '', RECALL_FINGERPRINT_DIRECTORY),
+      }),
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      query: {
+        lexicalText: input.lexical_text,
+        semanticText: input.semantic_text,
+        features: {
+          problemDomain: input.current_features.problem_domain,
+          symptomPatterns: input.current_features.symptom_patterns,
+          suspectedBoundaries: input.current_features.suspected_boundaries,
+          occurrenceConditions: input.current_features.occurrence_conditions,
+          successfulDirections: input.current_features.successful_directions,
+          deadEndDirections: input.current_features.dead_end_directions,
+          environmentFacts: input.current_features.environment_facts,
+        },
+      },
+    });
+
+    return outcome.kind === 'RECALLED'
+      ? {
+          kind: 'RECALLED' as const,
+          candidate_count: outcome.candidateCount,
+          semantic_status: outcome.semanticStatus,
+          structural_status: outcome.structuralStatus,
+        }
+      : { kind: outcome.kind };
+  });
+}
+
 /** Builds the server. Exported so a test can drive it without a transport. */
 export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): McpServer {
   const server = new McpServer({ name: 'memory', version: '0.0.0' });
@@ -647,6 +786,32 @@ export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): Mcp
       outputSchema: START_PROBLEM_OUTPUT_SCHEMA,
     },
     async (args, extra) => resultOf(await handleStartProblem(extra?.mcpReq, options, args)),
+  );
+
+  server.registerTool(
+    RECALL_SIMILAR_EXPERIENCE_TOOL,
+    {
+      description:
+        'Look up what past problem-solving has already learned that bears on the problem this ' +
+        'session is working on. Describe your current understanding in your own words: short ' +
+        'search terms, a fuller description, and the structural features you would compare ' +
+        'against. Which project and problem this attaches to come from the host, never from you. ' +
+        'Summarize — do not paste credentials, raw terminal or command output, or absolute paths ' +
+        'from this machine. Reports how the lookup went, not what it found.',
+      inputSchema: z
+        .object({
+          lexical_text: z.string().trim().min(1).max(MEMORY_SEARCH_MAX_LEXICAL_TEXT_LENGTH),
+          semantic_text: z.string().trim().min(1).max(MEMORY_SEARCH_MAX_SEMANTIC_TEXT_LENGTH),
+          current_features: RECALL_FEATURES_SCHEMA,
+        })
+        .strict(),
+      outputSchema: RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA,
+      // Deliberately no `readOnlyHint`. A search is a read of the Memory, but
+      // the server records that it happened, and telling a client otherwise
+      // would be a lie it might act on.
+    },
+    async (args, extra) =>
+      resultOf(await handleRecallSimilarExperience(extra?.mcpReq, options, args)),
   );
 
   return server;

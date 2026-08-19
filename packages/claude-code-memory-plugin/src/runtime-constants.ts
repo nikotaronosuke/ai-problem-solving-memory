@@ -20,7 +20,7 @@ export const PLUGIN_NAME = 'problem-solving-memory';
 export const MCP_SERVER_KEY = 'memory';
 
 /**
- * The four things somebody actually does, and the whole surface.
+ * The four ways somebody enters a Problem.
  *
  * Named for goals rather than for the calls underneath them: which Problem am
  * I on, carry on with this one, bring this paused one back, start a new one.
@@ -33,12 +33,22 @@ export const CONTINUE_PROBLEM_TOOL = 'continue_problem';
 export const RESUME_PROBLEM_TOOL = 'resume_problem';
 export const START_PROBLEM_TOOL = 'start_problem';
 
+/**
+ * Looking up what the Memory already knows about the Problem in hand.
+ *
+ * The fifth, and the first that is not about *which* Problem this session is
+ * on. The four above are how somebody enters a Problem; this is what they do
+ * once they are in one.
+ */
+export const RECALL_SIMILAR_EXPERIENCE_TOOL = 'recall_similar_experience';
+
 /** Every tool this runtime exposes. Exactly these, and a guard says so. */
 export const MEMORY_TOOLS = [
   CURRENT_PROBLEM_TOOL,
   CONTINUE_PROBLEM_TOOL,
   RESUME_PROBLEM_TOOL,
   START_PROBLEM_TOOL,
+  RECALL_SIMILAR_EXPERIENCE_TOOL,
 ] as const;
 
 export type MemoryTool = (typeof MEMORY_TOOLS)[number];
@@ -46,17 +56,17 @@ export type MemoryTool = (typeof MEMORY_TOOLS)[number];
 /**
  * The name the host actually exposes for a tool, assembled the way it does.
  *
- * Built from one rule rather than written out four times, so the hook's
+ * Built from one rule rather than written out once per tool, so the hook's
  * matchers, the record a hook mints and the name a handler claims under cannot
  * drift apart. The shape is measured against the installed host rather than
- * assumed, and a probe re-checks all four: if the host ever names tools
+ * assumed, and a probe re-checks every tool: if the host ever names tools
  * differently, this function and the manifest move together.
  */
 export function hostToolName(tool: MemoryTool): string {
   return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
 }
 
-/** The four exact host names, which is the only set that may mint identity. */
+/** The exact host names, which are the only set that may mint identity. */
 export const HOST_TOOL_NAMES: readonly string[] = MEMORY_TOOLS.map(hostToolName);
 
 /**
@@ -77,6 +87,15 @@ export const PLUGIN_DATA_ENV = 'MEMORY_CLAUDE_PLUGIN_DATA';
 /** Bindings and call contexts are different formats with different lifetimes. */
 export const BINDINGS_DIRECTORY = 'bindings';
 export const CALL_CONTEXT_DIRECTORY = 'call-context';
+
+/**
+ * Where repeated recalls are remembered, kept apart from both of those.
+ *
+ * A binding is what a session is working on and a call context is one call's
+ * identity; this is a cache nobody must trust. Putting it in with either would
+ * place a file that may be lost beside files that may not.
+ */
+export const RECALL_FINGERPRINT_DIRECTORY = 'recall-fingerprints';
 
 /**
  * The only record layout this version writes, and the only one it reads.

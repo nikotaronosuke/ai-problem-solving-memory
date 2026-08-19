@@ -94,7 +94,7 @@ export async function runPreToolUse(
   }
   const input = event as Record<string, unknown>;
 
-  // One of these four exactly, and nothing that merely resembles one. A hook
+  // One of these exactly, and nothing that merely resembles one. A hook
   // matcher is configuration and can be widened by accident; this is the check
   // that decides whether session identity is minted at all.
   const toolName = input['tool_name'];
