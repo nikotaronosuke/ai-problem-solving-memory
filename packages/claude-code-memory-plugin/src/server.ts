@@ -1,5 +1,5 @@
 /**
- * The MCP runtime: one tool, and the order in which it is allowed to fail.
+ * The MCP runtime: four tools, and the order in which they are allowed to fail.
  *
  * ## The order is the design
  *
@@ -186,12 +186,12 @@ const ERROR_VARIANT = z
   .object({ kind: z.literal('ERROR'), code: z.enum(RUNTIME_ERROR_CODES) })
   .strict();
 
-/** Neither mutation may quietly act under a Project that has moved. */
+/** No operation that acts may do so under a Project that has moved. */
 const PROJECT_SELECTION_STALE_VARIANT = z
   .object({ kind: z.literal('PROJECT_SELECTION_STALE') })
   .strict();
 
-/** Nor under a Problem whose chosen state no longer holds. */
+/** Nor either of the two that act on a chosen Problem, if that choice has. */
 const PROBLEM_SELECTION_STALE_VARIANT = z
   .object({ kind: z.literal('PROBLEM_SELECTION_STALE') })
   .strict();
@@ -560,9 +560,12 @@ export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): Mcp
     CURRENT_PROBLEM_TOOL,
     {
       description:
-        'Which problem this session is working on in this project, or what it could be. ' +
-        'Takes no arguments: the session and the project root come from the host. ' +
-        'Never picks between candidates — that judgement is the reader’s.',
+        'Which problem this session is working on in this project, or what must be decided first. ' +
+        'Normally takes no decision: session identity and the project root come from the host, ' +
+        'never from a caller. If an earlier result asked a project question, call this again ' +
+        'with project_decision to answer that question; the answer is revalidated against what ' +
+        'this session resolves to now rather than taken as authority. ' +
+        'Never picks between project or problem candidates — that judgement is the reader’s.',
       // One optional field, and it exists because this operation asks the
       // questions it answers. Everything else a Project needs is observed
       // here rather than described by a caller.

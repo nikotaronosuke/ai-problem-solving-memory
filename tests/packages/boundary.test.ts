@@ -788,10 +788,19 @@ describe('the Claude adapter', () => {
     }
     expect(actions).toContain('selectSuppliedProject');
 
-    // And only the asking operation accepts an answer.
+    // And only the asking operation accepts an answer. Counted over the input
+    // schemas rather than the whole module, because a tool description names
+    // the field on purpose — a model that is not told what to pass cannot
+    // answer the question this runtime asked it.
+    const inputs = server
+      .split('inputSchema:')
+      .slice(1)
+      .map((part) => part.slice(0, part.indexOf('outputSchema:')))
+      .join('\n');
+
     expect(server).toContain('project_decision: PROJECT_DECISION_SCHEMA.optional()');
-    expect(`decision inputs declared:${(server.match(/project_decision/gu) ?? []).length}`).toBe(
-      'decision inputs declared:2',
+    expect(`decision inputs declared:${(inputs.match(/project_decision/gu) ?? []).length}`).toBe(
+      'decision inputs declared:1',
     );
   });
 
@@ -854,6 +863,26 @@ describe('the Claude adapter', () => {
     // context cannot authenticate another's call.
     expect(hook).toContain('toolName,');
     expect(hook.includes('updatedInput')).toBe(false);
+  });
+
+  it('does not describe the asking operation as unable to be answered', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const asking = shipped.find((file) => file.path === 'src/current-problem.ts')?.source ?? '';
+
+    // This module's own account of itself outlived the capability it describes
+    // once already: it went on saying an answer had to arrive somewhere else
+    // after this operation had become the place answers arrive. A comment that
+    // contradicts the code is read by whoever changes the code next.
+    for (const stale of [
+      'not something this tool can yet accept',
+      'cannot yet accept',
+      'yet accept',
+    ]) {
+      expect(`the module still says "${stale}":${asking.includes(stale)}`).toBe(
+        `the module still says "${stale}":false`,
+      );
+    }
+    expect(asking).toContain('projectDecision');
   });
 
   it('has no MCP dependency yet, because it has no protocol code yet', async () => {
