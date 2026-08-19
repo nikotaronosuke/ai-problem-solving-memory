@@ -139,7 +139,7 @@ npm run credential:issue -- --label "local development"
 
 ```bash
 curl http://127.0.0.1:3000/health
-curl -H "Authorization: Bearer mem_..." http://127.0.0.1:3000/v1/me
+curl -H "Authorization: Bearer mem_<lookup>.<secret>" http://127.0.0.1:3000/v1/me
 ```
 
 credential の失効は id を指定します（token を指定しないのは、shell history に残さないためです）。
