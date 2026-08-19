@@ -3,11 +3,19 @@
  *
  * ## What the project root is, and what it is not
  *
- * The root arrives as an argument. It will be `CLAUDE_PROJECT_DIR`, which the
- * host documents as the stable project root that does not move when working
- * directories are added or removed mid-session — and reading it from the
- * environment is the composition's job rather than this function's, because
- * this function is also what a test drives and what a second assistant reuses.
+ * The root arrives as an argument: the current session location, which the
+ * host composition supplies. Where that comes from is the composition's job
+ * rather than this function's — this function is also what a test drives and
+ * what a second assistant reuses, and a rule about one assistant's environment
+ * variables has no business here.
+ *
+ * It is worth saying what *changed* about that, because an earlier version of
+ * this comment named a specific host variable and described it as stable. It
+ * was measured not to be: a session that moves to another directory mid-run
+ * keeps the variable it started with, so a root read once at start-up
+ * describes where the session began rather than where it is. The location now
+ * travels with each call. The rules below are unaffected — they were never
+ * about which variable carried the answer.
  *
  * Three things are deliberately not the project root:
  *

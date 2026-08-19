@@ -31,7 +31,7 @@
  */
 
 import { realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { mintCallContext, sweepCallContexts } from './host-call-context.js';
@@ -110,7 +110,18 @@ export async function runPreToolUse(
 
   const sessionId = input['session_id'];
   const hostCallId = input['tool_use_id'];
-  if (!isNonBlank(sessionId) || !isNonBlank(hostCallId)) {
+  // Where the session is *now*, from the host's own event rather than from
+  // anything this process could look up. `tool_input` is the model's and is
+  // never consulted; a relative value is refused rather than resolved,
+  // because resolving one would anchor a Project on whichever process
+  // happened to read it.
+  const currentDirectory = input['cwd'];
+  if (
+    !isNonBlank(sessionId) ||
+    !isNonBlank(hostCallId) ||
+    !isNonBlank(currentDirectory) ||
+    !isAbsolute(currentDirectory)
+  ) {
     return decide('deny', REASONS.UNUSABLE);
   }
 
@@ -133,6 +144,7 @@ export async function runPreToolUse(
     // must not authenticate another, so the name it was minted for is part of
     // what the handler later checks.
     toolName,
+    currentDirectory,
     now,
   });
 

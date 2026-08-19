@@ -41,6 +41,10 @@ const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 
 const NOW = 1_800_000_000_000;
 
+/** Where a session is, as the host reports it. Absolute, and never resolved. */
+const HERE = process.platform === 'win32' ? 'C:\\work\\repo-a' : '/work/repo-a';
+const ELSEWHERE = process.platform === 'win32' ? 'C:\\work\\repo-b' : '/work/repo-b';
+
 let directory: string;
 
 beforeEach(async () => {
@@ -57,6 +61,7 @@ async function mint(hostCallId = CALL_ID, now = NOW): Promise<boolean> {
     hostCallId,
     sessionId: SESSION_ID,
     toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+    currentDirectory: HERE,
     now,
   });
 }
@@ -127,13 +132,14 @@ describe('the name a record lives under', () => {
 });
 
 describe('minting', () => {
-  it('writes one record with exactly the four fields', async () => {
+  it('writes one record with exactly the five fields', async () => {
     expect(await mint()).toBe(true);
 
     const files = await readdir(directory);
     expect(files).toEqual([callContextFilename(CALL_ID)]);
     const record: unknown = JSON.parse(await readFile(join(directory, files[0] as string), 'utf8'));
     expect(Object.keys(record as object).sort()).toEqual([
+      'current_directory',
       'format_version',
       'minted_at',
       'session_id',
@@ -151,9 +157,10 @@ describe('minting', () => {
     // that there is nowhere in here for a Project, a Problem, a title or a
     // path to be.
     expect(JSON.parse(body)).toEqual({
-      format_version: 1,
+      format_version: 2,
       session_id: SESSION_ID,
       tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+      current_directory: HERE,
       minted_at: NOW,
     });
     // And not even the identifier it is named after: the filename carries it,
@@ -174,7 +181,11 @@ describe('claiming', () => {
   it('hands back the session the hook recorded', async () => {
     await mint();
 
-    await expect(claim()).resolves.toEqual({ kind: 'CLAIMED', sessionId: SESSION_ID });
+    await expect(claim()).resolves.toEqual({
+      kind: 'CLAIMED',
+      sessionId: SESSION_ID,
+      currentDirectory: HERE,
+    });
   });
 
   it('leaves nothing behind to claim twice', async () => {
@@ -243,6 +254,7 @@ describe('claiming', () => {
       hostCallId: CALL_ID,
       sessionId: SESSION_ID,
       toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+      currentDirectory: HERE,
       now: NOW,
     });
 
@@ -297,9 +309,10 @@ describe('claiming', () => {
         callContextFilename(CALL_ID, 'claimed-').replace('.json', `-${randomUUID()}.json`),
       ),
       JSON.stringify({
-        format_version: 1,
+        format_version: 2,
         session_id: SESSION_ID,
         tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: HERE,
         minted_at: NOW,
       }),
       'utf8',
@@ -335,6 +348,7 @@ describe('claiming', () => {
       hostCallId: CALL_ID,
       sessionId: SESSION_ID,
       toolName: 'mcp__something__else',
+      currentDirectory: HERE,
       now: NOW,
     });
 
@@ -346,41 +360,99 @@ describe('claiming', () => {
     [
       'a record with an extra field',
       JSON.stringify({
-        format_version: 1,
+        format_version: 2,
         session_id: 's',
         tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: HERE,
         minted_at: NOW,
         extra: 1,
       }),
     ],
     [
       'a record missing a field',
-      JSON.stringify({ format_version: 1, session_id: 's', minted_at: NOW }),
+      JSON.stringify({ format_version: 2, session_id: 's', minted_at: NOW }),
     ],
     [
       'an unknown format version',
       JSON.stringify({
+        format_version: 3,
+        session_id: 's',
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: HERE,
+        minted_at: NOW,
+      }),
+    ],
+    [
+      // The previous layout, which carried no location at all. Accepting one
+      // would mean answering this call from wherever the server happened to
+      // start, which is the defect this version closes.
+      'a record in the previous format',
+      JSON.stringify({
+        format_version: 1,
+        session_id: 's',
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        minted_at: NOW,
+      }),
+    ],
+    [
+      'a record with no current directory',
+      JSON.stringify({
         format_version: 2,
         session_id: 's',
         tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: undefined,
+        minted_at: NOW,
+      }),
+    ],
+    [
+      'a blank current directory',
+      JSON.stringify({
+        format_version: 2,
+        session_id: 's',
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: '   ',
+        minted_at: NOW,
+      }),
+    ],
+    [
+      // Resolved against whichever process read it, a relative path would name
+      // a different place in the hook than in the server.
+      'a relative current directory',
+      JSON.stringify({
+        format_version: 2,
+        session_id: 's',
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: 'work/repo-a',
+        minted_at: NOW,
+      }),
+    ],
+    [
+      'a current directory that is not a string',
+      JSON.stringify({
+        format_version: 2,
+        session_id: 's',
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: 7,
         minted_at: NOW,
       }),
     ],
     [
       'a blank session',
       JSON.stringify({
-        format_version: 1,
+        format_version: 2,
         session_id: '  ',
         tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: HERE,
         minted_at: NOW,
       }),
     ],
     [
       'a fractional timestamp',
       JSON.stringify({
-        format_version: 1,
+        format_version: 2,
         session_id: 's',
         tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: HERE,
         minted_at: 1.5,
       }),
     ],
@@ -631,9 +703,10 @@ describe('how much of a claimed record is read', () => {
     await writeFile(
       join(directory, callContextFilename(CALL_ID)),
       JSON.stringify({
-        format_version: 1,
+        format_version: 2,
         session_id: SESSION_ID,
         tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        current_directory: HERE,
         minted_at: NOW,
         // Valid JSON, and far too much of it.
         filler: 'x'.repeat(CALL_CONTEXT_MAX_BYTES),
@@ -649,6 +722,77 @@ describe('how much of a claimed record is read', () => {
   it('accepts an ordinary record', async () => {
     await mint();
 
-    await expect(claim()).resolves.toEqual({ kind: 'CLAIMED', sessionId: SESSION_ID });
+    await expect(claim()).resolves.toEqual({
+      kind: 'CLAIMED',
+      sessionId: SESSION_ID,
+      currentDirectory: HERE,
+    });
+  });
+});
+
+describe('the location a call was made from', () => {
+  it('comes back to the winner exactly as the host reported it', async () => {
+    await mint();
+
+    await expect(claim()).resolves.toEqual({
+      kind: 'CLAIMED',
+      sessionId: SESSION_ID,
+      currentDirectory: HERE,
+    });
+  });
+
+  it('is the directory of that call, not of some other one', async () => {
+    // Two calls in one session from two places. Each has to come back with its
+    // own, or a session that moved would be answered about where it was.
+    await mintCallContext({
+      directory,
+      hostCallId: CALL_ID,
+      sessionId: SESSION_ID,
+      toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+      currentDirectory: HERE,
+      now: NOW,
+    });
+    await mintCallContext({
+      directory,
+      hostCallId: OTHER_CALL_ID,
+      sessionId: SESSION_ID,
+      toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+      currentDirectory: ELSEWHERE,
+      now: NOW,
+    });
+
+    await expect(claim(CALL_ID)).resolves.toMatchObject({ currentDirectory: HERE });
+    await expect(claim(OTHER_CALL_ID)).resolves.toMatchObject({ currentDirectory: ELSEWHERE });
+  });
+
+  it('survives spaces and the characters JSON cares about', async () => {
+    const awkward =
+      process.platform === 'win32'
+        ? 'C:\\work\\a "quoted" \u00fc dir\\repo'
+        : '/work/a "quoted" \u00fc dir/repo';
+
+    await mintCallContext({
+      directory,
+      hostCallId: CALL_ID,
+      sessionId: SESSION_ID,
+      toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+      currentDirectory: awkward,
+      now: NOW,
+    });
+
+    const claimed = await claim();
+    expect(claimed.kind).toBe('CLAIMED');
+    expect(claimed.kind === 'CLAIMED' && claimed.currentDirectory === awkward).toBe(true);
+  });
+
+  it('is refused when a loser reads nothing at all', async () => {
+    await mint();
+    const winners = await Promise.all([claim(), claim(), claim()]);
+
+    expect(winners.filter((one) => one.kind === 'CLAIMED')).toHaveLength(1);
+    // A loser is told nothing: not the session, and not where it was.
+    for (const loser of winners.filter((one) => one.kind !== 'CLAIMED')) {
+      expect(Object.keys(loser)).toEqual(['kind']);
+    }
   });
 });

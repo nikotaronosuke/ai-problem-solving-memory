@@ -24,6 +24,9 @@ import {
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 const CALL_ID = 'toolu_01AAAAAAAAAAAAAAAAAAAAAA';
 
+/** Where the session is, as the host reports it on the event. */
+const HERE = process.platform === 'win32' ? 'C:\\work\\repo-a' : '/work/repo-a';
+
 let pluginData: string;
 
 beforeEach(async () => {
@@ -42,6 +45,7 @@ function event(overrides: Record<string, unknown> = {}): Record<string, unknown>
     tool_use_id: CALL_ID,
     tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
     tool_input: {},
+    cwd: HERE,
     ...overrides,
   };
 }
@@ -256,5 +260,87 @@ describe('the four tools it will mint for, and nothing else', () => {
     for (const secret of [SESSION_ID, CALL_ID, pluginData]) {
       expect(printed.includes(secret)).toBe(false);
     }
+  });
+});
+
+describe('where the call was made from', () => {
+  it.each(MEMORY_TOOLS)('records the exact directory the host reported, for %s', async (tool) => {
+    const decision = await runPreToolUse(
+      event({ tool_name: hostToolName(tool), cwd: HERE }),
+      environment(),
+      Date.now(),
+    );
+
+    expect(decision.hookSpecificOutput.permissionDecision).toBe('allow');
+    const written = await records();
+    expect(written).toHaveLength(1);
+
+    const body: unknown = JSON.parse(
+      await readFile(join(pluginData, CALL_CONTEXT_DIRECTORY, written[0] as string), 'utf8'),
+    );
+    // Exactly as given. The hook is transport: it neither resolves the path nor
+    // asks git anything about it.
+    expect((body as { current_directory: string }).current_directory).toBe(HERE);
+  });
+
+  it.each([
+    ['nothing at all', undefined],
+    ['a blank string', '   '],
+    ['an empty string', ''],
+    ['a number', 7],
+    ['an object', { path: HERE }],
+    // Resolved against whichever process read it, this would name one place in
+    // the hook and another in the server.
+    ['a relative path', 'work/repo-a'],
+    ['a bare directory name', 'repo-a'],
+    ['a dot', '.'],
+  ])('mints nothing when the host reports %s', async (_label, cwd) => {
+    const decision = await runPreToolUse(event({ cwd }), environment(), Date.now());
+
+    expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(await records()).toEqual([]);
+    // And says nothing about what was wrong with it.
+    expect(JSON.stringify(decision).includes('work/repo-a')).toBe(false);
+  });
+
+  it('takes nothing from the model’s own arguments', async () => {
+    // `tool_input` is chosen by the model. A directory there is a claim about
+    // somebody's machine made by the one participant that cannot see it.
+    const forged = process.platform === 'win32' ? 'C:\\forged\\elsewhere' : '/forged/elsewhere';
+    const decision = await runPreToolUse(
+      event({ cwd: HERE, tool_input: { cwd: forged, current_directory: forged } }),
+      environment(),
+      Date.now(),
+    );
+
+    expect(decision.hookSpecificOutput.permissionDecision).toBe('allow');
+    const written = await records();
+    const body = await readFile(
+      join(pluginData, CALL_CONTEXT_DIRECTORY, written[0] as string),
+      'utf8',
+    );
+
+    expect((JSON.parse(body) as { current_directory: string }).current_directory).toBe(HERE);
+    expect(body.includes('forged')).toBe(false);
+  });
+
+  it('mints nothing for a subagent, however good its directory is', async () => {
+    const decision = await runPreToolUse(
+      event({ cwd: HERE, agent_id: 'a5e40755', agent_type: 'general-purpose' }),
+      environment(),
+      Date.now(),
+    );
+
+    expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(await records()).toEqual([]);
+  });
+
+  it('keeps the directory out of everything it prints', async () => {
+    const decision = await runPreToolUse(event({ cwd: HERE }), environment(), Date.now());
+    const printed = JSON.stringify(decision);
+
+    expect(printed.includes(HERE)).toBe(false);
+    expect(printed.includes('updatedInput')).toBe(false);
+    expect(printed.includes('_memory_host_proof')).toBe(false);
   });
 });

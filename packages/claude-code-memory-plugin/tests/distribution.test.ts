@@ -302,6 +302,8 @@ describe('the hook, run from the installed copy', () => {
       tool_use_id: CALL_ID,
       hook_event_name: 'PreToolUse',
       tool_input: {},
+      // Where the session is, which the host puts on every hook event.
+      cwd: PACKAGE_ROOT,
     });
 
     expect(`the hook wrote to stderr:${stderr.length > 0}`).toBe('the hook wrote to stderr:false');
@@ -323,8 +325,10 @@ describe('the hook, run from the installed copy', () => {
     expect(minted).toHaveLength(1);
     const record = JSON.parse(
       await readFile(join(data, CALL_CONTEXT_DIRECTORY, minted[0] as string), 'utf8'),
-    ) as { tool_name?: string };
+    ) as { tool_name?: string; current_directory?: string; format_version?: number };
     expect(record.tool_name).toBe(toolName);
+    expect(record.format_version).toBe(2);
+    expect(record.current_directory).toBe(PACKAGE_ROOT);
 
     await rm(data, { recursive: true, force: true });
   }, 60_000);
@@ -336,6 +340,7 @@ describe('the hook, run from the installed copy', () => {
       tool_use_id: CALL_ID,
       hook_event_name: 'PreToolUse',
       tool_input: {},
+      cwd: PACKAGE_ROOT,
       agent_id: 'a5e40755',
       agent_type: 'general-purpose',
     });

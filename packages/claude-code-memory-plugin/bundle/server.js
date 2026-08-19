@@ -12,7 +12,7 @@ var __export = (target, all) => {
 
 // src/server.ts
 import { realpathSync } from "node:fs";
-import { isAbsolute as isAbsolute3, join as join3 } from "node:path";
+import { isAbsolute as isAbsolute4, join as join3 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ../memory-api-client/src/config.ts
@@ -22208,7 +22208,7 @@ async function currentProblem(input) {
 // src/host-call-context.ts
 import { createHash as createHash2 } from "node:crypto";
 import { mkdir as mkdir2, open as open2, readdir, readFile as readFile2, stat, unlink as unlink2 } from "node:fs/promises";
-import { join as join2 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join2 } from "node:path";
 
 // src/runtime-constants.ts
 var PLUGIN_NAME = "problem-solving-memory";
@@ -22227,15 +22227,15 @@ function hostToolName(tool) {
   return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
 }
 var HOST_TOOL_NAMES = MEMORY_TOOLS.map(hostToolName);
-var PROJECT_DIR_ENV = "MEMORY_CLAUDE_PROJECT_DIR";
 var PLUGIN_DATA_ENV = "MEMORY_CLAUDE_PLUGIN_DATA";
 var BINDINGS_DIRECTORY = "bindings";
 var CALL_CONTEXT_DIRECTORY = "call-context";
-var CALL_CONTEXT_FORMAT_VERSION = 1;
+var CALL_CONTEXT_FORMAT_VERSION = 2;
 var CALL_CONTEXT_FIELDS = [
   "format_version",
   "session_id",
   "tool_name",
+  "current_directory",
   "minted_at"
 ];
 var PENDING_PREFIX = "pending-";
@@ -22249,6 +22249,9 @@ var CALL_CONTEXT_MAX_BYTES = 4096;
 var HOST_CALL_ID_META_KEY = "claudecode/toolUseId";
 function isNonBlank2(value) {
   return typeof value === "string" && /\S/.test(value);
+}
+function isAbsolutePath(value) {
+  return isNonBlank2(value) && isAbsolute3(value);
 }
 function hostCallIdOf(request) {
   if (typeof request !== "object" || request === null) {
@@ -22291,7 +22294,10 @@ function isHostCallContext(value) {
   return record2["format_version"] === CALL_CONTEXT_FORMAT_VERSION && // Opaque on purpose: a session identifier's syntax is the host's to change,
   // and a second copy of that rule here would refuse good identities the day
   // it moved.
-  isNonBlank2(record2["session_id"]) && isNonBlank2(record2["tool_name"]) && typeof mintedAt === "number" && Number.isInteger(mintedAt) && mintedAt > 0;
+  isNonBlank2(record2["session_id"]) && isNonBlank2(record2["tool_name"]) && // Absolute, and taken as written. A relative path would be resolved
+  // against whatever process happened to read it, which is exactly the
+  // thing a Project must never depend on.
+  isAbsolutePath(record2["current_directory"]) && typeof mintedAt === "number" && Number.isInteger(mintedAt) && mintedAt > 0;
 }
 function isExpired(context, now) {
   return context.minted_at > now || now - context.minted_at > CALL_CONTEXT_MAX_AGE_MS;
@@ -22320,7 +22326,11 @@ async function claimCallContext(options) {
     if (isExpired(parsed, options.now)) {
       return { kind: "UNAVAILABLE" };
     }
-    return { kind: "CLAIMED", sessionId: parsed.session_id };
+    return {
+      kind: "CLAIMED",
+      sessionId: parsed.session_id,
+      currentDirectory: parsed.current_directory
+    };
   } catch {
     return { kind: "UNAVAILABLE" };
   } finally {
@@ -22559,16 +22569,12 @@ function classify(error2) {
   }
   return "INTERNAL_INVARIANT";
 }
-function runtimePathsOf(environment) {
-  const projectDir = environment[PROJECT_DIR_ENV];
+function runtimeStatePathsOf(environment) {
   const pluginData = environment[PLUGIN_DATA_ENV];
-  if (projectDir === void 0 || pluginData === void 0) {
+  if (pluginData === void 0 || !isAbsolute4(pluginData)) {
     return void 0;
   }
-  if (!isAbsolute3(projectDir) || !isAbsolute3(pluginData)) {
-    return void 0;
-  }
-  return { projectDir, pluginData };
+  return { pluginData };
 }
 function resultOf(outcome) {
   const text = outcome.kind === "ERROR" ? `ERROR ${outcome.code}` : outcome.kind;
@@ -22583,7 +22589,7 @@ async function serveAuthenticated(request, options, tool, work) {
   if (hostCallId === void 0) {
     return { kind: "ERROR", code: "HOST_CONTEXT_UNAVAILABLE" };
   }
-  const paths = runtimePathsOf(options.environment);
+  const paths = runtimeStatePathsOf(options.environment);
   if (paths === void 0) {
     return { kind: "ERROR", code: "HOST_CONTEXT_UNAVAILABLE" };
   }
@@ -22605,7 +22611,12 @@ async function serveAuthenticated(request, options, tool, work) {
       client,
       bindingStore,
       sessionId: claim.sessionId,
-      projectDir: paths.projectDir
+      // The call's own location, and the only one. There is deliberately no
+      // fallback to a start-up path: a stale directory does not fail, it
+      // answers confidently about the wrong Project, which is worse than
+      // saying nothing. The same value goes to Project detection and to
+      // Environment capture, so the two cannot describe different places.
+      projectDir: claim.currentDirectory
     });
   } catch (error2) {
     return { kind: "ERROR", code: classify(error2) };
@@ -22773,7 +22784,7 @@ function buildMemoryMcpServer(options) {
   return server;
 }
 async function main() {
-  const paths = runtimePathsOf(process.env);
+  const paths = runtimeStatePathsOf(process.env);
   if (paths !== void 0) {
     await sweepCallContexts({
       directory: join3(paths.pluginData, CALL_CONTEXT_DIRECTORY),
@@ -22809,7 +22820,7 @@ export {
   handleResumeProblem,
   handleStartProblem,
   resultOf,
-  runtimePathsOf,
+  runtimeStatePathsOf,
   serveAuthenticated
 };
 /*! Bundled license information:

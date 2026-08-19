@@ -34,7 +34,6 @@ import {
   hostToolName,
   MEMORY_TOOLS,
   PLUGIN_DATA_ENV,
-  PROJECT_DIR_ENV,
   type MemoryTool,
 } from '../src/runtime-constants.js';
 import {
@@ -48,13 +47,15 @@ import {
   handleStartProblem,
   RESUME_PROBLEM_OUTPUT_SCHEMA,
   resultOf,
-  runtimePathsOf,
+  runtimeStatePathsOf,
+  serveAuthenticated,
   RUNTIME_ERROR_CODES,
   START_PROBLEM_OUTPUT_SCHEMA,
 } from '../src/server.js';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 const CALL_ID = 'toolu_01AAAAAAAAAAAAAAAAAAAAAA';
+const OTHER_CALL_ID = 'toolu_01BBBBBBBBBBBBBBBBBBBBBB';
 const NOW = 1_800_000_000_000;
 
 /** Synthetic. Shaped like a credential and not one. */
@@ -77,8 +78,9 @@ afterEach(async () => {
 });
 
 function environment(overrides: Record<string, string | undefined> = {}) {
+  // No project directory. The server's environment carries state, not
+  // location: where the session is arrives with each call.
   return {
-    [PROJECT_DIR_ENV]: projectDir,
     [PLUGIN_DATA_ENV]: pluginData,
     MEMORY_API_TOKEN: FAKE_TOKEN,
     ...overrides,
@@ -94,15 +96,17 @@ function request(hostCallId: string = CALL_ID): unknown {
 async function mintFor(
   hostCallId: string = CALL_ID,
   toolName = hostToolName(CURRENT_PROBLEM_TOOL),
+  currentDirectory: string = projectDir,
 ): Promise<void> {
   const directory = join(pluginData, CALL_CONTEXT_DIRECTORY);
   await mkdir(directory, { recursive: true });
   await writeFile(
     join(directory, callContextFilename(hostCallId)),
     JSON.stringify({
-      format_version: 1,
+      format_version: 2,
       session_id: SESSION_ID,
       tool_name: toolName,
+      current_directory: currentDirectory,
       minted_at: NOW,
     }),
     'utf8',
@@ -287,18 +291,20 @@ describe('before anything about the Memory is looked at', () => {
   });
 });
 
-describe('the paths the host supplies', () => {
-  it('are read from the runtime environment, absolute or not at all', () => {
-    expect(runtimePathsOf(environment())).toEqual({ projectDir, pluginData });
-    expect(runtimePathsOf({})).toBeUndefined();
-    expect(runtimePathsOf(environment({ [PROJECT_DIR_ENV]: 'relative/path' }))).toBeUndefined();
-    expect(runtimePathsOf(environment({ [PLUGIN_DATA_ENV]: '' }))).toBeUndefined();
+describe('the one path the server’s environment supplies', () => {
+  it('is this plugin’s own state, absolute or not at all', () => {
+    expect(runtimeStatePathsOf(environment())).toEqual({ pluginData });
+    expect(runtimeStatePathsOf({})).toBeUndefined();
+    expect(runtimeStatePathsOf(environment({ [PLUGIN_DATA_ENV]: '' }))).toBeUndefined();
+    expect(
+      runtimeStatePathsOf(environment({ [PLUGIN_DATA_ENV]: 'relative/path' })),
+    ).toBeUndefined();
   });
 
-  it('refuse the call rather than falling back to where the process happens to be', async () => {
+  it('refuses the call rather than falling back to where the process happens to be', async () => {
     await mintFor();
 
-    await expect(handle(request(), environment({ [PROJECT_DIR_ENV]: undefined }))).resolves.toEqual(
+    await expect(handle(request(), environment({ [PLUGIN_DATA_ENV]: undefined }))).resolves.toEqual(
       { kind: 'ERROR', code: 'HOST_CONTEXT_UNAVAILABLE' },
     );
   });
@@ -397,9 +403,10 @@ describe('a call context belongs to one operation', () => {
     await writeFile(
       join(directory, callContextFilename(hostCallId)),
       JSON.stringify({
-        format_version: 1,
+        format_version: 2,
         session_id: SESSION_ID,
         tool_name: hostToolName(tool),
+        current_directory: projectDir,
         minted_at: NOW,
       }),
       'utf8',
@@ -627,5 +634,119 @@ describe('what a transcript is left holding', () => {
     });
 
     expect(result.content).toEqual([{ type: 'text', text: 'PROBLEM_CANDIDATES' }]);
+  });
+});
+
+describe('where the call is answered from', () => {
+  /** A second place, so "the call's location" can be told from "the server's". */
+  let elsewhere: string;
+
+  beforeEach(async () => {
+    elsewhere = await mkdtemp(join(tmpdir(), 'moved-to-'));
+  });
+
+  afterEach(async () => {
+    await rm(elsewhere, { recursive: true, force: true });
+  });
+
+  it('uses the directory the claim carried, not one the environment names', async () => {
+    // The defect this closes: a session that moves while the server keeps
+    // running was answered about the directory the server started in. Here the
+    // environment still names the old place, loudly, and it must lose.
+    await mintFor(CALL_ID, hostToolName(CURRENT_PROBLEM_TOOL), elsewhere);
+
+    const seen: string[] = [];
+    await serveAuthenticated(
+      request(),
+      { environment: environment({ MEMORY_CLAUDE_PROJECT_DIR: projectDir }), now: () => NOW },
+      CURRENT_PROBLEM_TOOL,
+      (call) => {
+        seen.push(call.projectDir);
+        return Promise.resolve({ kind: 'NO_PROBLEM', project_id: 'p' } as const);
+      },
+    );
+
+    expect(seen).toEqual([elsewhere]);
+    expect(seen.includes(projectDir)).toBe(false);
+  });
+
+  it('answers two calls of one session from the two places they were made', async () => {
+    // A session that moved mid-run. Each call carries its own location, so the
+    // second is not answered about where the first happened to be.
+    await mintFor(CALL_ID, hostToolName(CURRENT_PROBLEM_TOOL), projectDir);
+    await mintFor(OTHER_CALL_ID, hostToolName(CURRENT_PROBLEM_TOOL), elsewhere);
+
+    const seen: string[] = [];
+    const observe = (call: { projectDir: string }) => {
+      seen.push(call.projectDir);
+      return Promise.resolve({ kind: 'NO_PROBLEM', project_id: 'p' } as const);
+    };
+    const options = { environment: environment(), now: () => NOW };
+
+    await serveAuthenticated(request(CALL_ID), options, CURRENT_PROBLEM_TOOL, observe);
+    await serveAuthenticated(request(OTHER_CALL_ID), options, CURRENT_PROBLEM_TOOL, observe);
+
+    expect(seen).toEqual([projectDir, elsewhere]);
+  });
+
+  it('gives every one of the four the same one location', async () => {
+    // One value feeds Project detection and Environment capture alike, so no
+    // pair of them can describe different places.
+    for (const [index, tool] of MEMORY_TOOLS.entries()) {
+      // A distinct call each time: a claim is spent once, and its marker stays
+      // behind precisely so the same identifier cannot be used again.
+      const callId = `toolu_01FOUR${String(index)}AAAAAAAAAAAAAAAA`;
+      await mintFor(callId, hostToolName(tool), elsewhere);
+      const seen: string[] = [];
+
+      await serveAuthenticated(
+        request(callId),
+        { environment: environment(), now: () => NOW },
+        tool,
+        (call) => {
+          seen.push(call.projectDir);
+          return Promise.resolve({ kind: 'NO_PROBLEM', project_id: 'p' } as const);
+        },
+      );
+
+      expect(`${tool} answered from:${seen.join(',')}`).toBe(`${tool} answered from:${elsewhere}`);
+    }
+  });
+
+  it('refuses a call whose record carries no usable location', async () => {
+    // Written the way a previous version would have, with no location in it.
+    const directory = join(pluginData, CALL_CONTEXT_DIRECTORY);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, callContextFilename(CALL_ID)),
+      JSON.stringify({
+        format_version: 1,
+        session_id: SESSION_ID,
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
+        minted_at: NOW,
+      }),
+      'utf8',
+    );
+
+    // Refused before a credential is looked at, so nothing is revealed about
+    // whether a Memory is configured either.
+    await expect(handle(request(), environment())).resolves.toEqual({
+      kind: 'ERROR',
+      code: 'HOST_CONTEXT_UNAVAILABLE',
+    });
+    await expect(handle(request(), environment({ MEMORY_API_TOKEN: undefined }))).resolves.toEqual({
+      kind: 'ERROR',
+      code: 'HOST_CONTEXT_UNAVAILABLE',
+    });
+  });
+
+  it('never says where it was, whatever goes wrong', async () => {
+    await mintFor(CALL_ID, hostToolName(CURRENT_PROBLEM_TOOL), elsewhere);
+
+    const result = await handle(request(), environment({ MEMORY_API_TOKEN: undefined }));
+    const printed = JSON.stringify(resultOf(result));
+
+    expect(printed.includes(elsewhere)).toBe(false);
+    expect(printed.includes(pluginData)).toBe(false);
   });
 });
