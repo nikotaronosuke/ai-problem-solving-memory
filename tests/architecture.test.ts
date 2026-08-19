@@ -4813,6 +4813,35 @@ describe('conflicts', () => {
     expect(code).toContain('candidates: outcome.candidates.map((candidate) => candidate.ranking)');
   });
 
+  it('renders credentials differently without touching how they are stored', async () => {
+    // The token's rendering changed; what a row holds did not. The database
+    // never stored the rendered string — a public selector and a digest of the
+    // secret — so correcting the grammar needs no migration, no backfill and
+    // no format column. An existing row stays valid and revocable; only the
+    // string somebody is holding stops parsing, and no migration could fix
+    // that because the server never had the secret to re-render.
+    const migrations = join(process.cwd(), 'supabase', 'migrations');
+    const files = await readdir(migrations);
+
+    expect(files).toHaveLength(17);
+
+    const credentials = files.find((file) => file.includes('clients_credentials'));
+    expect(credentials).toBeDefined();
+    const sql = await readFile(join(migrations, credentials as string), 'utf8');
+
+    // The lookup half's encoding is unchanged, so its check constraint is too.
+    expect(sql).toContain("check (token_lookup ~ '^[A-Za-z0-9_-]{16}$')");
+    expect(sql).toContain('octet_length(token_hash) = 32');
+
+    // And nothing anywhere records a rendered token or a format version.
+    for (const file of files) {
+      const body = (await readFile(join(migrations, file), 'utf8')).toLowerCase();
+      for (const absent of ['token_format', 'token_version', 'rendered_token', 'token_text']) {
+        expect(body.includes(absent), `${file} stores ${absent}`).toBe(false);
+      }
+    }
+  });
+
   it('adds no schema, no contract and no dependency', async () => {
     const migrations = join(process.cwd(), 'supabase', 'migrations');
     for (const file of await readdir(migrations)) {

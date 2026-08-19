@@ -73,7 +73,7 @@ credential could not answer during the failure it exists to report.
 A request carries one header:
 
 ```
-Authorization: Bearer mem_<lookup>_<secret>
+Authorization: Bearer mem_<lookup>.<secret>
 ```
 
 The token is opaque and says nothing about who holds it. Its first half is a

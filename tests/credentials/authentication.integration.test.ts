@@ -306,7 +306,7 @@ describe.skipIf(databaseUrl === undefined)('authenticating a request', () => {
       [
         'a token with the wrong prefix',
         async () =>
-          me(`key_${generateCredentialToken().lookup}_${generateCredentialToken().secret}`),
+          me(`key_${generateCredentialToken().lookup}.${generateCredentialToken().secret}`),
       ],
       [
         'a well-formed token that was never issued',
@@ -319,13 +319,32 @@ describe.skipIf(databaseUrl === undefined)('authenticating a request', () => {
       expect(response.json()).toMatchObject({ error: { code: 'UNAUTHENTICATED' } });
     });
 
+    it('refuses a credential rendered the way the old format did', async () => {
+      // The halves are genuine and the row exists; only the separator is the
+      // one this server no longer speaks. It is refused like any other
+      // non-credential, and a caller cannot tell the two apart — nothing says
+      // "old format", because that would be a hint about somebody's token.
+      const issued = await issue(await makeOwner());
+      const legacy = `${TOKEN_PREFIX}_${issued.lookup}_${issued.secret}`;
+
+      const response = await me(legacy);
+
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ error: { code: 'UNAUTHENTICATED' } });
+      // And the same credential, rendered as it is issued today, still works.
+      expect((await me(issued.token)).statusCode).toBe(200);
+    });
+
     it('refuses a real lookup carrying a different secret', async () => {
       // The test that makes the hash column matter. The lookup half is stored
       // in the clear and is not a secret; if presenting a known one were
       // enough, the secret would be decoration and anyone who had ever seen a
       // token could authenticate.
       const issued = await issue(await makeOwner());
-      const impostor = `${TOKEN_PREFIX}_${issued.lookup}_${generateCredentialToken().secret}`;
+      // Rendered the way a real token is, so this reaches the digest
+      // comparison rather than stopping at the parser — which is the only
+      // place it proves anything about the hash column.
+      const impostor = `${TOKEN_PREFIX}_${issued.lookup}.${generateCredentialToken().secret}`;
 
       const response = await me(impostor);
 
@@ -346,7 +365,7 @@ describe.skipIf(databaseUrl === undefined)('authenticating a request', () => {
         app.inject({ method: 'GET', url: '/v1/me', headers: { authorization: 'Bearer' } }),
         me('not-a-memory-token'),
         me(formatCredentialToken(generateCredentialToken())),
-        me(`${TOKEN_PREFIX}_${issued.lookup}_${generateCredentialToken().secret}`),
+        me(`${TOKEN_PREFIX}_${issued.lookup}.${generateCredentialToken().secret}`),
         me(revoked.token),
       ]);
 

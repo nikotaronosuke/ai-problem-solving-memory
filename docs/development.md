@@ -111,9 +111,17 @@ Issue one, and copy the token it prints:
 npm run credential:issue -- --label "Claude Code laptop"
 ```
 
-The token is `mem_<lookup>_<secret>` and is shown once. Only a digest of the
+The token is `mem_<lookup>.<secret>` and is shown once. Only a digest of the
 secret half is stored, so it cannot be read back — a lost token is replaced
 rather than recovered. Send it as `Authorization: Bearer mem_…`.
+
+The two halves are separated by a dot because a dot cannot appear inside
+either of them, which is what makes the string readable in exactly one way.
+
+Credentials issued before this rendering — the ones separated by an underscore
+— no longer authenticate. The server never stored the secret, so an existing
+one cannot be re-rendered: issue a new credential, point the configuration at
+it, then revoke the previous one by its credential id.
 
 A client may hold several credentials, which is how rotation works: issue the
 second, move over, then revoke the first. Revocation takes effect on the next
