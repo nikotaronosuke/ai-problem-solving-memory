@@ -7,14 +7,19 @@
  * that nothing was written when it refused.
  */
 
-import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runPreToolUse } from '../src/pre-tool-use.js';
-import { CALL_CONTEXT_DIRECTORY, HOST_TOOL_NAME } from '../src/runtime-constants.js';
+import {
+  CALL_CONTEXT_DIRECTORY,
+  CURRENT_PROBLEM_TOOL,
+  hostToolName,
+  MEMORY_TOOLS,
+} from '../src/runtime-constants.js';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 const CALL_ID = 'toolu_01AAAAAAAAAAAAAAAAAAAAAA';
@@ -35,7 +40,7 @@ function event(overrides: Record<string, unknown> = {}): Record<string, unknown>
     hook_event_name: 'PreToolUse',
     session_id: SESSION_ID,
     tool_use_id: CALL_ID,
-    tool_name: HOST_TOOL_NAME,
+    tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
     tool_input: {},
     ...overrides,
   };
@@ -182,5 +187,74 @@ describe('tidying up after calls that never ran', () => {
     const decision = await runPreToolUse(event(), environment(), Date.now());
 
     expect(decision.hookSpecificOutput.permissionDecision).toBe('allow');
+  });
+});
+
+describe('the four tools it will mint for, and nothing else', () => {
+  it.each(MEMORY_TOOLS)('mints for %s and records that exact tool', async (tool) => {
+    const decision = await runPreToolUse(
+      event({ tool_name: hostToolName(tool) }),
+      environment(),
+      Date.now(),
+    );
+
+    expect(decision.hookSpecificOutput.permissionDecision).toBe('allow');
+    const written = await records();
+    expect(written).toHaveLength(1);
+
+    // The record names the operation, not the category. That is what stops a
+    // context minted for one tool authenticating another.
+    const body: unknown = JSON.parse(
+      await readFile(join(pluginData, CALL_CONTEXT_DIRECTORY, written[0] as string), 'utf8'),
+    );
+    expect((body as { tool_name: string }).tool_name).toBe(hostToolName(tool));
+  });
+
+  it.each([
+    [
+      'a plausible Memory tool nobody exposes',
+      'mcp__plugin_problem-solving-memory_memory__close_problem',
+    ],
+    ['the same names under another plugin', 'mcp__plugin_other_memory__continue_problem'],
+    ['a prefix of a real one', 'mcp__plugin_problem-solving-memory_memory__current_probl'],
+    [
+      'a real one with something appended',
+      'mcp__plugin_problem-solving-memory_memory__start_problem_v2',
+    ],
+    ['an unrelated tool entirely', 'Bash'],
+  ])('mints nothing for %s', async (_label, toolName) => {
+    // A matcher is configuration and can be widened by accident. This is the
+    // check that decides whether host identity is minted at all, so it names
+    // the four exactly rather than describing them.
+    const decision = await runPreToolUse(event({ tool_name: toolName }), environment(), Date.now());
+
+    expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(await records()).toEqual([]);
+  });
+
+  it.each(MEMORY_TOOLS)('mints nothing for %s inside a subagent', async (tool) => {
+    const decision = await runPreToolUse(
+      event({ tool_name: hostToolName(tool), agent_id: 'a5e40755', agent_type: 'general-purpose' }),
+      environment(),
+      Date.now(),
+    );
+
+    expect(decision.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(await records()).toEqual([]);
+  });
+
+  it.each(MEMORY_TOOLS)('rewrites nothing about a %s call', async (tool) => {
+    const decision = await runPreToolUse(
+      event({ tool_name: hostToolName(tool) }),
+      environment(),
+      Date.now(),
+    );
+    const printed = JSON.stringify(decision);
+
+    expect(printed.includes('updatedInput')).toBe(false);
+    expect(printed.includes('_memory_host_proof')).toBe(false);
+    for (const secret of [SESSION_ID, CALL_ID, pluginData]) {
+      expect(printed.includes(secret)).toBe(false);
+    }
   });
 });

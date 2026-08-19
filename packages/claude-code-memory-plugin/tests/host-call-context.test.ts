@@ -30,7 +30,8 @@ import {
 import {
   CALL_CONTEXT_MAX_AGE_MS,
   CALL_CONTEXT_MAX_BYTES,
-  HOST_TOOL_NAME,
+  CURRENT_PROBLEM_TOOL,
+  hostToolName,
 } from '../src/runtime-constants.js';
 
 /** Synthetic. Shaped like a host call id, and not one. */
@@ -55,13 +56,18 @@ async function mint(hostCallId = CALL_ID, now = NOW): Promise<boolean> {
     directory,
     hostCallId,
     sessionId: SESSION_ID,
-    toolName: HOST_TOOL_NAME,
+    toolName: hostToolName(CURRENT_PROBLEM_TOOL),
     now,
   });
 }
 
 async function claim(hostCallId = CALL_ID, now = NOW) {
-  return claimCallContext({ directory, hostCallId, toolName: HOST_TOOL_NAME, now });
+  return claimCallContext({
+    directory,
+    hostCallId,
+    toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+    now,
+  });
 }
 
 describe('reading the host identifier for the call being served', () => {
@@ -147,7 +153,7 @@ describe('minting', () => {
     expect(JSON.parse(body)).toEqual({
       format_version: 1,
       session_id: SESSION_ID,
-      tool_name: HOST_TOOL_NAME,
+      tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
       minted_at: NOW,
     });
     // And not even the identifier it is named after: the filename carries it,
@@ -236,7 +242,7 @@ describe('claiming', () => {
       directory,
       hostCallId: CALL_ID,
       sessionId: SESSION_ID,
-      toolName: HOST_TOOL_NAME,
+      toolName: hostToolName(CURRENT_PROBLEM_TOOL),
       now: NOW,
     });
 
@@ -293,7 +299,7 @@ describe('claiming', () => {
       JSON.stringify({
         format_version: 1,
         session_id: SESSION_ID,
-        tool_name: HOST_TOOL_NAME,
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
         minted_at: NOW,
       }),
       'utf8',
@@ -342,7 +348,7 @@ describe('claiming', () => {
       JSON.stringify({
         format_version: 1,
         session_id: 's',
-        tool_name: HOST_TOOL_NAME,
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
         minted_at: NOW,
         extra: 1,
       }),
@@ -356,7 +362,7 @@ describe('claiming', () => {
       JSON.stringify({
         format_version: 2,
         session_id: 's',
-        tool_name: HOST_TOOL_NAME,
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
         minted_at: NOW,
       }),
     ],
@@ -365,7 +371,7 @@ describe('claiming', () => {
       JSON.stringify({
         format_version: 1,
         session_id: '  ',
-        tool_name: HOST_TOOL_NAME,
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
         minted_at: NOW,
       }),
     ],
@@ -374,7 +380,7 @@ describe('claiming', () => {
       JSON.stringify({
         format_version: 1,
         session_id: 's',
-        tool_name: HOST_TOOL_NAME,
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
         minted_at: 1.5,
       }),
     ],
@@ -627,7 +633,7 @@ describe('how much of a claimed record is read', () => {
       JSON.stringify({
         format_version: 1,
         session_id: SESSION_ID,
-        tool_name: HOST_TOOL_NAME,
+        tool_name: hostToolName(CURRENT_PROBLEM_TOOL),
         minted_at: NOW,
         // Valid JSON, and far too much of it.
         filler: 'x'.repeat(CALL_CONTEXT_MAX_BYTES),

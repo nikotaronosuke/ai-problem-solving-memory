@@ -30,14 +30,14 @@
 
 import type { MemoryApiClient } from '@ai-problem-solving-memory/api-client';
 import {
-  detectProjectSignals,
-  registerProject,
   resolveProblemForSession,
   type ContinuableProblemStatus,
   type DetectProjectSignalsInput,
   type ProblemBindingStore,
   type ProjectAmbiguityReason,
 } from '@ai-problem-solving-memory/claude-code-adapter';
+
+import { settleProject, type ProjectDecision } from './project-decision.js';
 
 /** One Problem somebody could continue, in the least that identifies it. */
 export interface CurrentProblemCandidate {
@@ -81,7 +81,8 @@ export type CurrentProblemOutcome =
       readonly detected_repo_subpath: string;
     }
   | { readonly kind: 'EXPLICIT_REGISTRATION_REQUIRED'; readonly project_name: string }
-  | { readonly kind: 'NO_PROJECT_SIGNAL' };
+  | { readonly kind: 'NO_PROJECT_SIGNAL' }
+  | { readonly kind: 'PROJECT_DECISION_STALE' };
 
 /**
  * Raised when a deterministic answer cannot be turned into a result.
@@ -103,6 +104,15 @@ export interface CurrentProblemInput {
   readonly bindingStore: ProblemBindingStore;
   readonly sessionId: string;
   readonly projectDir: string;
+  /**
+   * An answer to a Project question this operation asked earlier.
+   *
+   * Optional because most calls have nothing to answer: a session in a
+   * recorded repository never sees a question at all. When one does arrive it
+   * is a candidate rather than an instruction — revalidated against a fresh
+   * look at the machine before anything is registered or resolved.
+   */
+  readonly projectDecision?: ProjectDecision | undefined;
   /** How git is invoked while detecting. Production omits it. */
   readonly runGit?: DetectProjectSignalsInput['runGit'];
 }
@@ -115,17 +125,15 @@ export interface CurrentProblemInput {
  * model said — the root is the host's, and the model has no field to put one in.
  */
 export async function currentProblem(input: CurrentProblemInput): Promise<CurrentProblemOutcome> {
-  const signals = await detectProjectSignals({
+  // Detection, the answer if one came, and the revalidation of it all happen
+  // in one place — so this operation and the three that act on a Problem
+  // cannot come to differ about what settling a Project means.
+  const project = await settleProject({
+    client: input.client,
     projectDir: input.projectDir,
-    // Absent stays absent: passing `undefined` explicitly is a different claim
-    // under this repository's exact-optional rule.
+    decision: input.projectDecision,
     ...(input.runGit === undefined ? {} : { runGit: input.runGit }),
   });
-
-  // No owner choice is passed, and none can be: this tool has no input for one
-  // yet. So this registers only what needs no decision, and returns every
-  // question untouched.
-  const project = await registerProject(input.client, signals);
 
   switch (project.kind) {
     case 'AMBIGUOUS':
@@ -165,8 +173,13 @@ export async function currentProblem(input: CurrentProblemInput): Promise<Curren
     case 'NO_PROJECT_SIGNAL':
       return { kind: 'NO_PROJECT_SIGNAL' };
 
-    case 'CREATED':
-    case 'RESOLVED': {
+    case 'DECISION_STALE':
+      // The answer this call was given no longer describes anything true. It
+      // carries nothing back: what *is* true is this same question asked
+      // again, without the answer that expired.
+      return { kind: 'PROJECT_DECISION_STALE' };
+
+    case 'SETTLED': {
       const problem = await resolveProblemForSession(
         input.client,
         input.bindingStore,
