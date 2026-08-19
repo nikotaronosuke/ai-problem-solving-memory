@@ -662,6 +662,38 @@ describe('the Claude adapter', () => {
     expect(claim.indexOf('CALL_CONTEXT_MAX_BYTES')).toBeLessThan(claim.indexOf('readFile'));
   });
 
+  it('claims a call by creating one file that cannot already exist', async () => {
+    const shipped = await sourcesOf('claude-code-memory-plugin');
+    const context = shipped.find((file) => file.path === 'src/host-call-context.ts');
+    const code = codeOnly(context?.source ?? '');
+    const claim = code.slice(
+      code.indexOf('export async function claimCallContext'),
+      code.indexOf('export async function sweepCallContexts'),
+    );
+
+    // Exclusive creation is the exclusion. Renaming a record to a unique name
+    // and calling a successful rename ownership was measured false on Windows,
+    // where several concurrent callers are told they won — so no rename takes
+    // part in authentication anywhere in this module.
+    expect(claim).toContain("open(marker, 'wx', 0o600)");
+    for (const forbidden of ['rename(', 'randomUUID']) {
+      expect(`the claim uses ${forbidden}:${code.includes(forbidden)}`).toBe(
+        `the claim uses ${forbidden}:false`,
+      );
+    }
+
+    // The marker is won before anything trusted is opened, so a loser never
+    // reads a session it did not win.
+    expect(claim.indexOf("open(marker, 'wx'")).toBeLessThan(claim.indexOf('stat(pending)'));
+    expect(claim.indexOf("open(marker, 'wx'")).toBeLessThan(claim.indexOf('readFile'));
+
+    // And it is not removed when the call ends: only the record is.
+    expect(claim).toContain('unlink(pending)');
+    expect(`the claim releases its marker:${claim.includes('unlink(marker)')}`).toBe(
+      'the claim releases its marker:false',
+    );
+  });
+
   it('offers exactly one Memory tool, and no input for the model to fill', async () => {
     const shipped = await sourcesOf('claude-code-memory-plugin');
     const server = shipped.find((file) => file.path === 'src/server.ts');
