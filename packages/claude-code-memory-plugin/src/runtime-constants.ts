@@ -65,22 +65,37 @@ export const HOST_TOOL_NAMES: readonly string[] = MEMORY_TOOLS.map(hostToolName)
  * Passed in through the MCP server's declared environment rather than read
  * from the host's own variable names, so the runtime depends on one name it
  * controls instead of on the host's spelling.
+ *
+ * This is the *only* path the server's environment carries, and deliberately
+ * so. Where the session currently is arrives per call instead, because a
+ * value read once at start-up describes where the session *began*: a session
+ * that moves while the server keeps running would otherwise go on being
+ * answered about the place it left.
  */
-export const PROJECT_DIR_ENV = 'MEMORY_CLAUDE_PROJECT_DIR';
 export const PLUGIN_DATA_ENV = 'MEMORY_CLAUDE_PLUGIN_DATA';
 
 /** Bindings and call contexts are different formats with different lifetimes. */
 export const BINDINGS_DIRECTORY = 'bindings';
 export const CALL_CONTEXT_DIRECTORY = 'call-context';
 
-/** The only record layout this version writes, and the only one it reads. */
-export const CALL_CONTEXT_FORMAT_VERSION = 1;
+/**
+ * The only record layout this version writes, and the only one it reads.
+ *
+ * Version 2 added the call's current directory. Version 1 is refused rather
+ * than tolerated: it carries no location, so accepting one would mean
+ * answering the call from somewhere else — which is the defect this version
+ * exists to close. A version-1 file left behind by an older install is
+ * ordinary litter, and the sweep removes it by name and age without parsing
+ * it.
+ */
+export const CALL_CONTEXT_FORMAT_VERSION = 2;
 
 /** The keys a pending record carries. Exactly these, in this order. */
 export const CALL_CONTEXT_FIELDS = [
   'format_version',
   'session_id',
   'tool_name',
+  'current_directory',
   'minted_at',
 ] as const;
 
@@ -120,5 +135,11 @@ export const CALL_CONTEXT_MAX_AGE_MS = 60 * 60 * 1000;
  * These files are written by this plugin and are a few hundred bytes. Reading
  * without a bound would make anything that ends up in that directory this
  * process's problem.
+ *
+ * Kept at 4096 after the record gained a directory: the rest of a record is
+ * under 200 bytes, so this leaves room for a path far longer than any host
+ * this runtime supports can hand it — Windows' own extended limit is 32,767
+ * *characters*, but a project root that long is not a path anybody has, and a
+ * record that overran this would be refused rather than silently truncated.
  */
 export const CALL_CONTEXT_MAX_BYTES = 4096;

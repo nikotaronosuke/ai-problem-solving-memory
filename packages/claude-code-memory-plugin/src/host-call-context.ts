@@ -58,7 +58,7 @@
 
 import { createHash } from 'node:crypto';
 import { mkdir, open, readdir, readFile, stat, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import {
   CALL_CONTEXT_FIELDS,
@@ -80,21 +80,37 @@ import {
  */
 const HOST_CALL_ID_META_KEY = 'claudecode/toolUseId';
 
-/** What a pending record holds. Exactly this, and nothing about the work. */
+/**
+ * What a pending record holds. Exactly this, and nothing about the work.
+ *
+ * `current_directory` is where the session was when the host announced this
+ * call — an absolute path on this machine, carried because the server process
+ * cannot ask: it learned a directory once, at start-up, and a session that
+ * has moved since would go on being answered about the place it left. It is
+ * transport, not identity: it authenticates nothing by itself, and it is gone
+ * before anything the Memory sees.
+ */
 export interface HostCallContext {
   readonly format_version: typeof CALL_CONTEXT_FORMAT_VERSION;
   readonly session_id: string;
   readonly tool_name: string;
+  readonly current_directory: string;
   readonly minted_at: number;
 }
 
 /** What claiming a call context concluded. */
 export type HostCallContextClaim =
-  { readonly kind: 'CLAIMED'; readonly sessionId: string } | { readonly kind: 'UNAVAILABLE' };
+  | { readonly kind: 'CLAIMED'; readonly sessionId: string; readonly currentDirectory: string }
+  | { readonly kind: 'UNAVAILABLE' };
 
 /** Whether text has something in it. */
 function isNonBlank(value: unknown): value is string {
   return typeof value === 'string' && /\S/.test(value);
+}
+
+/** Whether a value is a path that means the same thing wherever it is read. */
+function isAbsolutePath(value: unknown): value is string {
+  return isNonBlank(value) && isAbsolute(value);
 }
 
 /**
@@ -191,6 +207,10 @@ export function isHostCallContext(value: unknown): value is HostCallContext {
     // it moved.
     isNonBlank(record['session_id']) &&
     isNonBlank(record['tool_name']) &&
+    // Absolute, and taken as written. A relative path would be resolved
+    // against whatever process happened to read it, which is exactly the
+    // thing a Project must never depend on.
+    isAbsolutePath(record['current_directory']) &&
     typeof mintedAt === 'number' &&
     Number.isInteger(mintedAt) &&
     mintedAt > 0
@@ -216,6 +236,7 @@ export async function mintCallContext(options: {
   readonly hostCallId: string;
   readonly sessionId: string;
   readonly toolName: string;
+  readonly currentDirectory: string;
   readonly now: number;
 }): Promise<boolean> {
   await mkdir(options.directory, { recursive: true });
@@ -224,6 +245,10 @@ export async function mintCallContext(options: {
     format_version: CALL_CONTEXT_FORMAT_VERSION,
     session_id: options.sessionId,
     tool_name: options.toolName,
+    // Written as the host gave it. Nothing here canonicalises a repository or
+    // reads git: the hook is transport, and deciding what a directory means
+    // is the adapter's, one process later.
+    current_directory: options.currentDirectory,
     minted_at: options.now,
   };
 
@@ -309,7 +334,11 @@ export async function claimCallContext(options: {
     if (isExpired(parsed, options.now)) {
       return { kind: 'UNAVAILABLE' };
     }
-    return { kind: 'CLAIMED', sessionId: parsed.session_id };
+    return {
+      kind: 'CLAIMED',
+      sessionId: parsed.session_id,
+      currentDirectory: parsed.current_directory,
+    };
   } catch {
     return { kind: 'UNAVAILABLE' };
   } finally {
