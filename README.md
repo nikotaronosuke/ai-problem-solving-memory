@@ -93,7 +93,40 @@ API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にありま�
 
 - `packages/claude-code-adapter` の Project 自動判定。git remote から Project 同一性を導き、確信が持てないときは推測せず候補と理由を返します
 
-まだないもの: session 連携・自動検索・Event の自動記録。
+まだないもの: 自動検索・Event の自動記録。
+
+## Claude Code へのインストール
+
+Claude Code plugin として配布しています。checkout も build も不要です。
+
+```bash
+claude plugin marketplace add nikotaronosuke/ai-problem-solving-memory
+claude plugin install problem-solving-memory@ai-problem-solving-memory
+```
+
+インストール後、main session で次の 4 つが使えます。
+
+| Tool               | 何をするか                                                   |
+| ------------------ | ------------------------------------------------------------ |
+| `current_problem`  | この session がどの Problem に取り組んでいるか、あるいは先に何を決める必要があるか |
+| `continue_problem` | すでに開いている Problem の続きに入る                        |
+| `resume_problem`   | 一時停止していた Problem を作業状態に戻す                    |
+| `start_problem`    | まだ開いていない困りごとを新しい Problem として始める        |
+
+必要なもの:
+
+- 到達可能な Memory service（この repository の server。ローカルでもリモートでも構いません）
+- `MEMORY_API_TOKEN` を環境変数として渡すこと。plugin は自分で credential を作りません
+- `MEMORY_API_URL` は共通 client の設定契約に従います（未設定ならその既定）
+
+token は環境から渡すだけにしてください。commit してはいけません。credential の発行と失効は
+`docs/development.md` の Credentials を参照してください。
+
+Memory が設定されていない場合、4 つの tool はすべて `MEMORY_NOT_CONFIGURED` を返して止まります。
+壊れた状態で先に進むことはありません。
+
+現時点の plugin が持っているのは Problem の入口と継続だけです。自動検索も Event の自動記録も
+まだありません。
 
 ## Development
 

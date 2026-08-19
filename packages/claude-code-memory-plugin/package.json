@@ -10,6 +10,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "bundle": "node scripts/build-bundle.mjs",
+    "bundle:check": "node scripts/build-bundle.mjs --check",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,5 +19,8 @@
     "@ai-problem-solving-memory/claude-code-adapter": "*",
     "@modelcontextprotocol/server": "2.0.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

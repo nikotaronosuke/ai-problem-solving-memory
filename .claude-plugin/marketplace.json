@@ -1,0 +1,14 @@
+{
+  "name": "ai-problem-solving-memory",
+  "owner": {
+    "name": "AI Problem-Solving Memory"
+  },
+  "description": "The Claude Code plugin for a user-owned, vendor-independent memory of past problem-solving.",
+  "plugins": [
+    {
+      "name": "problem-solving-memory",
+      "source": "./packages/claude-code-memory-plugin",
+      "description": "Remembers which problem a session is working on, across sessions and projects."
+    }
+  ]
+}
