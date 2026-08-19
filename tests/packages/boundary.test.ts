@@ -427,6 +427,44 @@ describe('the common client', () => {
     }
   });
 
+  it('keeps the credential opaque, in every package that carries one', async () => {
+    // What a Memory credential looks like is the server's rule, and it has now
+    // changed twice. A package that enforced a copy of the grammar would start
+    // refusing valid credentials the day it changed again — which is the
+    // failure this guard exists to make impossible rather than merely
+    // discouraged, because the copy would look harmless and would pass every
+    // test that did not present a newly-shaped token.
+    //
+    // Non-blank is the one property a client can know: an unset variable is a
+    // configuration mistake, and everything else is the server's answer.
+    for (const packageDirectory of [
+      'memory-api-client',
+      'claude-code-adapter',
+      'claude-code-memory-plugin',
+    ]) {
+      const shipped = (await sourcesOf(packageDirectory)).filter((file) =>
+        file.path.startsWith('src/'),
+      );
+
+      for (const { path, source } of shipped) {
+        const code = codeOnly(source);
+        for (const forbidden of [
+          'mem_',
+          'parseCredentialToken',
+          'TOKEN_PREFIX',
+          'LOOKUP_LENGTH',
+          'SECRET_LENGTH',
+          '{16}',
+          '{43}',
+        ]) {
+          expect(
+            `${path} knows the token grammar via ${forbidden}:${code.includes(forbidden)}`,
+          ).toBe(`${path} knows the token grammar via ${forbidden}:false`);
+        }
+      }
+    }
+  });
+
   it('never retries a call on the caller’s behalf', async () => {
     const shipped = (await sourcesOf('memory-api-client')).filter((file) =>
       file.path.startsWith('src/'),
