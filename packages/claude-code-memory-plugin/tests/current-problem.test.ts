@@ -12,7 +12,7 @@
 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -392,5 +392,207 @@ describe('what a result may carry', () => {
     for (const [pending, keys] of cases) {
       expect(Object.keys((await pending) as object).sort()).toEqual([...keys]);
     }
+  });
+});
+
+describe('answering the Project question it asked', () => {
+  const web = () => project({ project_id: 'web', repo: REPO, repo_subpath: 'apps/web' });
+
+  it('selects an existing Project a caller chose, after checking it still holds', async () => {
+    // Two Projects tie on this repository, so the question is real. The answer
+    // is checked against what resolves now rather than against the list it was
+    // offered from — a boundary declared in between could have settled it.
+    const { client } = memory({
+      projects: [
+        project({ project_id: 'a', repo: REPO }),
+        project({ project_id: 'b', repo: REPO }),
+      ],
+      problems: [],
+    });
+
+    await expect(
+      currentProblem({
+        client,
+        bindingStore: bindings,
+        sessionId: SESSION_ID,
+        projectDir,
+        runGit: gitSaying(),
+        projectDecision: { kind: 'SELECT_EXISTING', project_id: 'a' },
+      }),
+    ).resolves.toEqual({ kind: 'NO_PROBLEM', project_id: 'a' });
+  });
+
+  it('reports a chosen Project that no longer resolves, and stops there', async () => {
+    const { client, log } = memory({ projects: [project({ project_id: 'a', repo: REPO })] });
+
+    await expect(
+      currentProblem({
+        client,
+        bindingStore: bindings,
+        sessionId: SESSION_ID,
+        projectDir,
+        runGit: gitSaying(),
+        projectDecision: { kind: 'SELECT_EXISTING', project_id: 'gone' },
+      }),
+    ).resolves.toEqual({ kind: 'PROJECT_DECISION_STALE' });
+
+    // Nothing about a Problem was read: the answer was about a Project this
+    // session is not in, and acting anyway would file work under it.
+    expect(log.creates).toBe(0);
+  });
+
+  it('registers the whole repository when that is the answer', async () => {
+    const { client, log } = memory({
+      projects: [],
+      projectsAfterCreate: [project({ project_id: 'created', repo: REPO })],
+      problems: [],
+    });
+
+    await expect(
+      currentProblem({
+        client,
+        bindingStore: bindings,
+        sessionId: SESSION_ID,
+        projectDir,
+        runGit: gitSaying({ toplevel: join(projectDir, '..') }),
+        projectDecision: { kind: 'REPOSITORY_ROOT' },
+      }),
+    ).resolves.toEqual({ kind: 'NO_PROBLEM', project_id: 'created' });
+    expect(log.creates).toBe(1);
+  });
+
+  it('registers the part of a repository the owner named', async () => {
+    const { client, log } = memory({
+      projects: [],
+      projectsAfterCreate: [
+        project({ project_id: 'created', repo: REPO, repo_subpath: basename(projectDir) }),
+      ],
+      problems: [],
+    });
+
+    await expect(
+      currentProblem({
+        client,
+        bindingStore: bindings,
+        sessionId: SESSION_ID,
+        projectDir,
+        runGit: gitSaying({ toplevel: join(projectDir, '..') }),
+        projectDecision: { kind: 'REPOSITORY_BOUNDARY', repo_subpath: basename(projectDir) },
+      }),
+    ).resolves.toMatchObject({ kind: 'NO_PROBLEM' });
+    expect(log.creates).toBe(1);
+  });
+
+  it('registers something with no repository when the owner means it', async () => {
+    const { client, log } = memory({
+      projects: [],
+      projectsAfterCreate: [project({ project_id: 'created', repo: null })],
+      problems: [],
+    });
+
+    await expect(
+      currentProblem({
+        client,
+        bindingStore: bindings,
+        sessionId: SESSION_ID,
+        projectDir,
+        runGit: gitSaying({ remote: null }),
+        projectDecision: { kind: 'REGISTER_WITHOUT_REPOSITORY' },
+      }),
+    ).resolves.toMatchObject({ kind: 'NO_PROBLEM' });
+    expect(log.creates).toBe(1);
+  });
+
+  it('registers a further part of a repository somebody already split', async () => {
+    // The sibling case: one Project covers `apps/web`, this session is not in
+    // it, and the answer says this location is its own Project.
+    const { client, log } = memory({
+      projects: [web()],
+      projectsAfterCreate: [
+        web(),
+        project({
+          project_id: 'created',
+          repo: REPO,
+          repo_subpath: basename(join(projectDir, '..')),
+        }),
+      ],
+      problems: [],
+    });
+
+    await expect(
+      currentProblem({
+        client,
+        bindingStore: bindings,
+        sessionId: SESSION_ID,
+        projectDir,
+        runGit: gitSaying({ toplevel: join(projectDir, '..', '..') }),
+        // An ancestor of where the session actually is, which is the only kind
+        // of boundary that covers it.
+        projectDecision: {
+          kind: 'REPOSITORY_BOUNDARY',
+          repo_subpath: basename(join(projectDir, '..')),
+        },
+      }),
+    ).resolves.toMatchObject({ kind: 'NO_PROBLEM' });
+    expect(log.creates).toBe(1);
+  });
+
+  it('reports a registration answer that cannot describe this session', async () => {
+    // A boundary naming somewhere this session is not inside. That is an answer
+    // that went out of date, not a broken program — and the path it named does
+    // not come back out.
+    const { client, log } = memory({ projects: [] });
+
+    const outcome = await currentProblem({
+      client,
+      bindingStore: bindings,
+      sessionId: SESSION_ID,
+      projectDir,
+      runGit: gitSaying({ toplevel: join(projectDir, '..') }),
+      projectDecision: { kind: 'REPOSITORY_BOUNDARY', repo_subpath: 'somewhere/else-entirely' },
+    });
+
+    expect(outcome).toEqual({ kind: 'PROJECT_DECISION_STALE' });
+    expect(JSON.stringify(outcome).includes('somewhere/else-entirely')).toBe(false);
+    expect(log.creates).toBe(0);
+  });
+
+  it('still refuses to create against an ambiguity a choice does not answer', async () => {
+    // Two Projects tied on this repository is a duplicate to merge, not a
+    // question a registration answers — so the choice changes nothing and the
+    // ambiguity is still what comes back.
+    const { client, log } = memory({
+      projects: [
+        project({ project_id: 'a', repo: REPO }),
+        project({ project_id: 'b', repo: REPO }),
+      ],
+    });
+
+    await expect(
+      currentProblem({
+        client,
+        bindingStore: bindings,
+        sessionId: SESSION_ID,
+        projectDir,
+        runGit: gitSaying(),
+        projectDecision: { kind: 'REPOSITORY_ROOT' },
+      }),
+    ).resolves.toMatchObject({ kind: 'PROJECT_AMBIGUOUS' });
+    expect(log.creates).toBe(0);
+  });
+
+  it('answers a stale decision with a kind and nothing else', async () => {
+    const { client } = memory({ projects: [project({ project_id: 'a', repo: REPO })] });
+
+    const outcome = await currentProblem({
+      client,
+      bindingStore: bindings,
+      sessionId: SESSION_ID,
+      projectDir,
+      runGit: gitSaying(),
+      projectDecision: { kind: 'SELECT_EXISTING', project_id: 'gone' },
+    });
+
+    expect(Object.keys(outcome)).toEqual(['kind']);
   });
 });
