@@ -41,7 +41,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, readdir, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -113,6 +113,23 @@ export function hostCallIdOf(request: unknown): string | undefined {
 export function callContextFilename(hostCallId: string, prefix: string = PENDING_PREFIX): string {
   const digest = createHash('sha256').update(hostCallId, 'utf8').digest('hex');
   return `${prefix}${digest}${RECORD_SUFFIX}`;
+}
+
+/**
+ * The two shapes this component generates, and nothing else.
+ *
+ * Written beside the function that builds those names so the two cannot drift:
+ * a digest, and a digest followed by the identifier a claim adds. Recognising
+ * by prefix and extension alone was too generous — `pending-anything.json` is
+ * not a name this code can produce, and sweeping it would mean deleting
+ * somebody else's file out of a directory this component merely shares.
+ */
+const OWNED_FILENAME =
+  /^(?:pending-[0-9a-f]{64}|claimed-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json$/u;
+
+/** Whether a directory entry is one of ours, by name alone. */
+export function isOwnedCallContextFilename(entry: string): boolean {
+  return OWNED_FILENAME.test(entry);
 }
 
 /**
@@ -233,11 +250,16 @@ export async function claimCallContext(options: {
   }
 
   try {
-    const raw = await readFile(claimed, 'utf8');
-    if (raw.length > CALL_CONTEXT_MAX_BYTES) {
+    // The size is checked before the bytes are taken, not after. Reading first
+    // and measuring the string afterwards is not a bound at all — whatever was
+    // in the file is already in memory by then, and these records are a few
+    // hundred bytes written by this component.
+    const description = await stat(claimed);
+    if (!description.isFile() || description.size > CALL_CONTEXT_MAX_BYTES) {
       return { kind: 'UNAVAILABLE' };
     }
-    const parsed: unknown = JSON.parse(raw);
+
+    const parsed: unknown = JSON.parse(await readFile(claimed, 'utf8'));
     if (!isHostCallContext(parsed)) {
       return { kind: 'UNAVAILABLE' };
     }
@@ -277,25 +299,40 @@ export async function sweepCallContexts(options: {
   }
 
   for (const entry of entries) {
-    const ours =
-      (entry.startsWith(PENDING_PREFIX) || entry.startsWith(CLAIMED_PREFIX)) &&
-      entry.endsWith(RECORD_SUFFIX);
-    if (!ours) {
+    if (!isOwnedCallContextFilename(entry)) {
       continue;
     }
 
     const path = join(options.directory, entry);
+    let description;
     try {
-      const raw = await readFile(path, 'utf8');
-      const parsed: unknown = JSON.parse(raw);
-      // A record this version cannot read is swept on age alone below; one it
-      // can read is swept only once it is genuinely old.
-      if (isHostCallContext(parsed) && !isExpired(parsed, options.now)) {
-        continue;
-      }
+      description = await stat(path);
     } catch {
-      // Unreadable, and named like ours. Removing it is the point of a sweep.
+      // Gone already, or not readable. Either way it is not this sweep's to
+      // reason about.
+      continue;
     }
+
+    if (!description.isFile()) {
+      continue;
+    }
+
+    // Age decides, and it decides *before* anything is read. A record being
+    // written right now by another hook is incomplete for a moment, and a
+    // sweep that judged files by whether they parse would delete exactly that
+    // one — leaving a perfectly valid call with nothing to claim. Which is a
+    // failure of availability rather than of authentication, and precisely the
+    // parallel case this runtime is meant to support.
+    //
+    // Nothing is parsed here at all. Whether a record *means* anything is the
+    // claim's question, asked of its contents; the only question here is
+    // whether this is old litter of ours.
+    const age = options.now - description.mtimeMs;
+    if (age <= CALL_CONTEXT_MAX_AGE_MS) {
+      // Including a file stamped in the future, which is not old.
+      continue;
+    }
+
     await unlink(path).catch(() => undefined);
   }
 }
