@@ -14,6 +14,15 @@
  * a judgement about what the work *is*, and an assistant making it silently is
  * how a Memory ends up describing an investigation that never happened.
  *
+ * ## A question comes back through the same operation
+ *
+ * A question stays a question until somebody decides it — but the decision
+ * returns here, as `projectDecision`, rather than to the operations that act
+ * on a Problem. Asking and being answered are two halves of one conversation,
+ * and a call that continues or starts a Problem is not where anybody is having
+ * it. Those operations confirm the Project they were handed and can settle
+ * nothing.
+ *
  * ## Registration is not the same as choosing
  *
  * A session at the root of a repository nothing has recorded does register a
@@ -57,10 +66,11 @@ export interface CurrentProblemProjectCandidate {
 /**
  * What asking about the current Problem concluded.
  *
- * Three of these are answers and four are questions. The questions carry
- * exactly the material somebody needs to answer them, and answering them is
- * not something this tool can yet accept — that arrives with the operations
- * that act on the answers.
+ * Some of these are answers and some are questions. The questions carry
+ * exactly the material somebody needs to answer them, and the answer comes
+ * back to this same operation as a `projectDecision`. One outcome is neither:
+ * a decision that no longer describes this session is stale, which is a reply
+ * to an answer rather than a question of its own.
  */
 export type CurrentProblemOutcome =
   | { readonly kind: 'CURRENT_PROBLEM'; readonly project_id: string; readonly problem_id: string }
