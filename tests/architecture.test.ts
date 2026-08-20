@@ -1249,8 +1249,22 @@ describe('the provider failure classification', () => {
 
     // The finding this guard exists for: both used to catch every throw and
     // report the channel unavailable, so a provider that answered unusably was
-    // indistinguishable from one that was never configured.
-    expect(code, file).toContain('isRetrievalProviderIntegrationFailure(');
+    // indistinguishable from one that was never configured. The two stages ask
+    // differently now, and each spelling is pinned:
+    //
+    // - the vector stage reads the shared predicate — both integration kinds
+    //   fail its search, because a vector channel has no smaller honest form;
+    // - the rerank stage sorts the kinds itself, because it alone answers an
+    //   unusable model answer with an explicit degraded status instead of a
+    //   search failure. Its refusal to degrade a rejected request must still
+    //   be visible in the code, and so must the honest status.
+    if (file === 'retrieval-structural-rerank-service.ts') {
+      expect(code, file).toContain("error.failure === 'UPSTREAM_REJECTED_REQUEST'");
+      expect(code, file).toContain("'RERANKER_OUTPUT_INVALID'");
+      expect(code, file).toContain('instanceof RetrievalProviderCallError');
+    } else {
+      expect(code, file).toContain('isRetrievalProviderIntegrationFailure(');
+    }
 
     // And the catch around the *port call* must bind what it caught. A bare
     // `catch {` there discards the very thing the branch is decided from, and

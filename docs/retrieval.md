@@ -221,11 +221,28 @@ missing route — and it is why the route exists whether or not a credential doe
 
 A channel that reports itself unavailable means the provider could not answer —
 unreachable, timed out, rate limited, or a server error — and the smaller answer
-is the right one. It does not mean the integration is broken. A provider that
-answers with something the server cannot use, or refuses the request outright,
-fails the search with a `500` instead, because an answer that looks complete is
-worse than one that fails: nothing would ever prompt anyone to look. That failure
-is never reported as a problem with the request, which had no part in it.
+is the right one. It does not mean the integration is broken.
+
+The structural stage has one more honest word: `RERANKER_OUTPUT_INVALID`. It
+means the reranker was reached and produced an answer, and the answer could not
+be accepted under the structural judgement contract — a refusal, an incomplete
+or malformed document, or a well-formed judgement that violates a rule such as
+naming a dimension that is empty on one side. None of that answer is kept:
+no structural judgement is claimed, every `structural_score` is null, every
+`matched_dimensions` list is empty, and the stage-one ordering stands. It is
+deliberately not `RERANKER_UNAVAILABLE`, which would say the provider never
+answered, and not `STRUCTURAL_DATA_UNAVAILABLE`, which says a candidate's
+stored features could not be read. One unusable answer is a fact about that
+answer, and the search still owes the smaller result the other stages produced.
+
+A provider that refuses the request outright still fails the search with a
+`500`: a refused request is deterministic — the next search builds the same
+request and is refused the same way — so degrading would hide a broken
+integration behind ordinary-looking results, and nothing would ever prompt
+anyone to look. The embedding channel likewise fails the search when a provider
+answers with something the server cannot use, because a vector channel has no
+smaller honest form. Neither failure is ever reported as a problem with the
+request, which had no part in it.
 
 What a response never carries: a recommendation, a verdict, a winner, an answer,
 a should-retry, whether anything was cached, or which model was involved. The

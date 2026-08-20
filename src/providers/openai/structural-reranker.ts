@@ -38,7 +38,7 @@ import type {
   StructuralReranker,
   StructuralRerankerInput,
 } from '../../domain/retrieval-structural-rerank.js';
-import { STRUCTURAL_COMPARISON_DIMENSIONS } from '../../domain/retrieval-structural-rerank.js';
+import { comparableStructuralDimensions } from '../../domain/retrieval-structural-rerank.js';
 import { withClassifiedOpenAiFailures } from './failure.js';
 import { readStructuredDocument } from './responses.js';
 import { OpenAiRequestError, type OpenAiTransport } from './transport.js';
@@ -78,7 +78,9 @@ const RERANK_INSTRUCTIONS = [
   '- An empty successful_directions means the record supports no claim; it',
   '  never means a fix failed.',
   '- An empty dimension on either side is neutral. Never name a dimension as',
-  '  matched when either side has nothing in it.',
+  '  matched when either side has nothing in it. The output schema for each',
+  '  candidate offers only the dimensions that have material on both sides;',
+  '  choose from those and no others.',
   '- Score every candidate exactly once. Do not omit, invent or repeat one.',
   '- A score above 0 must name at least one matched dimension.',
 ].join('\n');
@@ -109,30 +111,48 @@ export function createOpenAiStructuralReranker(transport: OpenAiTransport): Stru
           })),
         };
 
-        // The schema is per-call: the candidate key is an enum of exactly this
-        // call's names, so the strict validation itself refuses an invented
-        // candidate. Score bounds are not expressible in this schema dialect
-        // and stay with the domain parser.
+        // The schema is per-call and per-candidate: the answer is one object
+        // whose property names are exactly this call's opaque keys, each
+        // required, so the strict validation itself refuses an invented,
+        // omitted or repeated candidate. Each candidate's
+        // `matched_dimensions` is narrowed to the dimensions with comparison
+        // material on both sides — the same rule the domain parser enforces,
+        // read from the same function — so an impossible dimension cannot
+        // even be named. A candidate with no comparable dimension is pinned
+        // to an empty list with `maxItems: 0`, because an empty enum is not
+        // part of the supported schema subset. Score bounds are declared here
+        // too. All of it is prevention: the domain parser remains the
+        // authority on every one of these rules.
+        const candidateSchemas: Record<string, unknown> = {};
+        for (const [index, key] of keys.entries()) {
+          const candidate = input.candidates[index];
+          const comparable =
+            candidate === undefined
+              ? []
+              : comparableStructuralDimensions(input.current, candidate.features);
+          candidateSchemas[key] = {
+            type: 'object',
+            additionalProperties: false,
+            required: ['structural_score', 'matched_dimensions'],
+            properties: {
+              structural_score: { type: 'number', minimum: 0, maximum: 1 },
+              matched_dimensions:
+                comparable.length > 0
+                  ? { type: 'array', items: { type: 'string', enum: [...comparable] } }
+                  : { type: 'array', maxItems: 0, items: { type: 'string' } },
+            },
+          };
+        }
         const schema = {
           type: 'object',
           additionalProperties: false,
           required: ['candidates'],
           properties: {
             candidates: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['candidate', 'structural_score', 'matched_dimensions'],
-                properties: {
-                  candidate: { type: 'string', enum: keys },
-                  structural_score: { type: 'number' },
-                  matched_dimensions: {
-                    type: 'array',
-                    items: { type: 'string', enum: [...STRUCTURAL_COMPARISON_DIMENSIONS] },
-                  },
-                },
-              },
+              type: 'object',
+              additionalProperties: false,
+              required: keys,
+              properties: candidateSchemas,
             },
           },
         };
@@ -161,38 +181,36 @@ export function createOpenAiStructuralReranker(transport: OpenAiTransport): Stru
         const answer = readStructuredDocument(body);
 
         // Mapping back requires exactly one answer per key this call invented.
-        // These checks exist because mapping needs them; everything about
-        // whether the mapped result is a *rerank* stays with the domain parser.
-        if (!isPlainObject(answer) || !Array.isArray(answer['candidates'])) {
+        // The keyed shape makes a repeat unrepresentable in parsed JSON; the
+        // checks left are unknown keys and omissions. They exist because
+        // mapping needs them; everything about whether the mapped result is a
+        // *rerank* stays with the domain parser.
+        if (!isPlainObject(answer) || !isPlainObject(answer['candidates'])) {
           throw new OpenAiRequestError('MALFORMED_RESPONSE');
         }
-        const items = answer['candidates'] as unknown[];
-        const seen = new Set<string>();
+        const items = answer['candidates'];
+        const answeredKeys = Object.keys(items);
         const mapped: {
           problemId: unknown;
           structuralScore: unknown;
           matchedDimensions: unknown;
         }[] = [];
 
-        for (const item of items) {
+        for (const key of answeredKeys) {
+          if (!keyToProblem.has(key)) {
+            throw new OpenAiRequestError('MALFORMED_RESPONSE');
+          }
+          const item = items[key];
           if (!isPlainObject(item)) {
             throw new OpenAiRequestError('MALFORMED_RESPONSE');
           }
-          const key = item['candidate'];
-          if (typeof key !== 'string' || !keyToProblem.has(key)) {
-            throw new OpenAiRequestError('MALFORMED_RESPONSE');
-          }
-          if (seen.has(key)) {
-            throw new OpenAiRequestError('MALFORMED_RESPONSE');
-          }
-          seen.add(key);
           mapped.push({
             problemId: keyToProblem.get(key),
             structuralScore: item['structural_score'],
             matchedDimensions: item['matched_dimensions'],
           });
         }
-        if (seen.size !== keys.length) {
+        if (answeredKeys.length !== keys.length) {
           // Coverage: every candidate that went out must come back. The domain
           // parser enforces this too; failing here as well means an omission
           // can never be mistaken for an answer even by a caller that skipped

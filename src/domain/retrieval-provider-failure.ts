@@ -27,10 +27,21 @@
  *   not transient, and never the caller's fault — the caller cannot see this
  *   request, let alone shape it.
  *
- * The last two are integration failures. They must reach the caller as an
- * internal failure rather than a smaller answer, and they must never be
- * converted into a complaint about the caller's query: a search request has no
- * bearing on whether a credential is valid or a provider kept its contract.
+ * The last two are integration failures, and they must never be converted
+ * into a complaint about the caller's query: a search request has no bearing
+ * on whether a credential is valid or a provider kept its contract. What each
+ * stage does with them differs, and deliberately:
+ *
+ * - `UPSTREAM_REJECTED_REQUEST` fails the search everywhere. A refused
+ *   request is deterministic — the next search builds the same request and is
+ *   refused the same way — so degrading would hide a broken integration
+ *   behind ordinary-looking results forever.
+ * - `INVALID_RESPONSE` fails the search in the embedding stage, whose answer
+ *   has no smaller honest form. The structural rerank stage instead discards
+ *   the whole answer and degrades explicitly to `RERANKER_OUTPUT_INVALID`:
+ *   one unusable model answer is a fact about that answer, the stage has an
+ *   honest smaller result to give, and the status says exactly what happened
+ *   rather than dressing it as an outage.
  *
  * ## What a failure may carry
  *
@@ -81,9 +92,12 @@ export class RetrievalProviderCallError extends Error {
 /**
  * Whether a failure means the integration is broken rather than unreachable.
  *
- * The one place that decides which kinds must not be degraded, so the two stage
- * services cannot drift apart about it — and so adding a fourth kind is a
- * change to this function, where somebody will be thinking about the question.
+ * Used by the embedding stage, where both kinds fail the search: a vector
+ * channel has no smaller honest answer. The structural rerank stage does not
+ * read this predicate — it sorts the same kinds itself, because it is the one
+ * stage that treats `INVALID_RESPONSE` as an explicit degraded status
+ * (`RERANKER_OUTPUT_INVALID`) rather than a search failure. Its reasoning
+ * lives beside its catch; the vocabulary here stays one vocabulary.
  *
  * A failure that is not one of these is degraded, and so is anything that is
  * not a `RetrievalProviderCallError` at all. That second part is not laziness:

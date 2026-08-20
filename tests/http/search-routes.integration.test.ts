@@ -194,15 +194,20 @@ function fakeOpenAi(
     const request = JSON.parse(init?.body ?? '{}') as { input?: string };
     const document = JSON.parse(request.input ?? '{}') as { candidates?: { key: string }[] };
     rerankInputs.push(document);
-    // Every key back exactly once. The production reranker refuses an answer
-    // that omits one, so answering the request rather than a fixed script is
-    // what makes this exercise the path instead of the refusal.
+    // Every key back exactly once, in the keyed shape the adapter asks for.
+    // The production reranker refuses an answer that omits a key, so
+    // answering the request rather than a fixed script is what makes this
+    // exercise the path instead of the refusal.
     const answer = {
-      candidates: (document.candidates ?? []).map((candidate, index) => ({
-        candidate: candidate.key,
-        structural_score: Math.max(0.1, 1 - index / 10),
-        matched_dimensions: ['symptom_patterns'],
-      })),
+      candidates: Object.fromEntries(
+        (document.candidates ?? []).map((candidate, index) => [
+          candidate.key,
+          {
+            structural_score: Math.max(0.1, 1 - index / 10),
+            matched_dimensions: ['symptom_patterns'],
+          },
+        ]),
+      ),
     };
     return Promise.resolve(
       new Response(
