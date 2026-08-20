@@ -51,8 +51,9 @@
 import type { ProblemId } from '../domain/problem.js';
 import type { ProjectId } from '../domain/project.js';
 import type { HybridCandidate } from '../domain/retrieval-hybrid-search.js';
-import { isRetrievalProviderIntegrationFailure } from '../domain/retrieval-provider-failure.js';
+import { RetrievalProviderCallError } from '../domain/retrieval-provider-failure.js';
 import {
+  InvalidStructuralRerankerOutputError,
   MAX_STRUCTURAL_RERANK_CANDIDATES,
   orderStructuralCandidates,
   parseStructuralRerankerOutput,
@@ -249,31 +250,55 @@ export function createRetrievalStructuralRerankService(
       try {
         answered = await reranker.rerank(rerankerInput);
       } catch (error) {
-        // An answer this system cannot use, and a request the provider refused,
-        // are integration failures rather than infrastructure ones: no waiting
-        // fixes either, and reporting them as `RERANKER_UNAVAILABLE` would make
-        // a broken integration look exactly like a deployment that configured
-        // no reranker on purpose. They leave, and the search fails.
-        //
-        // Note what this means: a malformed answer is refused twice on this
-        // path. Here, when the port classified it, and below at
-        // `parseStructuralRerankerOutput` when the port merely returned it. The
-        // parser remains the authority on whether a returned judgement is a
-        // rerank; this only stops a port that already knew from being misread.
-        if (isRetrievalProviderIntegrationFailure(error)) {
-          throw error;
+        if (error instanceof RetrievalProviderCallError) {
+          // The three kinds part ways here, and the sorting is this stage's
+          // own rather than the shared integration-failure predicate, because
+          // this is the one stage that can answer smaller instead of failing.
+          //
+          // A request the provider *refused* is deterministic: the next search
+          // builds the same request and is refused the same way, so degrading
+          // would hide a broken integration behind results that look ordinary
+          // forever. It leaves, and the search fails.
+          if (error.failure === 'UPSTREAM_REJECTED_REQUEST') {
+            throw error;
+          }
+          // An answer that was not a usable document — a refusal, an
+          // incomplete response, malformed output, a coverage violation the
+          // port caught — is a fact about *this* answer. The model was
+          // reached; the answer is discarded whole; the stage says exactly
+          // that, and the first stage's order stands with nothing claimed.
+          if (error.failure === 'INVALID_RESPONSE') {
+            return degraded(present, ranks, resolved.limit, 'RERANKER_OUTPUT_INVALID');
+          }
+          // UNAVAILABLE: infrastructure, and a Memory failure must not stop
+          // ordinary work.
+          return degraded(present, ranks, resolved.limit, 'RERANKER_UNAVAILABLE');
         }
-        // Unreachable is infrastructure, and a Memory failure must not stop
-        // ordinary work. Whatever else it threw stops here — including a plain
-        // throw from a port written before there was a way to say more.
+        // A plain throw from a port written before there was a way to say
+        // more. Treated as it always was.
         return degraded(present, ranks, resolved.limit, 'RERANKER_UNAVAILABLE');
       }
 
-      // Malformed is a contract violation rather than an outage, so it is
-      // raised. Checked against what was actually sent: every candidate back
-      // exactly once, so a model cannot apply a threshold this stage does not
-      // have, and every dimension it claims had something on both sides.
-      const judged = parseStructuralRerankerOutput(answered, rerankerInput);
+      // Checked against what was actually sent: every candidate back exactly
+      // once, so a model cannot apply a threshold this stage does not have,
+      // and every dimension it claims had something on both sides. The parser
+      // is the final authority on whether a returned judgement is a rerank.
+      //
+      // Its *expected* rejection — the answer is well-formed transport but
+      // violates the judgement contract — degrades the whole stage honestly:
+      // none of the answer is kept, because a score whose claimed evidence
+      // was partly invalid is a judgement this system cannot attribute to
+      // anyone. Anything else the parser throws is a local defect and is not
+      // dressed as a model failure.
+      let judged;
+      try {
+        judged = parseStructuralRerankerOutput(answered, rerankerInput);
+      } catch (error) {
+        if (error instanceof InvalidStructuralRerankerOutputError) {
+          return degraded(present, ranks, resolved.limit, 'RERANKER_OUTPUT_INVALID');
+        }
+        throw error;
+      }
       const scores = new Map(judged.map((entry) => [entry.problemId, entry]));
 
       const scored: StructuralCandidate[] = present.map((candidate) => {
