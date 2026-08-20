@@ -161,12 +161,24 @@ export interface StructuralReranker {
   rerank(input: StructuralRerankerInput): Promise<unknown>;
 }
 
-/** How a rerank ended, and therefore how much its scores mean. */
+/**
+ * How a rerank ended, and therefore how much its scores mean.
+ *
+ * `RERANKER_OUTPUT_INVALID` is the one that says the reranker *answered*: the
+ * model was reached and produced something, and what it produced could not be
+ * accepted under the structural judgement contract. It deliberately means
+ * neither "unavailable" — the provider responded — nor "dissimilar" — no
+ * judgement was accepted, so no candidate was judged anything — nor "missing
+ * structural data" — the stored features were fine. One unusable answer is a
+ * fact about that answer, and a search still owes the smaller result the
+ * other stages produced.
+ */
 export const STRUCTURAL_RERANK_STATUSES = [
   'USED',
   'NOT_NEEDED',
   'SKIPPED_SENSITIVE_INPUT',
   'RERANKER_UNAVAILABLE',
+  'RERANKER_OUTPUT_INVALID',
   'STRUCTURAL_DATA_UNAVAILABLE',
 ] as const;
 
@@ -345,6 +357,28 @@ function comparisonMaterialExists(
     return current.problem_domain !== null && candidate.problem_domain !== null;
   }
   return current[dimension].length > 0 && candidate[dimension].length > 0;
+}
+
+/**
+ * The dimensions in which two Problems *could* be alike: material on both
+ * sides, per the rule above.
+ *
+ * Exported because two places need the same answer and must never disagree.
+ * The parser refuses a matched dimension outside this set, and a provider
+ * adapter may narrow its structured-output schema to it so an impossible
+ * dimension cannot even be named. The adapter's use is prevention; the
+ * parser remains the authority, and both read this one function.
+ *
+ * Pure and provider-neutral: features in, dimension names out, in the fixed
+ * declaration order of `STRUCTURAL_COMPARISON_DIMENSIONS`.
+ */
+export function comparableStructuralDimensions(
+  current: StructuralFeatures,
+  candidate: StructuralFeatures,
+): readonly StructuralComparisonDimension[] {
+  return STRUCTURAL_COMPARISON_DIMENSIONS.filter((dimension) =>
+    comparisonMaterialExists(dimension, current, candidate),
+  );
 }
 
 /**

@@ -52,7 +52,7 @@ const INPUT: StructuralRerankerInput = {
 };
 
 function answerFor(
-  entries: { candidate: string; structural_score: number; matched_dimensions: string[] }[],
+  entries: Record<string, { structural_score: number; matched_dimensions: string[] }>,
 ) {
   return {
     status: 'completed',
@@ -66,10 +66,10 @@ function answerFor(
 }
 
 const GOOD_ANSWER = () =>
-  answerFor([
-    { candidate: 'candidate_1', structural_score: 0.9, matched_dimensions: ['symptom_patterns'] },
-    { candidate: 'candidate_2', structural_score: 0, matched_dimensions: [] },
-  ]);
+  answerFor({
+    candidate_1: { structural_score: 0.9, matched_dimensions: ['symptom_patterns'] },
+    candidate_2: { structural_score: 0, matched_dimensions: [] },
+  });
 
 function urlOf(input: Parameters<FetchLike>[0]): string {
   if (typeof input === 'string') {
@@ -153,26 +153,116 @@ describe('the OpenAI structural reranker', () => {
     const schema = format['schema'] as {
       properties: {
         candidates: {
-          items: {
-            additionalProperties: boolean;
-            required: string[];
-            properties: {
-              candidate: { enum: string[] };
-              matched_dimensions: { items: { enum: string[] } };
-            };
-          };
+          additionalProperties: boolean;
+          required: string[];
+          properties: Record<
+            string,
+            {
+              additionalProperties: boolean;
+              required: string[];
+              properties: {
+                structural_score: { minimum: number; maximum: number };
+                matched_dimensions: { items?: { enum?: string[] }; maxItems?: number };
+              };
+            }
+          >;
         };
       };
     };
-    const items = schema.properties.candidates.items;
-    expect(items.additionalProperties).toBe(false);
-    expect([...items.required].sort()).toEqual([
-      'candidate',
-      'matched_dimensions',
-      'structural_score',
-    ]);
-    expect(items.properties.candidate.enum).toEqual(['candidate_1', 'candidate_2']);
-    expect(items.properties.matched_dimensions.items.enum).toContain('symptom_patterns');
+    const candidates = schema.properties.candidates;
+    // One property per candidate, every one required: an omitted, invented or
+    // repeated candidate is unrepresentable in the answer.
+    expect(candidates.additionalProperties).toBe(false);
+    expect(candidates.required).toEqual(['candidate_1', 'candidate_2']);
+    expect(Object.keys(candidates.properties)).toEqual(['candidate_1', 'candidate_2']);
+    for (const key of ['candidate_1', 'candidate_2']) {
+      const one = candidates.properties[key];
+      expect(one?.additionalProperties).toBe(false);
+      expect([...(one?.required ?? [])].sort()).toEqual(['matched_dimensions', 'structural_score']);
+      // Defense-in-depth score bounds; the domain parser still owns the rule.
+      expect(one?.properties.structural_score.minimum).toBe(0);
+      expect(one?.properties.structural_score.maximum).toBe(1);
+    }
+  });
+
+  it('narrows each candidate’s dimensions to the comparable ones', async () => {
+    const { requests, reranker } = harness(GOOD_ANSWER);
+
+    await reranker.rerank(INPUT);
+
+    const format = (requests[0]?.body['text'] as { format: Record<string, unknown> }).format;
+    const schema = format['schema'] as {
+      properties: {
+        candidates: {
+          properties: Record<
+            string,
+            { properties: { matched_dimensions: { items?: { enum?: string[] } } } }
+          >;
+        };
+      };
+    };
+    // `successful_directions` is empty on the current side, so no candidate
+    // may name it — the schema offers only what has material on both sides,
+    // by the same rule the domain parser enforces.
+    for (const key of ['candidate_1', 'candidate_2']) {
+      const offered =
+        schema.properties.candidates.properties[key]?.properties.matched_dimensions.items?.enum;
+      expect(offered).toContain('symptom_patterns');
+      expect(offered).toContain('occurrence_conditions');
+      expect(offered).not.toContain('successful_directions');
+    }
+  });
+
+  it('pins a candidate with nothing comparable to an empty dimension list', async () => {
+    // The second candidate shares no material with the current profile: every
+    // list that is non-empty on one side is empty on the other, and its
+    // domain is null. An empty enum is not part of the supported schema
+    // subset, so the pin is maxItems 0.
+    const disjoint: StructuralRerankerInput = {
+      current: features(),
+      candidates: [
+        { problemId: PROBLEM_A, features: features() },
+        {
+          problemId: PROBLEM_B,
+          features: features({
+            problem_domain: null,
+            symptom_patterns: [],
+            suspected_boundaries: [],
+            occurrence_conditions: [],
+            successful_directions: ['a verified direction'],
+            dead_end_directions: [],
+            environment_facts: [],
+          }),
+        },
+      ],
+    };
+    const { requests, reranker } = harness(() =>
+      answerFor({
+        candidate_1: { structural_score: 0.5, matched_dimensions: ['symptom_patterns'] },
+        candidate_2: { structural_score: 0, matched_dimensions: [] },
+      }),
+    );
+
+    await reranker.rerank(disjoint);
+
+    const format = (requests[0]?.body['text'] as { format: Record<string, unknown> }).format;
+    const schema = format['schema'] as {
+      properties: {
+        candidates: {
+          properties: Record<
+            string,
+            {
+              properties: {
+                matched_dimensions: { items?: { enum?: string[] }; maxItems?: number };
+              };
+            }
+          >;
+        };
+      };
+    };
+    const second = schema.properties.candidates.properties['candidate_2'];
+    expect(second?.properties.matched_dimensions.maxItems).toBe(0);
+    expect(second?.properties.matched_dimensions.items?.enum).toBeUndefined();
   });
 
   it('maps the answer back to the original Problem ids, and the parser accepts it', async () => {
@@ -186,21 +276,23 @@ describe('the OpenAI structural reranker', () => {
     expect(entries[0]?.matchedDimensions).toEqual(['symptom_patterns']);
   });
 
-  it('refuses an unknown, duplicated or missing candidate key', async () => {
-    const cases = [
-      [
-        { candidate: 'candidate_1', structural_score: 0.9, matched_dimensions: [] },
-        { candidate: 'candidate_9', structural_score: 0.1, matched_dimensions: [] },
-      ],
-      [
-        // Full coverage AND a duplicate, so only the duplicate rule can
-        // refuse it — a two-entry duplicate would also fail coverage, and a
-        // mutation removing the duplicate check would hide behind that.
-        { candidate: 'candidate_1', structural_score: 0.9, matched_dimensions: [] },
-        { candidate: 'candidate_1', structural_score: 0.1, matched_dimensions: [] },
-        { candidate: 'candidate_2', structural_score: 0, matched_dimensions: [] },
-      ],
-      [{ candidate: 'candidate_1', structural_score: 0.9, matched_dimensions: [] }],
+  it('refuses an unknown, extra or missing candidate key', async () => {
+    // A repeated key is unrepresentable once JSON is parsed, which is part of
+    // why the answer is keyed; what remains to refuse is a key this call
+    // never invented, and an omission.
+    const cases: Record<string, { structural_score: number; matched_dimensions: string[] }>[] = [
+      {
+        candidate_1: { structural_score: 0.9, matched_dimensions: [] },
+        candidate_9: { structural_score: 0.1, matched_dimensions: [] },
+      },
+      {
+        // Full coverage AND an unknown extra, so only the unknown-key rule
+        // can refuse it — coverage alone would pass.
+        candidate_1: { structural_score: 0.9, matched_dimensions: [] },
+        candidate_2: { structural_score: 0, matched_dimensions: [] },
+        candidate_9: { structural_score: 0.1, matched_dimensions: [] },
+      },
+      { candidate_1: { structural_score: 0.9, matched_dimensions: [] } },
     ];
     for (const entries of cases) {
       const { reranker } = harness(() => answerFor(entries));
@@ -214,14 +306,59 @@ describe('the OpenAI structural reranker', () => {
     // Passes the adapter — the keys map cleanly — and dies at the parser: a
     // score outside 0..1. The authority did not move.
     const { reranker } = harness(() =>
-      answerFor([
-        { candidate: 'candidate_1', structural_score: 1.5, matched_dimensions: [] },
-        { candidate: 'candidate_2', structural_score: 0, matched_dimensions: [] },
-      ]),
+      answerFor({
+        candidate_1: { structural_score: 1.5, matched_dimensions: [] },
+        candidate_2: { structural_score: 0, matched_dimensions: [] },
+      }),
     );
 
     const output = await reranker.rerank(INPUT);
     expect(() => parseStructuralRerankerOutput(output, INPUT)).toThrow();
+  });
+
+  it('regression: an empty-on-one-side dimension cannot be named, and is refused if it is', async () => {
+    // The failure class this change exists for: the current profile has an
+    // empty `successful_directions`, a candidate has material there, and the
+    // model names that dimension as matched anyway.
+    const oneSided: StructuralRerankerInput = {
+      current: features({ successful_directions: [] }),
+      candidates: [
+        {
+          problemId: PROBLEM_A,
+          features: features({ successful_directions: ['read at the point of use'] }),
+        },
+      ],
+    };
+    const { requests, reranker } = harness(() =>
+      answerFor({
+        candidate_1: {
+          structural_score: 0.6,
+          matched_dimensions: ['successful_directions'],
+        },
+      }),
+    );
+
+    // Prevention: the schema for that candidate does not offer the dimension.
+    const output = await reranker.rerank(oneSided);
+    const format = (requests[0]?.body['text'] as { format: Record<string, unknown> }).format;
+    const schema = format['schema'] as {
+      properties: {
+        candidates: {
+          properties: Record<
+            string,
+            { properties: { matched_dimensions: { items?: { enum?: string[] } } } }
+          >;
+        };
+      };
+    };
+    expect(
+      schema.properties.candidates.properties['candidate_1']?.properties.matched_dimensions.items
+        ?.enum,
+    ).not.toContain('successful_directions');
+
+    // Authority: if such an answer arrives anyway, the domain parser refuses
+    // it — the schema is defense-in-depth, never the rule.
+    expect(() => parseStructuralRerankerOutput(output, oneSided)).toThrow(/nothing to compare/u);
   });
 
   it('treats instruction-shaped feature text as content, structurally', async () => {
@@ -232,7 +369,7 @@ describe('the OpenAI structural reranker', () => {
       ],
     };
     const { requests, reranker } = harness(() =>
-      answerFor([{ candidate: 'candidate_1', structural_score: 0, matched_dimensions: [] }]),
+      answerFor({ candidate_1: { structural_score: 0, matched_dimensions: [] } }),
     );
 
     await reranker.rerank(hostile);

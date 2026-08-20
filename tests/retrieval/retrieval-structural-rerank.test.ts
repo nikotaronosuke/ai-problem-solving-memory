@@ -21,6 +21,7 @@ import type { ProblemId } from '../../src/domain/problem.js';
 import type { ProjectId } from '../../src/domain/project.js';
 import type { HybridCandidate } from '../../src/domain/retrieval-hybrid-search.js';
 import {
+  comparableStructuralDimensions,
   DEFAULT_STRUCTURAL_RERANK_LIMIT,
   InvalidStructuralRerankError,
   InvalidStructuralRerankerOutputError,
@@ -31,6 +32,7 @@ import {
   parseStructuralRerankerOutput,
   resolveStructuralRerankRequest,
   STRUCTURAL_COMPARISON_DIMENSIONS,
+  STRUCTURAL_RERANK_STATUSES,
   type StructuralCandidate,
   type StructuralRerankRequest,
   type StructuralRerankerInput,
@@ -696,5 +698,81 @@ describe('ordering judged candidates', () => {
     const all = [judged('a', 0.1, 1), judged('b', 0.9, 2)];
     orderStructuralCandidates(all, 5);
     expect(all.map((item) => item.problemId)).toEqual([problem('a'), problem('b')]);
+  });
+});
+
+describe('the rerank status vocabulary', () => {
+  it('names the answered-but-unusable outcome as its own word', () => {
+    // Not unavailable — the provider answered. Not dissimilar — no judgement
+    // was accepted. Not missing data — the stored features were fine.
+    expect(STRUCTURAL_RERANK_STATUSES).toContain('RERANKER_OUTPUT_INVALID');
+    expect(STRUCTURAL_RERANK_STATUSES).toContain('RERANKER_UNAVAILABLE');
+    expect(STRUCTURAL_RERANK_STATUSES).toContain('STRUCTURAL_DATA_UNAVAILABLE');
+    expect(new Set(STRUCTURAL_RERANK_STATUSES).size).toBe(STRUCTURAL_RERANK_STATUSES.length);
+  });
+});
+
+describe('comparable dimensions', () => {
+  const featuresOf = (overrides: Record<string, unknown> = {}): StructuralFeatures =>
+    parseStructuralFeatures(rawFeatures(overrides));
+
+  it('includes the domain only when both sides name one', () => {
+    expect(comparableStructuralDimensions(featuresOf(), featuresOf())).toContain('problem_domain');
+    expect(
+      comparableStructuralDimensions(featuresOf({ problem_domain: null }), featuresOf()),
+    ).not.toContain('problem_domain');
+    expect(
+      comparableStructuralDimensions(featuresOf(), featuresOf({ problem_domain: null })),
+    ).not.toContain('problem_domain');
+  });
+
+  it('includes a list only when both sides have something in it', () => {
+    expect(comparableStructuralDimensions(featuresOf(), featuresOf())).toContain(
+      'symptom_patterns',
+    );
+    expect(
+      comparableStructuralDimensions(featuresOf({ symptom_patterns: [] }), featuresOf()),
+    ).not.toContain('symptom_patterns');
+    expect(
+      comparableStructuralDimensions(featuresOf(), featuresOf({ symptom_patterns: [] })),
+    ).not.toContain('symptom_patterns');
+  });
+
+  it('agrees with the parser about an empty-on-one-side dimension', () => {
+    // Empty on the current side, material on the candidate side: the helper
+    // leaves the dimension out, and the parser refuses an answer that names
+    // it anyway. One rule, two readers.
+    const current = featuresOf({ successful_directions: [] });
+    const candidate = featuresOf({ successful_directions: ['read at the point of use'] });
+    expect(comparableStructuralDimensions(current, candidate)).not.toContain(
+      'successful_directions',
+    );
+
+    const input: StructuralRerankerInput = {
+      current,
+      candidates: [{ problemId: problem('one'), features: candidate }],
+    };
+    expect(() =>
+      parseStructuralRerankerOutput(
+        {
+          candidates: [
+            {
+              problemId: problem('one'),
+              structuralScore: 0.6,
+              matchedDimensions: ['successful_directions'],
+            },
+          ],
+        },
+        input,
+      ),
+    ).toThrow(InvalidStructuralRerankerOutputError);
+  });
+
+  it('returns dimensions in the declaration order', () => {
+    const all = comparableStructuralDimensions(featuresOf(), featuresOf());
+    const declared = STRUCTURAL_COMPARISON_DIMENSIONS.filter((dimension) =>
+      (all as readonly string[]).includes(dimension),
+    );
+    expect([...all]).toEqual([...declared]);
   });
 });

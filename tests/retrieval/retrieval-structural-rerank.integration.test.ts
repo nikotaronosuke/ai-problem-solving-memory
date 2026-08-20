@@ -37,7 +37,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createRetrievalStructuralRerankService,
   InvalidStructuralRerankError,
-  InvalidStructuralRerankerOutputError,
   type RetrievalStructuralRerankService,
 } from '../../src/app/index.js';
 import { readDatabaseUrl } from '../../src/config/env.js';
@@ -652,29 +651,53 @@ describe.skipIf(databaseUrl === undefined)('structural reranking', () => {
       ]);
     });
 
-    it.each([['INVALID_RESPONSE'], ['UPSTREAM_REJECTED_REQUEST']] as const)(
-      'refuses to call %s a degraded stage',
-      async (failure) => {
-        const owner = await makeActor();
-        const first = await seed(owner);
-        const second = await seed(owner);
-        const broken: StructuralReranker = {
-          rerank: () => Promise.reject(new RetrievalProviderCallError(failure)),
-        };
+    it('refuses to call a rejected request a degraded stage', async () => {
+      const owner = await makeActor();
+      const first = await seed(owner);
+      const second = await seed(owner);
+      const broken: StructuralReranker = {
+        rerank: () => Promise.reject(new RetrievalProviderCallError('UPSTREAM_REJECTED_REQUEST')),
+      };
 
-        const rerank = serviceFor(owner, broken).rerank({
-          currentFeatures: asFeatures(),
-          candidates: [asCandidate(first, 0), asCandidate(second, 1)],
-        });
+      const rerank = serviceFor(owner, broken).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(second, 1)],
+      });
 
-        // An unusable answer and a refused request are integration failures.
-        // Returning the first stage's order under `RERANKER_UNAVAILABLE` would
-        // publish an ordering nobody computed as though a reranker had simply
-        // been quiet.
-        await expect(rerank).rejects.toBeInstanceOf(RetrievalProviderCallError);
-        await expect(rerank).rejects.toMatchObject({ failure });
-      },
-    );
+      // A refused request is deterministic: the next search builds the same
+      // request and is refused the same way. Degrading would hide a broken
+      // integration behind ordinary-looking results forever.
+      await expect(rerank).rejects.toBeInstanceOf(RetrievalProviderCallError);
+      await expect(rerank).rejects.toMatchObject({ failure: 'UPSTREAM_REJECTED_REQUEST' });
+    });
+
+    it('degrades honestly when the port classified the answer as unusable', async () => {
+      const owner = await makeActor();
+      const first = await seed(owner);
+      const second = await seed(owner);
+      const broken: StructuralReranker = {
+        rerank: () => Promise.reject(new RetrievalProviderCallError('INVALID_RESPONSE')),
+      };
+
+      const result = await serviceFor(owner, broken).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(second, 1)],
+      });
+
+      // The model was reached and answered unusably. That is neither an
+      // outage nor a judgement, and the status says exactly which it was:
+      // the answer is discarded whole, the first stage's order stands, and
+      // nothing structural is claimed.
+      expect(result.status).toBe('RERANKER_OUTPUT_INVALID');
+      expect(result.candidates.map((candidate) => candidate.problemId)).toEqual([
+        first.problemId,
+        second.problemId,
+      ]);
+      expect(result.candidates.every((candidate) => candidate.structuralScore === null)).toBe(true);
+      expect(result.candidates.every((candidate) => candidate.matchedDimensions.length === 0)).toBe(
+        true,
+      );
+    });
 
     it('degrades to the first stage’s order when it cannot be reached', async () => {
       const owner = await makeActor();
@@ -705,48 +728,79 @@ describe.skipIf(databaseUrl === undefined)('structural reranking', () => {
       );
     });
 
-    it('raises rather than degrades when its answer is not an answer', async () => {
+    it('degrades honestly when its answer is not an answer', async () => {
       const owner = await makeActor();
       const first = await seed(owner);
       const second = await seed(owner);
 
-      // An outage is infrastructure; a malformed answer is a contract
-      // violation. Hiding the second behind the first would let a model that
-      // has stopped honouring its contract keep running behind results that
-      // look ordinary.
-      await expect(
-        serviceFor(
-          owner,
-          scripted(() => ({ candidates: [] })),
-        ).rerank({
-          currentFeatures: asFeatures(),
-          candidates: [asCandidate(first, 0), asCandidate(second, 1)],
-        }),
-      ).rejects.toBeInstanceOf(InvalidStructuralRerankerOutputError);
+      // The parser refused the judgement, so no part of it is kept. Neither
+      // an outage nor an accepted rerank: the status names the third thing
+      // that actually happened, and nothing structural is claimed.
+      const result = await serviceFor(
+        owner,
+        scripted(() => ({ candidates: [] })),
+      ).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(second, 1)],
+      });
+
+      expect(result.status).toBe('RERANKER_OUTPUT_INVALID');
+      expect(result.candidates.map((candidate) => candidate.problemId)).toEqual([
+        first.problemId,
+        second.problemId,
+      ]);
+      expect(result.candidates.every((candidate) => candidate.structuralScore === null)).toBe(true);
+      expect(result.candidates.every((candidate) => candidate.matchedDimensions.length === 0)).toBe(
+        true,
+      );
     });
 
-    it('raises when the answer covers only some of the candidates', async () => {
+    it('degrades honestly when the answer covers only some of the candidates', async () => {
       const owner = await makeActor();
       const first = await seed(owner);
       const second = await seed(owner);
 
-      await expect(
-        serviceFor(
-          owner,
-          scripted((input) => ({
-            candidates: [
-              {
-                problemId: input.candidates[0]?.problemId,
-                structuralScore: 0.9,
-                matchedDimensions: ['symptom_patterns'],
-              },
-            ],
-          })),
-        ).rerank({
-          currentFeatures: asFeatures(),
-          candidates: [asCandidate(first, 0), asCandidate(second, 1)],
-        }),
-      ).rejects.toBeInstanceOf(InvalidStructuralRerankerOutputError);
+      const result = await serviceFor(
+        owner,
+        scripted((input) => ({
+          candidates: [
+            {
+              problemId: input.candidates[0]?.problemId,
+              structuralScore: 0.9,
+              matchedDimensions: ['symptom_patterns'],
+            },
+          ],
+        })),
+      ).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(second, 1)],
+      });
+
+      // Partial coverage is a hidden threshold, so none of the answer is
+      // kept — including the judgement on the candidate that did come back.
+      expect(result.status).toBe('RERANKER_OUTPUT_INVALID');
+      expect(result.candidates.every((candidate) => candidate.structuralScore === null)).toBe(true);
+    });
+
+    it('does not dress an unexpected local exception as a model failure', async () => {
+      const owner = await makeActor();
+      const first = await seed(owner);
+      const second = await seed(owner);
+
+      // A plain throw from the port is the legacy outage signal and stays
+      // RERANKER_UNAVAILABLE; it must not become RERANKER_OUTPUT_INVALID,
+      // which claims the model answered. Two candidates, because a single one
+      // never reaches the reranker at all.
+      const result = await serviceFor(owner, {
+        rerank: () => {
+          throw new TypeError('a local defect');
+        },
+      }).rerank({
+        currentFeatures: asFeatures(),
+        candidates: [asCandidate(first, 0), asCandidate(second, 1)],
+      });
+
+      expect(result.status).toBe('RERANKER_UNAVAILABLE');
     });
   });
 

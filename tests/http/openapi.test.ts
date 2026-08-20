@@ -268,7 +268,7 @@ describe('the document itself', () => {
     // object, so a field added to it changes the shape every client reads. The
     // export's own `schema_version` is a different number for a different
     // question and does not move with this one.
-    expect(info.version).toBe('0.6.0');
+    expect(info.version).toBe('0.7.0');
   });
 
   it('says how a caller reaches it and what a 404 means', async () => {
