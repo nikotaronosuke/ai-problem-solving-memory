@@ -28,7 +28,11 @@ import {
   type RecallFingerprintStore,
   type RecallQuery,
 } from '../src/similar-experience-recall.js';
-import { CLAUDE_CODE_SOURCE_AI } from '../src/source-ai.js';
+import {
+  CLAUDE_CODE_SOURCE_AI,
+  CODEX_RUNTIME_PROVENANCE,
+  type RuntimeProvenance,
+} from '../src/source-ai.js';
 import type { GitRunner } from '../src/project-signals.js';
 import type { ProblemBindingWriter } from '../src/problem-lifecycle.js';
 
@@ -181,7 +185,7 @@ function world(options: {
 
 const recall = (
   built: ReturnType<typeof world>,
-  overrides: { query?: RecallQuery } = {},
+  overrides: { query?: RecallQuery; runtimeProvenance?: RuntimeProvenance } = {},
 ): ReturnType<typeof recallSimilarExperience> =>
   recallSimilarExperience({
     client: built.client,
@@ -190,6 +194,9 @@ const recall = (
     sessionId: SESSION_ID,
     projectDir: PROJECT_DIR,
     query: overrides.query ?? query,
+    ...(overrides.runtimeProvenance === undefined
+      ? {}
+      : { runtimeProvenance: overrides.runtimeProvenance }),
     runGit: git,
   });
 
@@ -326,6 +333,14 @@ describe('the request that goes out', () => {
     expect(request?.current_features.schema_version).toBe(
       MEMORY_SEARCH_STRUCTURAL_FEATURE_SCHEMA_VERSION,
     );
+  });
+
+  it('attributes a search to the authenticated Codex runtime', async () => {
+    const built = world({ binding: { projectId: PROJECT_ID, problemId: PROBLEM_ID } });
+
+    await recall(built, { runtimeProvenance: CODEX_RUNTIME_PROVENANCE });
+
+    expect(built.recorded.searches[0]?.request.source_ai).toBe('codex');
   });
 
   it('carries the model’s words through unchanged', async () => {

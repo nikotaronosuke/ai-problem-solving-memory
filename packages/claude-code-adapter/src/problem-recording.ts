@@ -24,7 +24,7 @@ import { detectProjectSignals, type DetectProjectSignalsInput } from './project-
 import { resolveProject } from './project-resolution.js';
 import { isWorkingProblemStatus } from './problem-resolution.js';
 import { resolveProblemForSession, type ProblemBindingWriter } from './problem-lifecycle.js';
-import { CLAUDE_CODE_SOURCE_AI } from './source-ai.js';
+import { runtimeSourceAi, type RuntimeProvenance } from './source-ai.js';
 
 /** The host facts and deterministic readers every current-Problem write needs. */
 interface CurrentProblemWriteContext {
@@ -32,6 +32,8 @@ interface CurrentProblemWriteContext {
   readonly bindingStore: ProblemBindingWriter;
   readonly sessionId: string;
   readonly projectDir: string;
+  /** Host-established attribution, absent from every model-owned tool input. */
+  readonly runtimeProvenance?: RuntimeProvenance;
   /** How git is invoked while detecting. Production omits it. */
   readonly runGit?: DetectProjectSignalsInput['runGit'];
 }
@@ -128,7 +130,7 @@ export async function addEventToCurrentProblem(
     event_type: input.eventType,
     summary: input.summary,
     client_event_id: input.clientEventId,
-    source_ai: CLAUDE_CODE_SOURCE_AI,
+    source_ai: runtimeSourceAi(input.runtimeProvenance),
     ...('result' in input ? { result: input.result } : {}),
     ...('reason' in input ? { reason: input.reason } : {}),
     ...('evidenceRef' in input ? { evidence_ref: input.evidenceRef } : {}),
@@ -179,7 +181,7 @@ export async function addVerificationToCurrentProblem(
     result: input.result,
     summary: input.summary,
     client_event_id: input.clientEventId,
-    verified_by: CLAUDE_CODE_SOURCE_AI,
+    verified_by: runtimeSourceAi(input.runtimeProvenance),
     ...('evidenceRef' in input ? { evidence_ref: input.evidenceRef } : {}),
   };
   const verification = await input.client.appendVerification(current.problem.problem_id, request);
@@ -239,7 +241,7 @@ export async function markCurrentProblemFixCandidate(
   const problem = await input.client.transitionProblemStatus(current.problem.problem_id, {
     target_status: 'FIX_CANDIDATE',
     expected_version: current.problem.version,
-    changed_by: CLAUDE_CODE_SOURCE_AI,
+    changed_by: runtimeSourceAi(input.runtimeProvenance),
   });
 
   return {
@@ -261,7 +263,7 @@ export async function closeCurrentProblem(
 
   const problem = await input.client.closeProblem(current.problem.problem_id, {
     expected_version: current.problem.version,
-    changed_by: CLAUDE_CODE_SOURCE_AI,
+    changed_by: runtimeSourceAi(input.runtimeProvenance),
     target_status: input.targetStatus,
     ...('fixKind' in input ? { fix_kind: input.fixKind } : {}),
     ...('finalCauseSummary' in input ? { final_cause_summary: input.finalCauseSummary } : {}),

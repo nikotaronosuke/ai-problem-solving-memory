@@ -12,7 +12,27 @@
         ]
       },
       {
+        "matcher": "mcp__memory__current_problem",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "mcp__plugin_problem-solving-memory_memory__continue_problem",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__memory__continue_problem",
         "hooks": [
           {
             "type": "command",
@@ -32,7 +52,27 @@
         ]
       },
       {
+        "matcher": "mcp__memory__resume_problem",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "mcp__plugin_problem-solving-memory_memory__start_problem",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__memory__start_problem",
         "hooks": [
           {
             "type": "command",
@@ -52,7 +92,27 @@
         ]
       },
       {
+        "matcher": "mcp__memory__recall_similar_experience",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "mcp__plugin_problem-solving-memory_memory__add_event",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__memory__add_event",
         "hooks": [
           {
             "type": "command",
@@ -72,6 +132,16 @@
         ]
       },
       {
+        "matcher": "mcp__memory__add_verification",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "mcp__plugin_problem-solving-memory_memory__mark_fix_candidate",
         "hooks": [
           {
@@ -82,7 +152,27 @@
         ]
       },
       {
+        "matcher": "mcp__memory__mark_fix_candidate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
         "matcher": "mcp__plugin_problem-solving-memory_memory__close_problem",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__memory__close_problem",
         "hooks": [
           {
             "type": "command",

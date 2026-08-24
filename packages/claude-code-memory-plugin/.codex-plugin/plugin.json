@@ -1,0 +1,21 @@
+{
+  "name": "claude-code-memory-plugin",
+  "version": "0.0.0",
+  "description": "Shares one authoritative Problem and its typed evidence across supported AI coding hosts.",
+  "author": {
+    "name": "AI Problem-Solving Memory"
+  },
+  "repository": "https://github.com/nikotaronosuke/ai-problem-solving-memory",
+  "license": "MIT",
+  "keywords": ["mcp", "problem-solving", "memory", "codex"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Problem-Solving Memory",
+    "shortDescription": "Continue the same verified Problem across AI coding sessions.",
+    "longDescription": "Uses the existing local MCP tools to continue one server-authoritative Problem, append typed evidence and preserve verification gates when work moves between supported AI coding hosts.",
+    "developerName": "AI Problem-Solving Memory",
+    "category": "Developer Tools",
+    "defaultPrompt": "Check which Problem this project is currently working on, and continue it from its recorded evidence.",
+    "capabilities": ["MCP", "Write"]
+  }
+}

@@ -1145,14 +1145,15 @@ describe('the Claude adapter, still', () => {
     );
 
     // `source_ai` narrowed rather than dropped. Starting a Problem, asking a
-    // search and recording current-Problem evidence all stamp this adapter's
-    // own name. These are the three modules with a reason to say so; their
-    // public inputs omit provenance and the value is fixed to one constant.
+    // search and recording current-Problem evidence all stamp the authenticated
+    // runtime's name. These modules and the one closed runtime-provenance
+    // vocabulary have a reason to say so; model-owned inputs still omit it.
     for (const { path, source } of shipped) {
       if (
         path === 'src/problem-start.ts' ||
         path === RECALL ||
-        path === 'src/problem-recording.ts'
+        path === 'src/problem-recording.ts' ||
+        path === 'src/source-ai.ts'
       ) {
         continue;
       }
@@ -1472,8 +1473,10 @@ describe('the Claude adapter, still', () => {
       );
     }
 
-    // And it does not let a caller say which assistant recorded something.
-    expect(code).toContain('source_ai: CLAUDE_CODE_SOURCE_AI');
+    // And it does not take provenance from the model-owned input. The separate
+    // runtime value is established by the authenticated host edge.
+    expect(code).toContain('source_ai: runtimeSourceAi(runtimeProvenance)');
+    expect(code).not.toContain('source_ai: input.');
   });
 
   it('registers a Project without learning anything about Problems', async () => {

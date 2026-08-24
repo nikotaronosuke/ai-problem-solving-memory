@@ -34,6 +34,7 @@ const CALL_ID = 'toolu_01DISTRIBUTIONAAAAAAAAAA';
 /** Everything that must arrive with the copy for it to run at all. */
 const REQUIRED = [
   '.claude-plugin/plugin.json',
+  '.codex-plugin/plugin.json',
   '.mcp.json',
   'hooks/hooks.json',
   'bundle/server.js',
@@ -108,9 +109,12 @@ describe('a plugin directory copied away from the repository', () => {
 
   it('asks nobody to install anything before it will run', async () => {
     const manifests = await Promise.all(
-      ['.mcp.json', 'hooks/hooks.json', '.claude-plugin/plugin.json'].map((path) =>
-        readFile(join(installed, ...path.split('/')), 'utf8'),
-      ),
+      [
+        '.mcp.json',
+        'hooks/hooks.json',
+        '.claude-plugin/plugin.json',
+        '.codex-plugin/plugin.json',
+      ].map((path) => readFile(join(installed, ...path.split('/')), 'utf8')),
     );
 
     // An install step would be a second chance to fail on somebody else's

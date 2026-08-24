@@ -77,8 +77,33 @@ export function hostToolName(tool: MemoryTool): string {
   return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
 }
 
+/** The exact name Codex exposes for the same local MCP tool. */
+export function codexHostToolName(tool: MemoryTool): string {
+  return `mcp__${MCP_SERVER_KEY}__${tool}`;
+}
+
+/** Every authenticated alias for one logical tool, and no others. */
+export function hostToolNames(tool: MemoryTool): readonly string[] {
+  return [hostToolName(tool), codexHostToolName(tool)];
+}
+
 /** The exact host names, which are the only set that may mint identity. */
-export const HOST_TOOL_NAMES: readonly string[] = MEMORY_TOOLS.map(hostToolName);
+export const HOST_TOOL_NAMES: readonly string[] = MEMORY_TOOLS.flatMap(hostToolNames);
+
+export type RuntimeHost = 'claude-code' | 'codex';
+
+/** Which host an exact authenticated alias belongs to. */
+export function runtimeHostOf(toolName: string): RuntimeHost | undefined {
+  for (const tool of MEMORY_TOOLS) {
+    if (toolName === hostToolName(tool)) {
+      return 'claude-code';
+    }
+    if (toolName === codexHostToolName(tool)) {
+      return 'codex';
+    }
+  }
+  return undefined;
+}
 
 /**
  * Where the host tells this plugin to keep state that outlives a session.

@@ -21,7 +21,15 @@ export {
   type ClaudeCodeMemoryEnvironment,
 } from './environment.js';
 
-export { CLAUDE_CODE_SOURCE_AI } from './source-ai.js';
+export {
+  CLAUDE_CODE_RUNTIME_PROVENANCE,
+  CLAUDE_CODE_SOURCE_AI,
+  CODEX_RUNTIME_PROVENANCE,
+  CODEX_SOURCE_AI,
+  runtimeSourceAi,
+  type RuntimeProvenance,
+  type RuntimeSourceAi,
+} from './source-ai.js';
 
 export { canonicaliseGitRemote } from './project-remote.js';
 

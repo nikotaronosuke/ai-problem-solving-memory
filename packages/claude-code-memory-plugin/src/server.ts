@@ -53,7 +53,9 @@ import {
 import {
   addEventToCurrentProblem,
   addVerificationToCurrentProblem,
+  CLAUDE_CODE_RUNTIME_PROVENANCE,
   closeCurrentProblem,
+  CODEX_RUNTIME_PROVENANCE,
   markCurrentProblemFixCandidate,
   recallSimilarExperience,
   createClaudeCodeMemoryClient,
@@ -67,6 +69,7 @@ import {
   RESUME_PROBLEM_TARGET_STATUSES,
   type ProblemBindingStore,
   type ResumeProblemTargetStatus,
+  type RuntimeProvenance,
 } from '@ai-problem-solving-memory/claude-code-adapter';
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
@@ -95,11 +98,12 @@ import {
   CURRENT_PROBLEM_TOOL,
   RECALL_FINGERPRINT_DIRECTORY,
   RECALL_SIMILAR_EXPERIENCE_TOOL,
-  hostToolName,
+  hostToolNames,
   MARK_FIX_CANDIDATE_TOOL,
   PLUGIN_DATA_ENV,
   RESUME_PROBLEM_TOOL,
   START_PROBLEM_TOOL,
+  runtimeHostOf,
   type MemoryTool,
 } from './runtime-constants.js';
 
@@ -575,6 +579,7 @@ export interface AuthenticatedCall {
   readonly bindingStore: ProblemBindingStore;
   readonly sessionId: string;
   readonly projectDir: string;
+  readonly runtimeProvenance: RuntimeProvenance;
   /**
    * This plugin's own state directory, as validated for *this* call.
    *
@@ -631,13 +636,20 @@ export async function serveAuthenticated<T>(
   const claim = await claimCallContext({
     directory: join(paths.pluginData, CALL_CONTEXT_DIRECTORY),
     hostCallId,
-    toolName: hostToolName(tool),
+    toolNames: hostToolNames(tool),
     now: options.now(),
   });
   if (claim.kind !== 'CLAIMED') {
     // Still before any word about whether a Memory is configured.
     return { kind: 'ERROR', code: 'HOST_CONTEXT_UNAVAILABLE' };
   }
+
+  const runtimeHost = runtimeHostOf(claim.toolName);
+  if (runtimeHost === undefined) {
+    return { kind: 'ERROR', code: 'HOST_CONTEXT_UNAVAILABLE' };
+  }
+  const runtimeProvenance =
+    runtimeHost === 'codex' ? CODEX_RUNTIME_PROVENANCE : CLAUDE_CODE_RUNTIME_PROVENANCE;
 
   try {
     // 4. Only now does anything about the Memory get looked at.
@@ -656,6 +668,7 @@ export async function serveAuthenticated<T>(
       // saying nothing. The same value goes to Project detection and to
       // Environment capture, so the two cannot describe different places.
       projectDir: claim.currentDirectory,
+      runtimeProvenance,
       // The same validated directory the claim above was made against.
       pluginData: paths.pluginData,
     });
@@ -731,6 +744,7 @@ export async function handleResumeProblem(
       projectId: args.project_id,
       problemId: args.problem_id,
       targetStatus: args.target_status,
+      runtimeProvenance: call.runtimeProvenance,
     }),
   );
 
@@ -774,6 +788,7 @@ export async function handleStartProblem(
       ...(args.expected_candidate_problem_ids === undefined
         ? {}
         : { expectedCandidateProblemIds: args.expected_candidate_problem_ids }),
+      runtimeProvenance: call.runtimeProvenance,
     }),
   );
 
@@ -828,6 +843,7 @@ export async function handleRecallSimilarExperience(
       }),
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       query: {
         lexicalText: input.lexical_text,
         semanticText: input.semantic_text,
@@ -866,6 +882,7 @@ export async function handleAddEvent(
       bindingStore: call.bindingStore,
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       eventType: input.event_type,
       summary: input.summary,
       clientEventId: input.client_event_id,
@@ -898,6 +915,7 @@ export async function handleAddVerification(
       bindingStore: call.bindingStore,
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       verificationType: input.verification_type,
       result: input.result,
       summary: input.summary,
@@ -929,6 +947,7 @@ export async function handleCloseProblem(
       bindingStore: call.bindingStore,
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       targetStatus: input.target_status,
       ...(input.fix_kind !== undefined ? { fixKind: input.fix_kind } : {}),
       ...(input.final_cause_summary !== undefined
@@ -969,6 +988,7 @@ export async function handleMarkFixCandidate(
         bindingStore: call.bindingStore,
         sessionId: call.sessionId,
         projectDir: call.projectDir,
+        runtimeProvenance: call.runtimeProvenance,
       }),
   );
 
