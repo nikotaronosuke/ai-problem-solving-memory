@@ -26,6 +26,8 @@ export {
   CLAUDE_CODE_SOURCE_AI,
   CODEX_RUNTIME_PROVENANCE,
   CODEX_SOURCE_AI,
+  REMOTE_MCP_RUNTIME_PROVENANCE,
+  REMOTE_MCP_SOURCE_AI,
   runtimeSourceAi,
   type RuntimeProvenance,
   type RuntimeSourceAi,

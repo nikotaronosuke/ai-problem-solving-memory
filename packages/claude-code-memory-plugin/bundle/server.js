@@ -23454,6 +23454,17 @@ function resultOf(outcome) {
   };
 }
 async function serveAuthenticated(request, options, tool, work) {
+  if (options.establishCall !== void 0) {
+    const established = await options.establishCall(tool);
+    if ("kind" in established) {
+      return established;
+    }
+    try {
+      return await work(established);
+    } catch (error2) {
+      return { kind: "ERROR", code: classify(error2) };
+    }
+  }
   const hostCallId = hostCallIdOf(request);
   if (hostCallId === void 0) {
     return { kind: "ERROR", code: "HOST_CONTEXT_UNAVAILABLE" };

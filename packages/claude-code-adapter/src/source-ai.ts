@@ -28,8 +28,20 @@
 export const CLAUDE_CODE_SOURCE_AI = 'claude-code';
 export const CODEX_SOURCE_AI = 'codex';
 
+/**
+ * The remote MCP edge's own name for itself.
+ *
+ * Deliberately the transport, not an assistant: a remote host authenticates
+ * with the owner's credential, and the edge cannot verify which assistant is
+ * on the other end of it. Claiming `claude-code` or `codex` would be an
+ * identity the edge did not observe; naming the edge is the honest provenance
+ * it can actually stand behind.
+ */
+export const REMOTE_MCP_SOURCE_AI = 'remote-mcp';
+
 /** The host attribution an authenticated runtime may attach to a write. */
-export type RuntimeSourceAi = typeof CLAUDE_CODE_SOURCE_AI | typeof CODEX_SOURCE_AI;
+export type RuntimeSourceAi =
+  typeof CLAUDE_CODE_SOURCE_AI | typeof CODEX_SOURCE_AI | typeof REMOTE_MCP_SOURCE_AI;
 
 /**
  * Provenance established by the host edge, outside every model-owned schema.
@@ -47,6 +59,10 @@ export const CLAUDE_CODE_RUNTIME_PROVENANCE: RuntimeProvenance = {
 };
 
 export const CODEX_RUNTIME_PROVENANCE: RuntimeProvenance = { sourceAi: CODEX_SOURCE_AI };
+
+export const REMOTE_MCP_RUNTIME_PROVENANCE: RuntimeProvenance = {
+  sourceAi: REMOTE_MCP_SOURCE_AI,
+};
 
 /** Claude Code remains the default for existing direct adapter callers. */
 export function runtimeSourceAi(provenance?: RuntimeProvenance): RuntimeSourceAi {
