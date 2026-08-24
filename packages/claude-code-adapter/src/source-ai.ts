@@ -26,3 +26,29 @@
  * question `source_ai` answers is what actually made the call.
  */
 export const CLAUDE_CODE_SOURCE_AI = 'claude-code';
+export const CODEX_SOURCE_AI = 'codex';
+
+/** The host attribution an authenticated runtime may attach to a write. */
+export type RuntimeSourceAi = typeof CLAUDE_CODE_SOURCE_AI | typeof CODEX_SOURCE_AI;
+
+/**
+ * Provenance established by the host edge, outside every model-owned schema.
+ *
+ * This is descriptive rather than authorising: owner scope still comes from
+ * the Memory credential. Keeping it as a separate value prevents a model's
+ * input object from acquiring a field that looks like an identity override.
+ */
+export interface RuntimeProvenance {
+  readonly sourceAi: RuntimeSourceAi;
+}
+
+export const CLAUDE_CODE_RUNTIME_PROVENANCE: RuntimeProvenance = {
+  sourceAi: CLAUDE_CODE_SOURCE_AI,
+};
+
+export const CODEX_RUNTIME_PROVENANCE: RuntimeProvenance = { sourceAi: CODEX_SOURCE_AI };
+
+/** Claude Code remains the default for existing direct adapter callers. */
+export function runtimeSourceAi(provenance?: RuntimeProvenance): RuntimeSourceAi {
+  return provenance?.sourceAi ?? CLAUDE_CODE_SOURCE_AI;
+}

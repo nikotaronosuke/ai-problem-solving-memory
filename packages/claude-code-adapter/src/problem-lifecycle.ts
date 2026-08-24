@@ -57,7 +57,7 @@ import {
   type ProblemCandidate,
 } from './problem-resolution.js';
 import { startProblem, type StartProblemInput } from './problem-start.js';
-import { CLAUDE_CODE_SOURCE_AI } from './source-ai.js';
+import { runtimeSourceAi, type RuntimeProvenance } from './source-ai.js';
 
 /**
  * The store, minus the one method this module must not call.
@@ -340,6 +340,7 @@ export async function resumeProblem(
   projectId: string,
   problemId: string,
   targetStatus: ResumeProblemTargetStatus,
+  runtimeProvenance?: RuntimeProvenance,
 ): Promise<ResumeProblemResult> {
   // First, before the store is touched and before anything is read. A resume
   // that turned out not to be a resume must cost nothing and leave nothing:
@@ -374,7 +375,7 @@ export async function resumeProblem(
   const transitioned = await client.transitionProblemStatus(problemId, {
     target_status: targetStatus,
     expected_version: problem.version,
-    changed_by: CLAUDE_CODE_SOURCE_AI,
+    changed_by: runtimeSourceAi(runtimeProvenance),
   });
 
   // The client already checked that this is the Problem asked about and that it
@@ -473,6 +474,7 @@ export async function startNewProblem(
   sessionId: string,
   input: StartProblemInput,
   expectedCandidateProblemIds?: readonly string[],
+  runtimeProvenance?: RuntimeProvenance,
 ): Promise<StartNewProblemResult> {
   await requireUsableBindingKey(store, sessionId, input.projectId);
 
@@ -505,7 +507,7 @@ export async function startNewProblem(
   // before creating anything and stops at the first failure, and an unanswered
   // create travels unchanged — there is no fact that would prove which of the
   // Problems now under this Project was the one this call may have made.
-  const started = await startProblem(client, input);
+  const started = await startProblem(client, input, runtimeProvenance);
 
   return {
     kind: 'STARTED',

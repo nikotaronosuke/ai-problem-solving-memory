@@ -31,7 +31,9 @@ import {
   CALL_CONTEXT_MAX_AGE_MS,
   CALL_CONTEXT_MAX_BYTES,
   CURRENT_PROBLEM_TOOL,
+  codexHostToolName,
   hostToolName,
+  hostToolNames,
 } from '../src/runtime-constants.js';
 
 /** Synthetic. Shaped like a host call id, and not one. */
@@ -70,7 +72,7 @@ async function claim(hostCallId = CALL_ID, now = NOW) {
   return claimCallContext({
     directory,
     hostCallId,
-    toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+    toolNames: hostToolNames(CURRENT_PROBLEM_TOOL),
     now,
   });
 }
@@ -78,6 +80,22 @@ async function claim(hostCallId = CALL_ID, now = NOW) {
 describe('reading the host identifier for the call being served', () => {
   it('reads it from protocol metadata', () => {
     expect(hostCallIdOf({ _meta: { 'claudecode/toolUseId': CALL_ID } })).toBe(CALL_ID);
+  });
+
+  it('reads Codex callId metadata', () => {
+    expect(hostCallIdOf({ _meta: { callId: CALL_ID } })).toBe(CALL_ID);
+  });
+
+  it('accepts matching dual metadata and refuses conflicting identities', () => {
+    expect(hostCallIdOf({ _meta: { 'claudecode/toolUseId': CALL_ID, callId: CALL_ID } })).toBe(
+      CALL_ID,
+    );
+    expect(
+      hostCallIdOf({ _meta: { 'claudecode/toolUseId': CALL_ID, callId: OTHER_CALL_ID } }),
+    ).toBeUndefined();
+    expect(
+      hostCallIdOf({ _meta: { 'claudecode/toolUseId': CALL_ID, callId: ' ' } }),
+    ).toBeUndefined();
   });
 
   it.each([
@@ -185,6 +203,23 @@ describe('claiming', () => {
       kind: 'CLAIMED',
       sessionId: SESSION_ID,
       currentDirectory: HERE,
+      toolName: hostToolName(CURRENT_PROBLEM_TOOL),
+    });
+  });
+
+  it('accepts the exact Codex alias and returns it for provenance', async () => {
+    await mintCallContext({
+      directory,
+      hostCallId: CALL_ID,
+      sessionId: SESSION_ID,
+      toolName: codexHostToolName(CURRENT_PROBLEM_TOOL),
+      currentDirectory: HERE,
+      now: NOW,
+    });
+
+    await expect(claim()).resolves.toMatchObject({
+      kind: 'CLAIMED',
+      toolName: codexHostToolName(CURRENT_PROBLEM_TOOL),
     });
   });
 
@@ -726,6 +761,7 @@ describe('how much of a claimed record is read', () => {
       kind: 'CLAIMED',
       sessionId: SESSION_ID,
       currentDirectory: HERE,
+      toolName: hostToolName(CURRENT_PROBLEM_TOOL),
     });
   });
 });
@@ -738,6 +774,7 @@ describe('the location a call was made from', () => {
       kind: 'CLAIMED',
       sessionId: SESSION_ID,
       currentDirectory: HERE,
+      toolName: hostToolName(CURRENT_PROBLEM_TOOL),
     });
   });
 

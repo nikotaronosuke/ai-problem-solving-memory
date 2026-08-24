@@ -78,7 +78,7 @@ import {
  * installed host rather than documented by it, which is why every path out of
  * here refuses rather than substitutes.
  */
-const HOST_CALL_ID_META_KEY = 'claudecode/toolUseId';
+const HOST_CALL_ID_META_KEYS = ['claudecode/toolUseId', 'callId'] as const;
 
 /**
  * What a pending record holds. Exactly this, and nothing about the work.
@@ -100,7 +100,12 @@ export interface HostCallContext {
 
 /** What claiming a call context concluded. */
 export type HostCallContextClaim =
-  | { readonly kind: 'CLAIMED'; readonly sessionId: string; readonly currentDirectory: string }
+  | {
+      readonly kind: 'CLAIMED';
+      readonly sessionId: string;
+      readonly currentDirectory: string;
+      readonly toolName: string;
+    }
   | { readonly kind: 'UNAVAILABLE' };
 
 /** Whether text has something in it. */
@@ -116,7 +121,8 @@ function isAbsolutePath(value: unknown): value is string {
 /**
  * The host's identifier for this call, or nothing.
  *
- * Reads exactly one place. There is no second-best source: the request's own
+ * Reads the two exact host-owned keys this runtime supports. There is no
+ * second-best source: the request's own
  * JSON-RPC id is the client's counter and means nothing across calls, a
  * progress token is the client's too, and anything reachable from the tool's
  * arguments is chosen by the model — which is the whole thing this avoids.
@@ -129,8 +135,17 @@ export function hostCallIdOf(request: unknown): string | undefined {
   if (typeof meta !== 'object' || meta === null) {
     return undefined;
   }
-  const value = (meta as Record<string, unknown>)[HOST_CALL_ID_META_KEY];
-  return isNonBlank(value) ? value : undefined;
+  const record = meta as Record<string, unknown>;
+  const values = HOST_CALL_ID_META_KEYS.filter((key) => Object.hasOwn(record, key)).map(
+    (key) => record[key],
+  );
+  if (values.length === 0) {
+    return undefined;
+  }
+  if (!values.every(isNonBlank)) {
+    return undefined;
+  }
+  return values.every((value) => value === values[0]) ? values[0] : undefined;
 }
 
 /**
@@ -295,7 +310,7 @@ export async function mintCallContext(options: {
 export async function claimCallContext(options: {
   readonly directory: string;
   readonly hostCallId: string;
-  readonly toolName: string;
+  readonly toolNames: readonly string[];
   readonly now: number;
 }): Promise<HostCallContextClaim> {
   const pending = join(options.directory, callContextFilename(options.hostCallId));
@@ -328,7 +343,7 @@ export async function claimCallContext(options: {
     if (!isHostCallContext(parsed)) {
       return { kind: 'UNAVAILABLE' };
     }
-    if (parsed.tool_name !== options.toolName) {
+    if (!options.toolNames.includes(parsed.tool_name)) {
       return { kind: 'UNAVAILABLE' };
     }
     if (isExpired(parsed, options.now)) {
@@ -338,6 +353,7 @@ export async function claimCallContext(options: {
       kind: 'CLAIMED',
       sessionId: parsed.session_id,
       currentDirectory: parsed.current_directory,
+      toolName: parsed.tool_name,
     };
   } catch {
     return { kind: 'UNAVAILABLE' };

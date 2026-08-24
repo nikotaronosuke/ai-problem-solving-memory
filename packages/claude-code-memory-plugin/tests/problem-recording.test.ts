@@ -25,6 +25,7 @@ import {
   BINDINGS_DIRECTORY,
   CALL_CONTEXT_DIRECTORY,
   CLOSE_PROBLEM_TOOL,
+  codexHostToolName,
   hostToolName,
   MARK_FIX_CANDIDATE_TOOL,
   PLUGIN_DATA_ENV,
@@ -181,15 +182,19 @@ async function startMemory(): Promise<void> {
   baseUrl = `http://127.0.0.1:${String((memory.address() as AddressInfo).port)}`;
 }
 
-async function mintFor(tool: MemoryTool): Promise<void> {
+async function mintFor(
+  tool: MemoryTool,
+  host: 'claude-code' | 'codex' = 'claude-code',
+  callId: string = CALL_ID,
+): Promise<void> {
   const directory = join(pluginData, CALL_CONTEXT_DIRECTORY);
   await mkdir(directory, { recursive: true });
   await writeFile(
-    join(directory, callContextFilename(CALL_ID)),
+    join(directory, callContextFilename(callId)),
     JSON.stringify({
       format_version: 2,
       session_id: SESSION_ID,
-      tool_name: hostToolName(tool),
+      tool_name: host === 'codex' ? codexHostToolName(tool) : hostToolName(tool),
       current_directory: projectDir,
       minted_at: NOW,
     }),
@@ -197,9 +202,12 @@ async function mintFor(tool: MemoryTool): Promise<void> {
   );
 }
 
-const request = (): unknown => ({
+const request = (
+  host: 'claude-code' | 'codex' = 'claude-code',
+  callId: string = CALL_ID,
+): unknown => ({
   method: 'tools/call',
-  _meta: { 'claudecode/toolUseId': CALL_ID },
+  _meta: host === 'codex' ? { callId } : { 'claudecode/toolUseId': callId },
 });
 
 const options = () => ({
@@ -343,5 +351,38 @@ describe('current-Problem write handlers', () => {
       changed_by: 'claude-code',
       target_status: 'FIX_CANDIDATE',
     });
+  });
+
+  it('derives Codex provenance from each authenticated alias', async () => {
+    const calls = [
+      ['codex-event', ADD_EVENT_TOOL],
+      ['codex-verification', ADD_VERIFICATION_TOOL],
+      ['codex-transition', MARK_FIX_CANDIDATE_TOOL],
+      ['codex-close', CLOSE_PROBLEM_TOOL],
+    ] as const;
+    for (const [callId, tool] of calls) {
+      await mintFor(tool, 'codex', callId);
+    }
+
+    await handleAddEvent(request('codex', 'codex-event'), options(), {
+      event_type: 'DISCOVERY',
+      summary: 'Codex independently confirmed the boundary.',
+      client_event_id: EVENT_KEY,
+    });
+    await handleAddVerification(request('codex', 'codex-verification'), options(), {
+      verification_type: 'TEST',
+      result: true,
+      summary: 'Codex ran the regression test.',
+      client_event_id: VERIFICATION_KEY,
+    });
+    await handleMarkFixCandidate(request('codex', 'codex-transition'), options());
+    await handleCloseProblem(request('codex', 'codex-close'), options(), {
+      target_status: 'PAUSED',
+    });
+
+    expect(writeTo('/events').body.source_ai).toBe('codex');
+    expect(writeTo('/verifications').body.verified_by).toBe('codex');
+    expect(writeTo('/status-transitions').body.changed_by).toBe('codex');
+    expect(writeTo('/close').body.changed_by).toBe('codex');
   });
 });

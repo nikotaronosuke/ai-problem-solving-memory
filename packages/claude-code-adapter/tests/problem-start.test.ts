@@ -23,6 +23,7 @@ import { MemoryApiError, MemoryApiUnreachableError } from '@ai-problem-solving-m
 
 import {
   CLAUDE_CODE_SOURCE_AI,
+  CODEX_RUNTIME_PROVENANCE,
   startProblem,
   type GitCommandResult,
   type GitRunner,
@@ -195,6 +196,14 @@ describe('what it sends', () => {
     await startProblem(memory, INPUT);
 
     expect(log.problems[0]?.request.source_ai).toBe(CLAUDE_CODE_SOURCE_AI);
+  });
+
+  it('uses provenance supplied by an authenticated shared runtime', async () => {
+    const { client: memory, log } = client({});
+
+    await startProblem(memory, INPUT, CODEX_RUNTIME_PROVENANCE);
+
+    expect(log.problems[0]?.request.source_ai).toBe('codex');
   });
 
   it('does not let a caller claim to be a different assistant', async () => {

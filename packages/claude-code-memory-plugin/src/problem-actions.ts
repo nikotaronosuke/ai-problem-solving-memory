@@ -39,6 +39,7 @@ import {
   type ProblemCandidate,
   type ProblemContinuity,
   type ResumeProblemTargetStatus,
+  type RuntimeProvenance,
 } from '@ai-problem-solving-memory/claude-code-adapter';
 
 import { selectSuppliedProject } from './project-decision.js';
@@ -50,6 +51,7 @@ interface ProblemActionContext {
   readonly sessionId: string;
   readonly projectDir: string;
   readonly projectId: string;
+  readonly runtimeProvenance?: RuntimeProvenance;
   /** How git is invoked while detecting. Production omits it. */
   readonly runGit?: DetectProjectSignalsInput['runGit'];
 }
@@ -160,6 +162,7 @@ export async function resumePausedProblem(
     projectId,
     context.problemId,
     context.targetStatus,
+    context.runtimeProvenance,
   );
 
   return outcome.kind === 'RESUMED'
@@ -209,9 +212,8 @@ export async function startFreshProblem(
     // Passed through exactly as given, and never filled in here. What the
     // caller considered and what this program observed are different facts,
     // and the guard is only worth anything as the first one.
-    ...(context.expectedCandidateProblemIds === undefined
-      ? []
-      : ([context.expectedCandidateProblemIds] as const)),
+    context.expectedCandidateProblemIds,
+    context.runtimeProvenance,
   );
 
   return outcome.kind === 'STARTED'

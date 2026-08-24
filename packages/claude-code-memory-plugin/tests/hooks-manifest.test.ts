@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { HOST_TOOL_NAMES, MEMORY_TOOLS, hostToolName } from '../src/runtime-constants.js';
+import { HOST_TOOL_NAMES, MEMORY_TOOLS, hostToolNames } from '../src/runtime-constants.js';
 
 interface HookCommand {
   readonly type: string;
@@ -73,9 +73,9 @@ describe('the shipped hook manifest', () => {
     const matchers = new Set((await manifest()).hooks.PreToolUse.map((entry) => entry.matcher));
 
     for (const tool of MEMORY_TOOLS) {
-      expect(`${tool} is hooked:${matchers.has(hostToolName(tool))}`).toBe(
-        `${tool} is hooked:true`,
-      );
+      for (const name of hostToolNames(tool)) {
+        expect(`${name} is hooked:${matchers.has(name)}`).toBe(`${name} is hooked:true`);
+      }
     }
   });
 });

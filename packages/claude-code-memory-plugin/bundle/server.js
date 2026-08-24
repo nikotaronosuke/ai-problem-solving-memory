@@ -1321,6 +1321,14 @@ function createClaudeCodeMemoryClient(environment = process.env, fetch2) {
 
 // ../claude-code-adapter/src/source-ai.ts
 var CLAUDE_CODE_SOURCE_AI = "claude-code";
+var CODEX_SOURCE_AI = "codex";
+var CLAUDE_CODE_RUNTIME_PROVENANCE = {
+  sourceAi: CLAUDE_CODE_SOURCE_AI
+};
+var CODEX_RUNTIME_PROVENANCE = { sourceAi: CODEX_SOURCE_AI };
+function runtimeSourceAi(provenance) {
+  return provenance?.sourceAi ?? CLAUDE_CODE_SOURCE_AI;
+}
 
 // ../claude-code-adapter/src/project-remote.ts
 var DEFAULT_PORTS = /* @__PURE__ */ new Map([
@@ -1790,7 +1798,7 @@ async function captureEnvironment(input) {
 }
 
 // ../claude-code-adapter/src/problem-start.ts
-async function startProblem(client, input) {
+async function startProblem(client, input, runtimeProvenance) {
   const snapshot = await captureEnvironment({
     projectDir: input.projectDir,
     ...input.runGit === void 0 ? {} : { runGit: input.runGit }
@@ -1808,7 +1816,7 @@ async function startProblem(client, input) {
     // This adapter's own name, never the caller's. `source_ai` is provenance —
     // which assistant recorded this — and a value the caller could set would be
     // a value worth setting wrongly.
-    source_ai: CLAUDE_CODE_SOURCE_AI
+    source_ai: runtimeSourceAi(runtimeProvenance)
   });
   return { problemId: problem.problem_id, status: problem.status };
 }
@@ -2067,7 +2075,7 @@ async function continueProblem(client, store, sessionId, projectId, problemId) {
     continuity: await bind(store, sessionId, projectId, problemId)
   };
 }
-async function resumeProblem(client, store, sessionId, projectId, problemId, targetStatus) {
+async function resumeProblem(client, store, sessionId, projectId, problemId, targetStatus, runtimeProvenance) {
   if (!isResumeProblemTargetStatus(targetStatus)) {
     throw new ProblemLifecycleArgumentError("resume target status");
   }
@@ -2090,7 +2098,7 @@ async function resumeProblem(client, store, sessionId, projectId, problemId, tar
   const transitioned = await client.transitionProblemStatus(problemId, {
     target_status: targetStatus,
     expected_version: problem.version,
-    changed_by: CLAUDE_CODE_SOURCE_AI
+    changed_by: runtimeSourceAi(runtimeProvenance)
   });
   if (transitioned.project_id !== projectId) {
     throw new ProblemLifecycleInvariantError();
@@ -2113,7 +2121,7 @@ function sameProblemIdentities(expected, fresh) {
   const freshIdentities = new Set(fresh);
   return freshIdentities.size === expectedIdentities.size && [...expectedIdentities].every((identity) => freshIdentities.has(identity));
 }
-async function startNewProblem(client, store, sessionId, input, expectedCandidateProblemIds) {
+async function startNewProblem(client, store, sessionId, input, expectedCandidateProblemIds, runtimeProvenance) {
   await requireUsableBindingKey(store, sessionId, input.projectId);
   const fresh = await resolveCurrentProblem(client, input.projectId);
   if (fresh.kind === "RESOLVED") {
@@ -2132,7 +2140,7 @@ async function startNewProblem(client, store, sessionId, input, expectedCandidat
   )) {
     return { kind: "RECONSIDER", reason: "CANDIDATES_CHANGED", candidates };
   }
-  const started = await startProblem(client, input);
+  const started = await startProblem(client, input, runtimeProvenance);
   return {
     kind: "STARTED",
     problemId: started.problemId,
@@ -2164,11 +2172,11 @@ function recallFingerprintOf(problemId, problemVersion, request, digest) {
   ]);
   return digest(canonical);
 }
-function requestOf(query) {
+function requestOf(query, runtimeProvenance) {
   return {
     // Neither of these is the model's to choose. One says which assistant is
     // asking, and the other which vocabulary the features are written in.
-    source_ai: CLAUDE_CODE_SOURCE_AI,
+    source_ai: runtimeSourceAi(runtimeProvenance),
     lexical_text: query.lexicalText,
     semantic_text: query.semanticText,
     current_features: {
@@ -2219,7 +2227,7 @@ async function recallSimilarExperience(input) {
   if (problem === void 0) {
     return { kind: "NO_CURRENT_PROBLEM" };
   }
-  const request = requestOf(input.query);
+  const request = requestOf(input.query, input.runtimeProvenance);
   const fingerprint = recallFingerprintOf(problem.problem_id, problem.version, request, digest);
   const remembered = await input.fingerprintStore.readFingerprint(problem.problem_id);
   if (remembered.kind === "FOUND" && remembered.fingerprint === fingerprint) {
@@ -2293,7 +2301,7 @@ async function addEventToCurrentProblem(input) {
     event_type: input.eventType,
     summary: input.summary,
     client_event_id: input.clientEventId,
-    source_ai: CLAUDE_CODE_SOURCE_AI,
+    source_ai: runtimeSourceAi(input.runtimeProvenance),
     ..."result" in input ? { result: input.result } : {},
     ..."reason" in input ? { reason: input.reason } : {},
     ..."evidenceRef" in input ? { evidence_ref: input.evidenceRef } : {}
@@ -2317,7 +2325,7 @@ async function addVerificationToCurrentProblem(input) {
     result: input.result,
     summary: input.summary,
     client_event_id: input.clientEventId,
-    verified_by: CLAUDE_CODE_SOURCE_AI,
+    verified_by: runtimeSourceAi(input.runtimeProvenance),
     ..."evidenceRef" in input ? { evidence_ref: input.evidenceRef } : {}
   };
   const verification = await input.client.appendVerification(current.problem.problem_id, request);
@@ -2337,7 +2345,7 @@ async function markCurrentProblemFixCandidate(input) {
   const problem = await input.client.transitionProblemStatus(current.problem.problem_id, {
     target_status: "FIX_CANDIDATE",
     expected_version: current.problem.version,
-    changed_by: CLAUDE_CODE_SOURCE_AI
+    changed_by: runtimeSourceAi(input.runtimeProvenance)
   });
   return {
     kind: "FIX_CANDIDATE_MARKED",
@@ -2353,7 +2361,7 @@ async function closeCurrentProblem(input) {
   }
   const problem = await input.client.closeProblem(current.problem.problem_id, {
     expected_version: current.problem.version,
-    changed_by: CLAUDE_CODE_SOURCE_AI,
+    changed_by: runtimeSourceAi(input.runtimeProvenance),
     target_status: input.targetStatus,
     ..."fixKind" in input ? { fix_kind: input.fixKind } : {},
     ..."finalCauseSummary" in input ? { final_cause_summary: input.finalCauseSummary } : {},
@@ -22665,7 +22673,24 @@ var MEMORY_TOOLS = [
 function hostToolName(tool) {
   return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
 }
-var HOST_TOOL_NAMES = MEMORY_TOOLS.map(hostToolName);
+function codexHostToolName(tool) {
+  return `mcp__${MCP_SERVER_KEY}__${tool}`;
+}
+function hostToolNames(tool) {
+  return [hostToolName(tool), codexHostToolName(tool)];
+}
+var HOST_TOOL_NAMES = MEMORY_TOOLS.flatMap(hostToolNames);
+function runtimeHostOf(toolName) {
+  for (const tool of MEMORY_TOOLS) {
+    if (toolName === hostToolName(tool)) {
+      return "claude-code";
+    }
+    if (toolName === codexHostToolName(tool)) {
+      return "codex";
+    }
+  }
+  return void 0;
+}
 var PLUGIN_DATA_ENV = "MEMORY_CLAUDE_PLUGIN_DATA";
 var BINDINGS_DIRECTORY = "bindings";
 var CALL_CONTEXT_DIRECTORY = "call-context";
@@ -22905,7 +22930,7 @@ async function currentProblem(input) {
 import { createHash as createHash4 } from "node:crypto";
 import { mkdir as mkdir3, open as open3, readdir, readFile as readFile3, stat as stat2, unlink as unlink3 } from "node:fs/promises";
 import { isAbsolute as isAbsolute4, join as join3 } from "node:path";
-var HOST_CALL_ID_META_KEY = "claudecode/toolUseId";
+var HOST_CALL_ID_META_KEYS = ["claudecode/toolUseId", "callId"];
 function isNonBlank4(value) {
   return typeof value === "string" && /\S/.test(value);
 }
@@ -22920,8 +22945,17 @@ function hostCallIdOf(request) {
   if (typeof meta2 !== "object" || meta2 === null) {
     return void 0;
   }
-  const value = meta2[HOST_CALL_ID_META_KEY];
-  return isNonBlank4(value) ? value : void 0;
+  const record2 = meta2;
+  const values = HOST_CALL_ID_META_KEYS.filter((key) => Object.hasOwn(record2, key)).map(
+    (key) => record2[key]
+  );
+  if (values.length === 0) {
+    return void 0;
+  }
+  if (!values.every(isNonBlank4)) {
+    return void 0;
+  }
+  return values.every((value) => value === values[0]) ? values[0] : void 0;
 }
 function callContextFilename(hostCallId, prefix = PENDING_PREFIX) {
   const digest = createHash4("sha256").update(hostCallId, "utf8").digest("hex");
@@ -22979,7 +23013,7 @@ async function claimCallContext(options) {
     if (!isHostCallContext(parsed)) {
       return { kind: "UNAVAILABLE" };
     }
-    if (parsed.tool_name !== options.toolName) {
+    if (!options.toolNames.includes(parsed.tool_name)) {
       return { kind: "UNAVAILABLE" };
     }
     if (isExpired(parsed, options.now)) {
@@ -22988,7 +23022,8 @@ async function claimCallContext(options) {
     return {
       kind: "CLAIMED",
       sessionId: parsed.session_id,
-      currentDirectory: parsed.current_directory
+      currentDirectory: parsed.current_directory,
+      toolName: parsed.tool_name
     };
   } catch {
     return { kind: "UNAVAILABLE" };
@@ -23065,7 +23100,8 @@ async function resumePausedProblem(context) {
     context.sessionId,
     projectId,
     context.problemId,
-    context.targetStatus
+    context.targetStatus,
+    context.runtimeProvenance
   );
   return outcome.kind === "RESUMED" ? {
     kind: "RESUMED",
@@ -23096,7 +23132,11 @@ async function startFreshProblem(context) {
       ...context.suspectedBoundary === void 0 ? {} : { suspectedBoundary: context.suspectedBoundary },
       ...context.runGit === void 0 ? {} : { runGit: context.runGit }
     },
-    ...context.expectedCandidateProblemIds === void 0 ? [] : [context.expectedCandidateProblemIds]
+    // Passed through exactly as given, and never filled in here. What the
+    // caller considered and what this program observed are different facts,
+    // and the guard is only worth anything as the first one.
+    context.expectedCandidateProblemIds,
+    context.runtimeProvenance
   );
   return outcome.kind === "STARTED" ? {
     kind: "STARTED",
@@ -23362,12 +23402,17 @@ async function serveAuthenticated(request, options, tool, work) {
   const claim = await claimCallContext({
     directory: join4(paths.pluginData, CALL_CONTEXT_DIRECTORY),
     hostCallId,
-    toolName: hostToolName(tool),
+    toolNames: hostToolNames(tool),
     now: options.now()
   });
   if (claim.kind !== "CLAIMED") {
     return { kind: "ERROR", code: "HOST_CONTEXT_UNAVAILABLE" };
   }
+  const runtimeHost = runtimeHostOf(claim.toolName);
+  if (runtimeHost === void 0) {
+    return { kind: "ERROR", code: "HOST_CONTEXT_UNAVAILABLE" };
+  }
+  const runtimeProvenance = runtimeHost === "codex" ? CODEX_RUNTIME_PROVENANCE : CLAUDE_CODE_RUNTIME_PROVENANCE;
   try {
     const client = createClaudeCodeMemoryClient(options.environment);
     const bindingStore = createProblemBindingStore({
@@ -23383,6 +23428,7 @@ async function serveAuthenticated(request, options, tool, work) {
       // saying nothing. The same value goes to Project detection and to
       // Environment capture, so the two cannot describe different places.
       projectDir: claim.currentDirectory,
+      runtimeProvenance,
       // The same validated directory the claim above was made against.
       pluginData: paths.pluginData
     });
@@ -23438,7 +23484,8 @@ async function handleResumeProblem(request, options, args) {
       projectDir: call.projectDir,
       projectId: args.project_id,
       problemId: args.problem_id,
-      targetStatus: args.target_status
+      targetStatus: args.target_status,
+      runtimeProvenance: call.runtimeProvenance
     })
   );
   return outcome.kind === "RESUMED" ? {
@@ -23466,7 +23513,8 @@ async function handleStartProblem(request, options, args) {
       // column alone, the other says there is no answer.
       ..."problem_domain" in args ? { problemDomain: args.problem_domain } : {},
       ..."suspected_boundary" in args ? { suspectedBoundary: args.suspected_boundary } : {},
-      ...args.expected_candidate_problem_ids === void 0 ? {} : { expectedCandidateProblemIds: args.expected_candidate_problem_ids }
+      ...args.expected_candidate_problem_ids === void 0 ? {} : { expectedCandidateProblemIds: args.expected_candidate_problem_ids },
+      runtimeProvenance: call.runtimeProvenance
     })
   );
   switch (outcome.kind) {
@@ -23504,6 +23552,7 @@ async function handleRecallSimilarExperience(request, options, input) {
       }),
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       query: {
         lexicalText: input.lexical_text,
         semanticText: input.semantic_text,
@@ -23536,6 +23585,7 @@ async function handleAddEvent(request, options, input) {
       bindingStore: call.bindingStore,
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       eventType: input.event_type,
       summary: input.summary,
       clientEventId: input.client_event_id,
@@ -23562,6 +23612,7 @@ async function handleAddVerification(request, options, input) {
       bindingStore: call.bindingStore,
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       verificationType: input.verification_type,
       result: input.result,
       summary: input.summary,
@@ -23587,6 +23638,7 @@ async function handleCloseProblem(request, options, input) {
       bindingStore: call.bindingStore,
       sessionId: call.sessionId,
       projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance,
       targetStatus: input.target_status,
       ...input.fix_kind !== void 0 ? { fixKind: input.fix_kind } : {},
       ...input.final_cause_summary !== void 0 ? { finalCauseSummary: input.final_cause_summary } : {},
@@ -23611,7 +23663,8 @@ async function handleMarkFixCandidate(request, options) {
       client: call.client,
       bindingStore: call.bindingStore,
       sessionId: call.sessionId,
-      projectDir: call.projectDir
+      projectDir: call.projectDir,
+      runtimeProvenance: call.runtimeProvenance
     })
   );
   return outcome.kind === "FIX_CANDIDATE_MARKED" ? {

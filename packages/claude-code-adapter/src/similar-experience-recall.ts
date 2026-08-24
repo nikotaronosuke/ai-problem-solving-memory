@@ -71,7 +71,7 @@ import { resolveProject } from './project-resolution.js';
 import { isWorkingProblemStatus } from './problem-resolution.js';
 import { resolveProblemForSession, type ProblemBindingWriter } from './problem-lifecycle.js';
 import type { CurrentProblemReader } from './problem-resolution.js';
-import { CLAUDE_CODE_SOURCE_AI } from './source-ai.js';
+import { runtimeSourceAi, type RuntimeProvenance } from './source-ai.js';
 
 /**
  * What the model contributes: its current understanding, in its own words.
@@ -126,6 +126,8 @@ export interface RecallSimilarExperienceInput {
   readonly sessionId: string;
   readonly projectDir: string;
   readonly query: RecallQuery;
+  /** Host-established attribution, absent from the model's query. */
+  readonly runtimeProvenance?: RuntimeProvenance;
   /** How git is invoked while detecting. Production omits it. */
   readonly runGit?: DetectProjectSignalsInput['runGit'];
   /** How the request is digested. Production omits it. */
@@ -196,11 +198,11 @@ export function recallFingerprintOf(
 }
 
 /** The request as it will be sent, with the runtime's two fields filled in. */
-function requestOf(query: RecallQuery): MemorySearchRequest {
+function requestOf(query: RecallQuery, runtimeProvenance?: RuntimeProvenance): MemorySearchRequest {
   return {
     // Neither of these is the model's to choose. One says which assistant is
     // asking, and the other which vocabulary the features are written in.
-    source_ai: CLAUDE_CODE_SOURCE_AI,
+    source_ai: runtimeSourceAi(runtimeProvenance),
     lexical_text: query.lexicalText,
     semantic_text: query.semanticText,
     current_features: {
@@ -292,7 +294,7 @@ export async function recallSimilarExperience(
     return { kind: 'NO_CURRENT_PROBLEM' };
   }
 
-  const request = requestOf(input.query);
+  const request = requestOf(input.query, input.runtimeProvenance);
   const fingerprint = recallFingerprintOf(problem.problem_id, problem.version, request, digest);
 
   const remembered = await input.fingerprintStore.readFingerprint(problem.problem_id);

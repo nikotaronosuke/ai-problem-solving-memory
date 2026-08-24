@@ -35,7 +35,7 @@
 import type { MemoryApiClient, ProblemStatus } from '@ai-problem-solving-memory/api-client';
 
 import { captureEnvironment, type CaptureEnvironmentInput } from './environment-capture.js';
-import { CLAUDE_CODE_SOURCE_AI } from './source-ai.js';
+import { runtimeSourceAi, type RuntimeProvenance } from './source-ai.js';
 
 /** Only the two writes this needs. Nothing here reads, lists or transitions. */
 export type StartProblemClient = Pick<MemoryApiClient, 'createEnvironment' | 'createProblem'>;
@@ -82,6 +82,7 @@ export interface StartProblemResult {
 export async function startProblem(
   client: StartProblemClient,
   input: StartProblemInput,
+  runtimeProvenance?: RuntimeProvenance,
 ): Promise<StartProblemResult> {
   const snapshot = await captureEnvironment({
     projectDir: input.projectDir,
@@ -102,7 +103,7 @@ export async function startProblem(
     // This adapter's own name, never the caller's. `source_ai` is provenance —
     // which assistant recorded this — and a value the caller could set would be
     // a value worth setting wrongly.
-    source_ai: CLAUDE_CODE_SOURCE_AI,
+    source_ai: runtimeSourceAi(runtimeProvenance),
   });
 
   return { problemId: problem.problem_id, status: problem.status };

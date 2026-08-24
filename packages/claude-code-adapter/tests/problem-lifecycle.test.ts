@@ -28,6 +28,7 @@ import {
 
 import {
   CLAUDE_CODE_SOURCE_AI,
+  CODEX_RUNTIME_PROVENANCE,
   continueProblem,
   ProblemBindingArgumentError,
   ProblemLifecycleArgumentError,
@@ -507,6 +508,26 @@ describe('resuming a paused Problem', () => {
     );
 
     expect(memory.log.transitions[0]?.request.changed_by).toBe(CLAUDE_CODE_SOURCE_AI);
+  });
+
+  it('uses provenance supplied by an authenticated shared runtime', async () => {
+    const memory = client({
+      get: paused(),
+      transition: problem({ status: 'INVESTIGATING', version: 8 }),
+    });
+    const bindings = store({});
+
+    await resumeProblem(
+      memory.client,
+      bindings.store,
+      SESSION_ID,
+      PROJECT_ID,
+      PROBLEM_ID,
+      'INVESTIGATING',
+      CODEX_RUNTIME_PROVENANCE,
+    );
+
+    expect(memory.log.transitions[0]?.request.changed_by).toBe('codex');
   });
 
   it.each([

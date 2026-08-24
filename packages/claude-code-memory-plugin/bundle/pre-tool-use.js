@@ -41,7 +41,13 @@ var MEMORY_TOOLS = [
 function hostToolName(tool) {
   return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
 }
-var HOST_TOOL_NAMES = MEMORY_TOOLS.map(hostToolName);
+function codexHostToolName(tool) {
+  return `mcp__${MCP_SERVER_KEY}__${tool}`;
+}
+function hostToolNames(tool) {
+  return [hostToolName(tool), codexHostToolName(tool)];
+}
+var HOST_TOOL_NAMES = MEMORY_TOOLS.flatMap(hostToolNames);
 var CALL_CONTEXT_DIRECTORY = "call-context";
 var CALL_CONTEXT_FORMAT_VERSION = 2;
 var PENDING_PREFIX = "pending-";
