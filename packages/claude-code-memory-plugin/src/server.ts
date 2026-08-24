@@ -593,7 +593,27 @@ export function resultOf(outcome: ToolResult): {
 export interface CurrentProblemHandlerOptions {
   readonly environment: Record<string, string | undefined>;
   readonly now: () => number;
+  /**
+   * How this entry point establishes an authenticated call, when it is not
+   * the local hook.
+   *
+   * Absent — the local case, and the default — every call is authenticated by
+   * the hook-minted record claimed below, exactly as before. Present, the
+   * entry point has already authenticated the caller at its own transport
+   * (the remote edge verifies the owner's bearer credential before any tool
+   * runs) and supplies the whole call: client, binding hint store, session,
+   * declared working directory, provenance, state directory. The request's
+   * protocol metadata is deliberately not consulted on this path — there is
+   * no hook on the other side to have minted it, and imitating one would make
+   * a forgeable copy of an unforgeable thing.
+   */
+  readonly establishCall?: EstablishCall;
 }
+
+/** Establishes one authenticated call for a transport-authenticated entry point. */
+export type EstablishCall = (
+  tool: MemoryTool,
+) => Promise<AuthenticatedCall | { kind: 'ERROR'; code: RuntimeErrorCode }>;
 
 /** What a tool's own work needs, once the call has been established as real. */
 export interface AuthenticatedCall {
@@ -636,6 +656,21 @@ export async function serveAuthenticated<T>(
   tool: MemoryTool,
   work: (call: AuthenticatedCall) => Promise<T>,
 ): Promise<T | { kind: 'ERROR'; code: RuntimeErrorCode }> {
+  // An entry point that authenticated its caller at the transport supplies
+  // the call whole, and the hook path below is not consulted at all: the two
+  // authentication routes never mix within one call.
+  if (options.establishCall !== undefined) {
+    const established = await options.establishCall(tool);
+    if ('kind' in established) {
+      return established;
+    }
+    try {
+      return await work(established);
+    } catch (error) {
+      return { kind: 'ERROR', code: classify(error) };
+    }
+  }
+
   // 1. The host's identifier for this call. Read from protocol metadata, which
   //    the model's arguments cannot reach.
   const hostCallId = hostCallIdOf(request);
