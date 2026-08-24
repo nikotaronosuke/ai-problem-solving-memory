@@ -1,5 +1,5 @@
 /**
- * The MCP runtime: five tools, and the order in which they are allowed to fail.
+ * The MCP runtime: eight tools, and the order in which they are allowed to fail.
  *
  * ## The order is the design
  *
@@ -35,7 +35,11 @@ import {
   MemoryApiError,
   MemoryApiProtocolError,
   MemoryApiUnreachableError,
+  CLOSE_PROBLEM_TARGET_STATUSES,
+  EVENT_TYPES,
+  FIX_KINDS,
   PROBLEM_STATUSES,
+  VERIFICATION_TYPES,
   type MemoryApiClient,
 } from '@ai-problem-solving-memory/api-client';
 import {
@@ -47,6 +51,9 @@ import {
   MEMORY_SEARCH_STRUCTURAL_STATUSES,
 } from '@ai-problem-solving-memory/api-client';
 import {
+  addEventToCurrentProblem,
+  addVerificationToCurrentProblem,
+  closeCurrentProblem,
   recallSimilarExperience,
   createClaudeCodeMemoryClient,
   createProblemBindingStore,
@@ -78,8 +85,11 @@ import {
 } from './problem-actions.js';
 import type { ProjectDecision } from './project-decision.js';
 import {
+  ADD_EVENT_TOOL,
+  ADD_VERIFICATION_TOOL,
   BINDINGS_DIRECTORY,
   CALL_CONTEXT_DIRECTORY,
+  CLOSE_PROBLEM_TOOL,
   CONTINUE_PROBLEM_TOOL,
   CURRENT_PROBLEM_TOOL,
   RECALL_FINGERPRINT_DIRECTORY,
@@ -159,6 +169,45 @@ const RECALL_FEATURES_SCHEMA = z
     successful_directions: FEATURE_LIST_SCHEMA,
     dead_end_directions: FEATURE_LIST_SCHEMA,
     environment_facts: FEATURE_LIST_SCHEMA,
+  })
+  .strict();
+
+/** Required semantic text for the existing append/close HTTP contracts. */
+const NON_BLANK_TEXT_SCHEMA = z.string().refine((value) => /\S/u.test(value), {
+  message: 'must contain at least one non-whitespace character',
+});
+const OPTIONAL_NULLABLE_TEXT_SCHEMA = z.string().nullable().optional();
+const CLIENT_EVENT_ID_SCHEMA = z.string().uuid();
+
+const ADD_EVENT_INPUT_SCHEMA = z
+  .object({
+    event_type: z.enum(EVENT_TYPES),
+    summary: NON_BLANK_TEXT_SCHEMA,
+    client_event_id: CLIENT_EVENT_ID_SCHEMA,
+    result: OPTIONAL_NULLABLE_TEXT_SCHEMA,
+    reason: OPTIONAL_NULLABLE_TEXT_SCHEMA,
+    evidence_ref: OPTIONAL_NULLABLE_TEXT_SCHEMA,
+  })
+  .strict();
+
+const ADD_VERIFICATION_INPUT_SCHEMA = z
+  .object({
+    verification_type: z.enum(VERIFICATION_TYPES),
+    result: z.boolean(),
+    summary: NON_BLANK_TEXT_SCHEMA,
+    client_event_id: CLIENT_EVENT_ID_SCHEMA,
+    evidence_ref: OPTIONAL_NULLABLE_TEXT_SCHEMA,
+  })
+  .strict();
+
+const CLOSE_PROBLEM_INPUT_SCHEMA = z
+  .object({
+    target_status: z.enum(CLOSE_PROBLEM_TARGET_STATUSES),
+    fix_kind: z.enum(FIX_KINDS).nullable().optional(),
+    final_cause_summary: NON_BLANK_TEXT_SCHEMA.optional(),
+    effective_direction: NON_BLANK_TEXT_SCHEMA.optional(),
+    dead_end_summary: NON_BLANK_TEXT_SCHEMA.optional(),
+    unresolved_points: NON_BLANK_TEXT_SCHEMA.optional(),
   })
   .strict();
 
@@ -344,9 +393,60 @@ export const RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA = z.discriminatedUnion('kin
   ERROR_VARIANT,
 ]);
 
+/** A current-Problem write that had no authoritative working subject. */
+const CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS = [
+  z.object({ kind: z.literal('NO_CURRENT_PROBLEM') }).strict(),
+  z.object({ kind: z.literal('CURRENT_PROBLEM_NOT_AVAILABLE') }).strict(),
+] as const;
+
+export const ADD_EVENT_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('EVENT_RECORDED'),
+      problem_id: z.string(),
+      event_id: z.string(),
+      client_event_id: z.string(),
+      on_current_problem: z.boolean(),
+    })
+    .strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
+  ERROR_VARIANT,
+]);
+
+export const ADD_VERIFICATION_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('VERIFICATION_RECORDED'),
+      problem_id: z.string(),
+      verification_id: z.string(),
+      client_event_id: z.string(),
+      on_current_problem: z.boolean(),
+    })
+    .strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
+  ERROR_VARIANT,
+]);
+
+export const CLOSE_PROBLEM_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('PROBLEM_CLOSED'),
+      problem_id: z.string(),
+      status: z.enum(CLOSE_PROBLEM_TARGET_STATUSES),
+      version: z.number().int().min(1),
+    })
+    .strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
+  ERROR_VARIANT,
+]);
+
 export type RecallSimilarExperienceToolResult = z.infer<
   typeof RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA
 >;
+
+export type AddEventToolResult = z.infer<typeof ADD_EVENT_OUTPUT_SCHEMA>;
+export type AddVerificationToolResult = z.infer<typeof ADD_VERIFICATION_OUTPUT_SCHEMA>;
+export type CloseProblemToolResult = z.infer<typeof CLOSE_PROBLEM_OUTPUT_SCHEMA>;
 
 export type ContinueProblemToolResult = z.infer<typeof CONTINUE_PROBLEM_OUTPUT_SCHEMA>;
 export type ResumeProblemToolResult = z.infer<typeof RESUME_PROBLEM_OUTPUT_SCHEMA>;
@@ -359,7 +459,10 @@ type ToolResult =
   | ContinueProblemToolResult
   | ResumeProblemToolResult
   | StartProblemToolResult
-  | RecallSimilarExperienceToolResult;
+  | RecallSimilarExperienceToolResult
+  | AddEventToolResult
+  | AddVerificationToolResult
+  | CloseProblemToolResult;
 
 /**
  * Turns a failure into a category, by class and never by prose.
@@ -734,6 +837,106 @@ export async function handleRecallSimilarExperience(
   });
 }
 
+/** Records one typed Event on the current server-revalidated Problem. */
+export async function handleAddEvent(
+  request: unknown,
+  options: CurrentProblemHandlerOptions,
+  input: z.infer<typeof ADD_EVENT_INPUT_SCHEMA>,
+): Promise<AddEventToolResult> {
+  const outcome = await serveAuthenticated(request, options, ADD_EVENT_TOOL, async (call) =>
+    addEventToCurrentProblem({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      eventType: input.event_type,
+      summary: input.summary,
+      clientEventId: input.client_event_id,
+      ...(input.result !== undefined ? { result: input.result } : {}),
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+      ...(input.evidence_ref !== undefined ? { evidenceRef: input.evidence_ref } : {}),
+    }),
+  );
+
+  return outcome.kind === 'EVENT_RECORDED'
+    ? {
+        kind: 'EVENT_RECORDED',
+        problem_id: outcome.problemId,
+        event_id: outcome.eventId,
+        client_event_id: outcome.clientEventId,
+        on_current_problem: outcome.onCurrentProblem,
+      }
+    : outcome;
+}
+
+/** Records one typed Verification on the current server-revalidated Problem. */
+export async function handleAddVerification(
+  request: unknown,
+  options: CurrentProblemHandlerOptions,
+  input: z.infer<typeof ADD_VERIFICATION_INPUT_SCHEMA>,
+): Promise<AddVerificationToolResult> {
+  const outcome = await serveAuthenticated(request, options, ADD_VERIFICATION_TOOL, async (call) =>
+    addVerificationToCurrentProblem({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      verificationType: input.verification_type,
+      result: input.result,
+      summary: input.summary,
+      clientEventId: input.client_event_id,
+      ...(input.evidence_ref !== undefined ? { evidenceRef: input.evidence_ref } : {}),
+    }),
+  );
+
+  return outcome.kind === 'VERIFICATION_RECORDED'
+    ? {
+        kind: 'VERIFICATION_RECORDED',
+        problem_id: outcome.problemId,
+        verification_id: outcome.verificationId,
+        client_event_id: outcome.clientEventId,
+        on_current_problem: outcome.onCurrentProblem,
+      }
+    : outcome;
+}
+
+/** Concludes or pauses the current Problem using its final-read version. */
+export async function handleCloseProblem(
+  request: unknown,
+  options: CurrentProblemHandlerOptions,
+  input: z.infer<typeof CLOSE_PROBLEM_INPUT_SCHEMA>,
+): Promise<CloseProblemToolResult> {
+  const outcome = await serveAuthenticated(request, options, CLOSE_PROBLEM_TOOL, async (call) =>
+    closeCurrentProblem({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      targetStatus: input.target_status,
+      ...(input.fix_kind !== undefined ? { fixKind: input.fix_kind } : {}),
+      ...(input.final_cause_summary !== undefined
+        ? { finalCauseSummary: input.final_cause_summary }
+        : {}),
+      ...(input.effective_direction !== undefined
+        ? { effectiveDirection: input.effective_direction }
+        : {}),
+      ...(input.dead_end_summary !== undefined ? { deadEndSummary: input.dead_end_summary } : {}),
+      ...(input.unresolved_points !== undefined
+        ? { unresolvedPoints: input.unresolved_points }
+        : {}),
+    }),
+  );
+
+  return outcome.kind === 'PROBLEM_CLOSED'
+    ? {
+        kind: 'PROBLEM_CLOSED',
+        problem_id: outcome.problemId,
+        status: outcome.status,
+        version: outcome.version,
+      }
+    : outcome;
+}
+
 /** Builds the server. Exported so a test can drive it without a transport. */
 export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): McpServer {
   const server = new McpServer({ name: 'memory', version: '0.0.0' });
@@ -844,6 +1047,53 @@ export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): Mcp
     },
     async (args, extra) =>
       resultOf(await handleRecallSimilarExperience(extra?.mcpReq, options, args)),
+  );
+
+  server.registerTool(
+    ADD_EVENT_TOOL,
+    {
+      description:
+        'Record one typed event on the problem this session is currently working on. ' +
+        'The project, problem and source assistant come from the authenticated host context; ' +
+        'do not supply them. Mint client_event_id once for this logical event and reuse the ' +
+        'same UUID after an unanswered attempt. Summarize what happened; do not paste ' +
+        'credentials, raw terminal or command output, or absolute paths. The returned record ' +
+        'may be an earlier owner-wide idempotency-key replay, so check on_current_problem.',
+      inputSchema: ADD_EVENT_INPUT_SCHEMA,
+      outputSchema: ADD_EVENT_OUTPUT_SCHEMA,
+    },
+    async (args, extra) => resultOf(await handleAddEvent(extra?.mcpReq, options, args)),
+  );
+
+  server.registerTool(
+    ADD_VERIFICATION_TOOL,
+    {
+      description:
+        'Record one check that was actually performed on the problem this session is currently ' +
+        'working on. result is strictly true or false; absence means no Verification should be ' +
+        'recorded. The project, problem and verifying assistant come from the authenticated host ' +
+        'context. Mint client_event_id once and reuse the same UUID after an unanswered attempt. ' +
+        'Summarize the evidence; do not paste credentials, raw output or absolute paths. The ' +
+        'returned record may be an earlier owner-wide key replay, so check on_current_problem.',
+      inputSchema: ADD_VERIFICATION_INPUT_SCHEMA,
+      outputSchema: ADD_VERIFICATION_OUTPUT_SCHEMA,
+    },
+    async (args, extra) => resultOf(await handleAddVerification(extra?.mcpReq, options, args)),
+  );
+
+  server.registerTool(
+    CLOSE_PROBLEM_TOOL,
+    {
+      description:
+        'Conclude or pause the problem this session is currently working on. The problem, actor ' +
+        'and optimistic-lock version come from a fresh authenticated server read, never from ' +
+        'you. VERIFIED is refused by the Memory unless this Problem already has a successful ' +
+        'Verification. Review fields are summaries only; do not paste credentials, raw output ' +
+        'or absolute paths. A concurrent change is reported and is never retried automatically.',
+      inputSchema: CLOSE_PROBLEM_INPUT_SCHEMA,
+      outputSchema: CLOSE_PROBLEM_OUTPUT_SCHEMA,
+    },
+    async (args, extra) => resultOf(await handleCloseProblem(extra?.mcpReq, options, args)),
   );
 
   return server;

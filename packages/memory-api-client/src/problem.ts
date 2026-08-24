@@ -59,6 +59,15 @@ export const FRESHNESSES = ['CURRENT', 'STALE_UNKNOWN', 'SUPERSEDED', 'INVALID']
 
 export type Freshness = (typeof FRESHNESSES)[number];
 
+/** The three statuses accepted by the Problem conclusion route. */
+export const CLOSE_PROBLEM_TARGET_STATUSES = [
+  'VERIFIED',
+  'PAUSED',
+  'CLOSED_UNRESOLVED',
+] as const satisfies readonly ProblemStatus[];
+
+export type CloseProblemTargetStatus = (typeof CLOSE_PROBLEM_TARGET_STATUSES)[number];
+
 /**
  * A Problem, exactly as the API sends one.
  *
@@ -388,5 +397,84 @@ export function isCreateProblemRequest(value: unknown): value is CreateProblemRe
 
   return OPTIONAL_CREATE_PROBLEM_FIELDS.every(
     (field) => !(field in record) || isNullableString(record[field]),
+  );
+}
+
+/**
+ * What concluding a Problem sends.
+ *
+ * The version is the shared optimistic lock for every Problem mutation.
+ * Optional review fields become Events in the same server transaction; they
+ * are summaries, never raw logs or evidence bodies.
+ */
+export interface CloseProblemRequest {
+  readonly expected_version: number;
+  readonly changed_by: string;
+  readonly target_status: CloseProblemTargetStatus;
+  readonly fix_kind?: FixKind | null;
+  readonly final_cause_summary?: string;
+  readonly effective_direction?: string;
+  readonly dead_end_summary?: string;
+  readonly unresolved_points?: string;
+}
+
+/** Every field the close route accepts, in contract order. */
+export const CLOSE_PROBLEM_REQUEST_FIELDS = [
+  'expected_version',
+  'changed_by',
+  'target_status',
+  'fix_kind',
+  'final_cause_summary',
+  'effective_direction',
+  'dead_end_summary',
+  'unresolved_points',
+] as const;
+
+const REQUIRED_CLOSE_PROBLEM_FIELDS = ['expected_version', 'changed_by', 'target_status'] as const;
+
+const CLOSE_PROBLEM_REVIEW_FIELDS = [
+  'final_cause_summary',
+  'effective_direction',
+  'dead_end_summary',
+  'unresolved_points',
+] as const;
+
+/** Whether a close request is exactly one the conclusion route accepts. */
+export function isCloseProblemRequest(value: unknown): value is CloseProblemRequest {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const allowed = new Set<string>(CLOSE_PROBLEM_REQUEST_FIELDS);
+  if (!Object.keys(record).every((field) => allowed.has(field))) {
+    return false;
+  }
+  for (const field of REQUIRED_CLOSE_PROBLEM_FIELDS) {
+    if (!(field in record)) {
+      return false;
+    }
+  }
+
+  const expectedVersion = record['expected_version'];
+  if (
+    typeof expectedVersion !== 'number' ||
+    !Number.isInteger(expectedVersion) ||
+    expectedVersion < 1 ||
+    !isNonBlank(record['changed_by']) ||
+    !isMember(CLOSE_PROBLEM_TARGET_STATUSES, record['target_status'])
+  ) {
+    return false;
+  }
+
+  if (
+    'fix_kind' in record &&
+    record['fix_kind'] !== null &&
+    !isMember(FIX_KINDS, record['fix_kind'])
+  ) {
+    return false;
+  }
+
+  return CLOSE_PROBLEM_REVIEW_FIELDS.every(
+    (field) => !(field in record) || isNonBlank(record[field]),
   );
 }

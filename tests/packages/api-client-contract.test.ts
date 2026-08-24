@@ -20,7 +20,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CLOSE_PROBLEM_TARGET_STATUSES,
   CONFIDENCES as CLIENT_CONFIDENCES,
+  EVENT_RESOURCE_FIELDS,
+  EVENT_TYPES as CLIENT_EVENT_TYPES,
   FIX_KINDS as CLIENT_FIX_KINDS,
   FRESHNESSES as CLIENT_FRESHNESSES,
   MEMORY_API_ERROR_CODES,
@@ -43,16 +46,20 @@ import {
   PROBLEM_RESOURCE_FIELDS,
   PROBLEM_STATUSES as CLIENT_PROBLEM_STATUSES,
   PROJECT_RESOURCE_FIELDS,
+  VERIFICATION_RESOURCE_FIELDS,
+  VERIFICATION_TYPES as CLIENT_VERIFICATION_TYPES,
 } from '@ai-problem-solving-memory/api-client';
 
 import { SEMANTIC_CHANNEL_STATUSES } from '../../src/app/index.js';
 import {
   CONFIDENCES,
+  EVENT_TYPES,
   FIX_KINDS,
   FRESHNESSES,
   PROBLEM_STATUSES,
   VERIFICATION_TYPES,
 } from '../../src/domain/enums.js';
+import { CONCLUSION_PROBLEM_STATUSES } from '../../src/domain/problem-status.js';
 import { PROJECT_RELATIONS } from '../../src/domain/retrieval-ranking.js';
 import { REVALIDATION_CHECKS } from '../../src/domain/retrieval-revalidation.js';
 import {
@@ -72,8 +79,10 @@ import {
 import { ERROR_CODES } from '../../src/http/errors.js';
 import {
   ENVIRONMENT_RESOURCE_SCHEMA,
+  EVENT_RESOURCE_SCHEMA,
   PROBLEM_RESOURCE_SCHEMA,
   PROJECT_RESOURCE_SCHEMA,
+  VERIFICATION_RESOURCE_SCHEMA,
 } from '../../src/http/resources.js';
 import { SEARCH_REQUEST_SCHEMA, SEARCH_RESPONSE_SCHEMA } from '../../src/http/search-resources.js';
 
@@ -94,8 +103,37 @@ describe('the value sets the client mirrors', () => {
     expect([...CLIENT_FRESHNESSES]).toEqual([...FRESHNESSES]);
   });
 
+  it('names the same Event and Verification types', () => {
+    expect([...CLIENT_EVENT_TYPES]).toEqual([...EVENT_TYPES]);
+    expect([...CLIENT_VERIFICATION_TYPES]).toEqual([...VERIFICATION_TYPES]);
+  });
+
+  it('names the same Problem conclusion targets', () => {
+    expect([...CLOSE_PROBLEM_TARGET_STATUSES]).toEqual([...CONCLUSION_PROBLEM_STATUSES]);
+  });
+
   it('names the same error codes as the one envelope', () => {
     expect([...MEMORY_API_ERROR_CODES].sort()).toEqual([...ERROR_CODES].sort());
+  });
+});
+
+describe('the append resources the client expects', () => {
+  it('expects exactly the Event fields the server publishes', () => {
+    expect([...EVENT_RESOURCE_FIELDS].sort()).toEqual([...EVENT_RESOURCE_SCHEMA.required].sort());
+    expect([...EVENT_RESOURCE_FIELDS].sort()).toEqual(
+      Object.keys(EVENT_RESOURCE_SCHEMA.properties).sort(),
+    );
+    expect(EVENT_RESOURCE_SCHEMA.additionalProperties).toBe(false);
+  });
+
+  it('expects exactly the Verification fields the server publishes', () => {
+    expect([...VERIFICATION_RESOURCE_FIELDS].sort()).toEqual(
+      [...VERIFICATION_RESOURCE_SCHEMA.required].sort(),
+    );
+    expect([...VERIFICATION_RESOURCE_FIELDS].sort()).toEqual(
+      Object.keys(VERIFICATION_RESOURCE_SCHEMA.properties).sort(),
+    );
+    expect(VERIFICATION_RESOURCE_SCHEMA.additionalProperties).toBe(false);
   });
 });
 

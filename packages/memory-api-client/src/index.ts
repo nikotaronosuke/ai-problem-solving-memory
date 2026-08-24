@@ -3,7 +3,7 @@
  *
  * One export list, so what this package promises is readable in one place. It
  * grows a method at a time, when a task needs one: the API has twenty-eight
- * operations and this client has seven, because a client method that no caller
+ * operations and this client has eleven, because a client method that no caller
  * has is a guess about how it will be called.
  *
  * What is exported from the search module is the contract: the request and
@@ -108,10 +108,24 @@ export {
 } from './project.js';
 
 export {
+  APPEND_EVENT_REQUEST_FIELDS,
+  EVENT_RESOURCE_FIELDS,
+  EVENT_TYPES,
+  isAppendEventRequest,
+  isEventResource,
+  type AppendEventRequest,
+  type EventResource,
+  type EventType,
+} from './event.js';
+
+export {
   isCreateProblemRequest,
+  isCloseProblemRequest,
   isProblemListBody,
   isProblemResource,
   isTransitionProblemStatusRequest,
+  CLOSE_PROBLEM_REQUEST_FIELDS,
+  CLOSE_PROBLEM_TARGET_STATUSES,
   CONFIDENCES,
   CREATE_PROBLEM_REQUEST_FIELDS,
   FIX_KINDS,
@@ -119,6 +133,8 @@ export {
   PROBLEM_RESOURCE_FIELDS,
   TRANSITION_PROBLEM_STATUS_REQUEST_FIELDS,
   PROBLEM_STATUSES,
+  type CloseProblemRequest,
+  type CloseProblemTargetStatus,
   type Confidence,
   type FixKind,
   type CreateProblemRequest,
@@ -127,3 +143,14 @@ export {
   type ProblemStatus,
   type TransitionProblemStatusRequest,
 } from './problem.js';
+
+export {
+  APPEND_VERIFICATION_REQUEST_FIELDS,
+  isAppendVerificationRequest,
+  isVerificationResource,
+  VERIFICATION_RESOURCE_FIELDS,
+  VERIFICATION_TYPES,
+  type AppendVerificationRequest,
+  type VerificationResource,
+  type VerificationType,
+} from './verification.js';

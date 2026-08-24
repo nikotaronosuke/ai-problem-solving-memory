@@ -2,7 +2,7 @@
 
 AIと一緒に開発していると、別プロジェクトで以前解決した問題にもう一度つまずくことがあります。
 
-このプロジェクトは、Claude Code・Codex・ChatGPT・Claude.ai など複数のAIや複数のプロジェクトをまたいで、**過去の問題解決経験を再利用するためのユーザー所有Memory**を作る試みです。
+このプロジェクトは、Claude Code・Codex・ChatGPT・Claude.ai など複数のAIが、**同じ Problem を安全に継続するための Problem Control / Consistency Layer**です。汎用的な会話MemoryやAI Memory Platformを目指すものではありません。
 
 ## Concept
 
@@ -20,9 +20,7 @@ AIと一緒に開発していると、別プロジェクトで以前解決した
 
 ## Goal
 
-新しいリポジトリではコードがゼロから始まっても、**開発者の問題解決経験までゼロに戻らない状態**を目指します。
-
-特に、別プロジェクトで起きた構造的に似た問題を自動で思い出し、過去の成功方向とdead-endの両方を次の調査に活かすことを重視します。
+複数AIが同じ `problem_id` と状態をサーバーで共有し、古いローカルbindingや未検証の成功宣言を権威にしない状態を目指します。Problem identity、状態遷移、typed Event / Verification、楽観ロックが中核です。実装済みの検索は維持しますが、意味を判断する自動検索oracleは製品範囲に含めません。
 
 ## What works today
 
@@ -93,7 +91,7 @@ API の意味論は [`docs/api-contract.md`](docs/api-contract.md) にありま�
 
 - `packages/claude-code-adapter` の Project 自動判定。git remote から Project 同一性を導き、確信が持てないときは推測せず候補と理由を返します
 
-まだないもの: 検索を AI が自分で呼ぶ判断の自動化・Event の自動記録。
+意味を判断する自動検索triggerはありません。`recall_similar_experience` は明示的に呼びます。
 
 ## Claude Code へのインストール
 
@@ -104,7 +102,7 @@ claude plugin marketplace add nikotaronosuke/ai-problem-solving-memory
 claude plugin install problem-solving-memory@ai-problem-solving-memory
 ```
 
-インストール後、main session で次の 5 つが使えます。
+インストール後、main session で次の 8 つが使えます。
 
 | Tool               | 何をするか                                                   |
 | ------------------ | ------------------------------------------------------------ |
@@ -113,10 +111,14 @@ claude plugin install problem-solving-memory@ai-problem-solving-memory
 | `resume_problem`   | 一時停止していた Problem を作業状態に戻す                    |
 | `start_problem`    | まだ開いていない困りごとを新しい Problem として始める        |
 | `recall_similar_experience` | いま取り組んでいる Problem について、過去の問題解決が何を知っているかを引く |
+| `add_event` | 現在の Problem に HYPOTHESIS / ATTEMPT / DEAD_END / DISCOVERY / FIX / USER_CORRECTION を記録する |
+| `add_verification` | 現在の Problem に、実際に行った検証と成否を記録する |
+| `close_problem` | 現在の Problem を成功Verification要件と楽観ロックを保ったまま結論または一時停止へ進める |
 
-前の 4 つが Problem への入口で、最後の 1 つは入ったあとに使うものです。どの Project・どの
-Problem を対象にするかは host の call context から決まり、model が指定することはできません。
-model が渡すのは、いま何が起きていると理解しているかを自分の言葉で書いたものだけです。
+前の 4 つが Problem への入口で、残りは入ったあとに使います。`recall_similar_experience`
+と新しい3つの記録toolでは、どの Project・どの Problem を対象にするかはhostのcall contextと
+サーバー再検証から決まり、modelが指定することはできません。Event / Verification の
+`client_event_id` は論理的な1回の追記につき一度だけ発行し、応答不明時の再試行では同じ値を使います。
 
 `recall_similar_experience` は **AI が自分で呼ぶ tool** です。「似た経験がありそうだ」と判断して
 呼び出す仕組み自体はまだありません。今は明示的に依頼したときに呼ばれます。同じ Problem に
@@ -132,11 +134,11 @@ model が渡すのは、いま何が起きていると理解しているかを�
 token は環境から渡すだけにしてください。commit してはいけません。credential の発行と失効は
 `docs/development.md` の Credentials を参照してください。
 
-Memory が設定されていない場合、5 つの tool はすべて `MEMORY_NOT_CONFIGURED` を返して止まります。
+Memory が設定されていない場合、8 つの tool はすべて `MEMORY_NOT_CONFIGURED` を返して止まります。
 壊れた状態で先に進むことはありません。
 
-現時点の plugin が持っているのは、Problem の入口と継続、そして明示的な過去経験の引き出しです。
-検索を AI が自分で呼ぶ判断の自動化と、Event の自動記録はまだありません。
+現時点のpluginは、Problemへの入口と継続、明示的な過去経験の引き出し、typed Event /
+Verificationの記録、guarded closeを持ちます。意味を判断する自動検索triggerはありません。
 
 ## Development
 

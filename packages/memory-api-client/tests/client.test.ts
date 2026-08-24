@@ -225,6 +225,9 @@ describe('credential', () => {
       'createEnvironment',
       'createProblem',
       'transitionProblemStatus',
+      'appendEvent',
+      'appendVerification',
+      'closeProblem',
       'search',
     ]);
   });

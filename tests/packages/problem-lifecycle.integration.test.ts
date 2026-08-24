@@ -19,17 +19,22 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 import {
   createMemoryApiClient,
+  MemoryApiError,
   type FetchLike,
   type MemoryApiClient,
 } from '@ai-problem-solving-memory/api-client';
 
 import {
+  addEventToCurrentProblem,
+  addVerificationToCurrentProblem,
+  closeCurrentProblem,
   continueProblem,
   createProblemBindingStore,
   resolveProblemForSession,
@@ -354,5 +359,219 @@ describe.skipIf(databaseUrl === undefined)('entering a Problem, end to end', () 
       kind: 'RESOLVED',
       problemId: problemInB,
     });
+  });
+
+  it('records typed evidence and closes through the adapter, client, real HTTP and database', async () => {
+    const repository = 'github.com/acme/current-problem-recording';
+    const project = await memory.createProject({
+      project_name: 'current-problem-recording',
+      repo: repository,
+    });
+    const environment = await memory.createEnvironment(project.project_id, {
+      snapshot: { branch: 'main', commit: COMMIT },
+    });
+    const created = await memory.createProblem(project.project_id, {
+      environment_id: environment.environment_id,
+      title: 'the regression survives the proposed fix',
+      symptoms: 'the same failing case remains after the change',
+    });
+    const sessionId = session();
+    await expect(
+      bindings.writeBinding(sessionId, project.project_id, created.problem_id),
+    ).resolves.toEqual({ kind: 'WRITTEN' });
+
+    const detect = (args: readonly string[]) => {
+      const answers: Record<string, string> = {
+        'rev-parse --show-toplevel': directory,
+        remote: 'origin',
+        'remote get-url origin': repository,
+      };
+      const stdout = answers[args.join(' ')];
+      return Promise.resolve(
+        stdout === undefined ? { ok: false, stdout: '' } : { ok: true, stdout },
+      );
+    };
+    const current = {
+      client: memory,
+      bindingStore: bindings,
+      sessionId,
+      projectDir: directory,
+      runGit: detect,
+    } as const;
+
+    // A server-side redaction changes the returned summary. The client accepts
+    // that resource without demanding an unsafe raw echo, and the adapter
+    // returns identifiers only.
+    const eventKey = randomUUID();
+    const firstEvent = await addEventToCurrentProblem({
+      ...current,
+      eventType: 'DEAD_END',
+      summary: 'the call sent API_KEY=fake-Qq1Vr7X-0123456789abcdef in staging and failed',
+      clientEventId: eventKey,
+      reason: 'the same failure reproduced after the attempt',
+    });
+    const retriedEvent = await addEventToCurrentProblem({
+      ...current,
+      eventType: 'DEAD_END',
+      summary: 'a retry payload the first write must win over',
+      clientEventId: eventKey,
+    });
+    expect(firstEvent).toMatchObject({
+      kind: 'EVENT_RECORDED',
+      problemId: created.problem_id,
+      onCurrentProblem: true,
+    });
+    expect(retriedEvent).toEqual(firstEvent);
+
+    const listedEvents = await app.inject({
+      method: 'GET',
+      url: `/v1/problems/${created.problem_id}/events`,
+      headers: { authorization: `Bearer ${CREDENTIAL}` },
+    });
+    expect(listedEvents.statusCode).toBe(200);
+    const matchingEvents = listedEvents
+      .json<{ events: { client_event_id: string; summary: string; source_ai: string | null }[] }>()
+      .events.filter((event) => event.client_event_id === eventKey);
+    expect(matchingEvents).toHaveLength(1);
+    expect(matchingEvents[0]).toMatchObject({
+      client_event_id: eventKey,
+      summary: 'the call sent API_KEY=[REDACTED] in staging and failed',
+      source_ai: 'claude-code',
+    });
+
+    const failedVerification = await addVerificationToCurrentProblem({
+      ...current,
+      verificationType: 'TEST',
+      result: false,
+      summary: 'the regression still fails',
+      clientEventId: randomUUID(),
+    });
+    expect(failedVerification).toMatchObject({
+      kind: 'VERIFICATION_RECORDED',
+      problemId: created.problem_id,
+      onCurrentProblem: true,
+    });
+
+    const fixCandidate = await memory.transitionProblemStatus(created.problem_id, {
+      target_status: 'FIX_CANDIDATE',
+      expected_version: created.version,
+      changed_by: 'integration-test',
+    });
+    await expect(
+      closeCurrentProblem({ ...current, targetStatus: 'VERIFIED', fixKind: 'ROOT_FIX' }),
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(memory.getProblem(created.problem_id)).resolves.toMatchObject({
+      status: 'FIX_CANDIDATE',
+      version: fixCandidate.version,
+    });
+
+    await addVerificationToCurrentProblem({
+      ...current,
+      verificationType: 'TEST',
+      result: true,
+      summary: 'the regression suite now passes',
+      clientEventId: randomUUID(),
+      evidenceRef: 'test:regression-suite',
+    });
+    await expect(
+      closeCurrentProblem({
+        ...current,
+        targetStatus: 'VERIFIED',
+        fixKind: 'ROOT_FIX',
+        effectiveDirection: 'corrected the invalidation boundary',
+      }),
+    ).resolves.toMatchObject({
+      kind: 'PROBLEM_CLOSED',
+      problemId: created.problem_id,
+      status: 'VERIFIED',
+      version: fixCandidate.version + 1,
+    });
+
+    // The binding is retained as a hint, but server revalidation makes the
+    // terminal Problem non-current on the next call.
+    await expect(
+      addEventToCurrentProblem({
+        ...current,
+        eventType: 'DISCOVERY',
+        summary: 'must not be appended to terminal current work',
+        clientEventId: randomUUID(),
+      }),
+    ).resolves.toEqual({ kind: 'NO_CURRENT_PROBLEM' });
+
+    // A second Problem pins the close route's compare-and-swap over the real
+    // client: two callers reading one version cannot both conclude it.
+    const racing = await memory.createProblem(project.project_id, {
+      environment_id: environment.environment_id,
+      title: 'two assistants conclude at once',
+      symptoms: 'both decisions were made from the same version',
+    });
+    const racingCandidate = await memory.transitionProblemStatus(racing.problem_id, {
+      target_status: 'FIX_CANDIDATE',
+      expected_version: racing.version,
+      changed_by: 'integration-test',
+    });
+    await memory.appendVerification(racing.problem_id, {
+      verification_type: 'TEST',
+      result: true,
+      summary: 'the race fixture is verified',
+      client_event_id: randomUUID(),
+      verified_by: 'integration-test',
+    });
+    const closeRequest = {
+      expected_version: racingCandidate.version,
+      changed_by: 'integration-test',
+      target_status: 'VERIFIED' as const,
+      fix_kind: 'ROOT_FIX' as const,
+    };
+    const raced = await Promise.allSettled([
+      memory.closeProblem(racing.problem_id, closeRequest),
+      memory.closeProblem(racing.problem_id, closeRequest),
+    ]);
+    expect(raced.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const refusal = raced.find((result) => result.status === 'rejected');
+    expect(refusal).toBeDefined();
+    expect((refusal as PromiseRejectedResult).reason).toBeInstanceOf(MemoryApiError);
+    expect(((refusal as PromiseRejectedResult).reason as MemoryApiError).code).toBe(
+      'VERSION_CONFLICT',
+    );
+
+    // The endpoint owner boundary remains the last word even when the common
+    // client knows a valid Problem id from somebody else.
+    const otherOwner = generateOwnerId();
+    await insertOwnerIfAbsent(pool, otherOwner);
+    const otherApp = buildMemoryHttpApp({
+      retrievalSearchResolver: createUnusedSearchResolver(),
+      healthService: createHealthService(pool),
+      requestContextService: createFixedRequestContextService(pool, otherOwner),
+      projectEnvironmentService: createProjectEnvironmentService(),
+      problemService: createProblemService(),
+      problemStatusService: createProblemStatusService(),
+      eventService: createEventService(),
+      verificationService: createVerificationService(),
+      relationService: createRelationService(),
+      usageLogService: createUsageLogService(),
+      changeLogService: createChangeLogService(),
+      memoryControlService: createMemoryControlService(),
+      problemCloseService: createProblemCloseService(),
+      problemDeleteService: createProblemDeleteService(),
+      exportService: createExportService(),
+      logger: false,
+    });
+    await otherApp.ready();
+    try {
+      const otherMemory = createMemoryApiClient({
+        credential: CREDENTIAL,
+        fetch: bridgeTo(otherApp),
+      });
+      await expect(
+        otherMemory.appendEvent(racing.problem_id, {
+          event_type: 'ATTEMPT',
+          summary: 'must not cross owners',
+          client_event_id: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    } finally {
+      await otherApp.close();
+    }
   });
 });

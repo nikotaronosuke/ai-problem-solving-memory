@@ -278,7 +278,7 @@ describe('the common client', () => {
     }
   });
 
-  it('exposes two methods and no way around them', async () => {
+  it('exposes eleven methods and no way around them', async () => {
     const shipped = await sourcesOf('memory-api-client');
     const client = shipped.find((file) => file.path === 'src/client.ts');
     expect(client).toBeDefined();
@@ -303,22 +303,30 @@ describe('the common client', () => {
     );
     expect(code).toContain('transitionProblemStatus(');
     expect(code).toContain('request: TransitionProblemStatusRequest,');
+    expect(code).toContain(
+      'appendEvent(problemId: string, request: AppendEventRequest): Promise<EventResource>;',
+    );
+    expect(code).toContain('appendVerification(');
+    expect(code).toContain('request: AppendVerificationRequest,');
+    expect(code).toContain('): Promise<VerificationResource>;');
+    expect(code).toContain(
+      'closeProblem(problemId: string, request: CloseProblemRequest): Promise<ProblemResource>;',
+    );
     expect(code).toContain('search(problemId: string, request: MemorySearchRequest)');
 
-    // Eight, and no ninth by accident. Each write arrived with the caller that
-    // needed it, and the newest arrived with a paused Problem to resume. The
+    // Eleven, and no twelfth by accident. Each write arrived with the caller
+    // that needed it. The
     // ones still absent are absent for the same reason: nothing reads or edits
-    // a single Project, nothing edits a Problem's text, and nothing records an
-    // Event or a Verification — so a method for any of them would be a guess
-    // about how it will be called, and the guess is what a later task would
-    // then have to argue with.
+    // a single Project, and nothing edits or deletes a Problem through this
+    // client — so a method for any of them would be a guess about how it will
+    // be called, and the guess is what a later task would then have to argue
+    // with.
     for (const absent of [
       'getProject',
       'updateProject',
       'deleteProject',
       'updateProblem',
-      'appendEvent',
-      'appendVerification',
+      'deleteProblem',
     ]) {
       expect(`${absent}:${code.includes(absent)}`).toBe(`${absent}:false`);
     }
@@ -890,7 +898,7 @@ describe('the Claude adapter', () => {
     );
   });
 
-  it('offers exactly four Memory tools, named for goals rather than for calls', async () => {
+  it('offers exactly eight Memory tools, named for goals rather than for calls', async () => {
     const shipped = await sourcesOf('claude-code-memory-plugin');
     const constants = shipped.find((file) => file.path === 'src/runtime-constants.ts');
     const server = shipped.find((file) => file.path === 'src/server.ts');
@@ -906,13 +914,18 @@ describe('the Claude adapter', () => {
       // on. It is still named for a goal — look up what is already known — and
       // not for the call underneath it.
       'recall_similar_experience',
+      // The remaining three name the evidence or conclusion the caller means,
+      // not the HTTP calls used underneath them.
+      'add_event',
+      'add_verification',
+      'close_problem',
     ]) {
       expect(`the runtime declares ${tool}:${declared.includes(tool)}`).toBe(
         `the runtime declares ${tool}:true`,
       );
     }
     expect(`tools registered:${(code.match(/server\.registerTool\(/gu) ?? []).length}`).toBe(
-      'tools registered:5',
+      'tools registered:8',
     );
 
     // No plumbing. A surface made of steps would ask the model to assemble a
@@ -1017,7 +1030,7 @@ describe('the Claude adapter', () => {
     }
   });
 
-  it('mints host identity for exactly the four tools', async () => {
+  it('mints host identity for exactly the eight tools', async () => {
     const shipped = await sourcesOf('claude-code-memory-plugin');
     const hook = codeOnly(
       shipped.find((file) => file.path === 'src/pre-tool-use.ts')?.source ?? '',
@@ -1130,14 +1143,16 @@ describe('the Claude adapter, still', () => {
       'searches issued per call:1',
     );
 
-    // `source_ai` narrowed rather than dropped. Starting a Problem stamps this
-    // adapter's own name on it, and a search says which AI is asking so the
-    // Memory can weigh its own record; those are the two modules with a reason
-    // to say so. Anywhere else the field would mean the package had started
-    // deciding what to call itself per call. Both modules' own guards pin the
-    // value to the constant, so it cannot come from a caller in either.
+    // `source_ai` narrowed rather than dropped. Starting a Problem, asking a
+    // search and recording current-Problem evidence all stamp this adapter's
+    // own name. These are the three modules with a reason to say so; their
+    // public inputs omit provenance and the value is fixed to one constant.
     for (const { path, source } of shipped) {
-      if (path === 'src/problem-start.ts' || path === RECALL) {
+      if (
+        path === 'src/problem-start.ts' ||
+        path === RECALL ||
+        path === 'src/problem-recording.ts'
+      ) {
         continue;
       }
       const code = codeOnly(source);
@@ -1222,7 +1237,9 @@ describe('the Claude adapter, still', () => {
     // does: it passes one through to resolve which Problem this session is on.
     const LIFECYCLE = 'src/problem-lifecycle.ts';
     const RECALL = 'src/similar-experience-recall.ts';
+    const RECORDING = 'src/problem-recording.ts';
     expect(shipped.map((file) => file.path)).toContain(RECALL);
+    expect(shipped.map((file) => file.path)).toContain(RECORDING);
     for (const { path, source } of shipped) {
       if (path === STORE) {
         continue;
@@ -1231,7 +1248,11 @@ describe('the Claude adapter, still', () => {
       const owns = ['node:fs', 'writeFile', 'readFile', 'mkdir', 'session_id', 'createHash'];
       const persistence = ['node:fs', 'writeFile', 'readFile', 'mkdir', 'session_id'];
       const forbids =
-        path === LIFECYCLE ? owns : path === RECALL ? persistence : [...owns, 'sessionId'];
+        path === LIFECYCLE
+          ? owns
+          : path === RECALL || path === RECORDING
+            ? persistence
+            : [...owns, 'sessionId'];
       for (const forbidden of forbids) {
         expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
           `${path} reaches for ${forbidden}:false`,

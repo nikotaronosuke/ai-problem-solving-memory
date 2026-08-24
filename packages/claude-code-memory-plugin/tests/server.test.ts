@@ -37,12 +37,18 @@ import {
   type MemoryTool,
 } from '../src/runtime-constants.js';
 import {
+  ADD_EVENT_OUTPUT_SCHEMA,
+  ADD_VERIFICATION_OUTPUT_SCHEMA,
   buildMemoryMcpServer,
   classify,
+  CLOSE_PROBLEM_OUTPUT_SCHEMA,
   CONTINUE_PROBLEM_OUTPUT_SCHEMA,
   CURRENT_PROBLEM_OUTPUT_SCHEMA,
   handleContinueProblem,
   handleCurrentProblem,
+  handleAddEvent,
+  handleAddVerification,
+  handleCloseProblem,
   handleRecallSimilarExperience,
   handleResumeProblem,
   handleStartProblem,
@@ -464,6 +470,33 @@ describe('a call context belongs to one operation', () => {
           },
         },
       ),
+    add_event: (req: unknown) =>
+      handleAddEvent(
+        req,
+        { environment: environment(), now: () => NOW },
+        {
+          event_type: 'DEAD_END',
+          summary: 'the attempted direction did not work',
+          client_event_id: 'aaaaaaaa-1111-4222-8333-444444444444',
+        },
+      ),
+    add_verification: (req: unknown) =>
+      handleAddVerification(
+        req,
+        { environment: environment(), now: () => NOW },
+        {
+          verification_type: 'TEST',
+          result: false,
+          summary: 'the regression still fails',
+          client_event_id: 'bbbbbbbb-1111-4222-8333-444444444444',
+        },
+      ),
+    close_problem: (req: unknown) =>
+      handleCloseProblem(
+        req,
+        { environment: environment(), now: () => NOW },
+        { target_status: 'PAUSED' },
+      ),
   } as const;
 
   it.each([
@@ -478,6 +511,11 @@ describe('a call context belongs to one operation', () => {
     ['start_problem', 'recall_similar_experience'],
     ['current_problem', 'recall_similar_experience'],
     ['recall_similar_experience', 'current_problem'],
+    ['add_event', 'add_verification'],
+    ['add_verification', 'close_problem'],
+    ['close_problem', 'add_event'],
+    ['recall_similar_experience', 'add_event'],
+    ['add_event', 'recall_similar_experience'],
   ] as const)('refuses a %s context presented to %s', async (minted, presented) => {
     // The call identifier alone is not enough. A record says which operation it
     // was minted for, so a context for one tool cannot hand another tool a
@@ -561,6 +599,24 @@ describe('what each operation may conclude', () => {
       'RECONSIDER',
       'STARTED',
     ]);
+    expect(kindsOf(ADD_EVENT_OUTPUT_SCHEMA)).toEqual([
+      'CURRENT_PROBLEM_NOT_AVAILABLE',
+      'ERROR',
+      'EVENT_RECORDED',
+      'NO_CURRENT_PROBLEM',
+    ]);
+    expect(kindsOf(ADD_VERIFICATION_OUTPUT_SCHEMA)).toEqual([
+      'CURRENT_PROBLEM_NOT_AVAILABLE',
+      'ERROR',
+      'NO_CURRENT_PROBLEM',
+      'VERIFICATION_RECORDED',
+    ]);
+    expect(kindsOf(CLOSE_PROBLEM_OUTPUT_SCHEMA)).toEqual([
+      'CURRENT_PROBLEM_NOT_AVAILABLE',
+      'ERROR',
+      'NO_CURRENT_PROBLEM',
+      'PROBLEM_CLOSED',
+    ]);
   });
 
   it.each([
@@ -599,6 +655,33 @@ describe('what each operation may conclude', () => {
         reason: 'CANDIDATES_PRESENT',
         candidates: [{ problem_id: 'q', status: 'PAUSED', title: 't' }],
       },
+    ],
+    [
+      'an Event record',
+      ADD_EVENT_OUTPUT_SCHEMA,
+      {
+        kind: 'EVENT_RECORDED',
+        problem_id: 'p',
+        event_id: 'e',
+        client_event_id: 'c',
+        on_current_problem: false,
+      },
+    ],
+    [
+      'a Verification record',
+      ADD_VERIFICATION_OUTPUT_SCHEMA,
+      {
+        kind: 'VERIFICATION_RECORDED',
+        problem_id: 'p',
+        verification_id: 'v',
+        client_event_id: 'c',
+        on_current_problem: true,
+      },
+    ],
+    [
+      'a close',
+      CLOSE_PROBLEM_OUTPUT_SCHEMA,
+      { kind: 'PROBLEM_CLOSED', problem_id: 'p', status: 'PAUSED', version: 2 },
     ],
   ])('validates %s', (_label, schema, answer) => {
     expect(schema.safeParse(answer).success).toBe(true);

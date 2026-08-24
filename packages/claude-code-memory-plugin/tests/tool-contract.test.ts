@@ -208,8 +208,74 @@ describe('what the model is told these tools take', () => {
     }
   });
 
+  it('keeps the three recording tools content-only and closed', async () => {
+    const tools = await publishedTools();
+    const fields = (name: string) => {
+      const schema = toolNamed(tools, name).inputSchema;
+      expect(schema?.additionalProperties).toBe(false);
+      return Object.keys(schema?.properties ?? {});
+    };
+
+    expect(fields('add_event')).toEqual([
+      'event_type',
+      'summary',
+      'client_event_id',
+      'result',
+      'reason',
+      'evidence_ref',
+    ]);
+    expect(fields('add_verification')).toEqual([
+      'verification_type',
+      'result',
+      'summary',
+      'client_event_id',
+      'evidence_ref',
+    ]);
+    expect(fields('close_problem')).toEqual([
+      'target_status',
+      'fix_kind',
+      'final_cause_summary',
+      'effective_direction',
+      'dead_end_summary',
+      'unresolved_points',
+    ]);
+
+    const recordingSchemas = JSON.stringify(
+      ['add_event', 'add_verification', 'close_problem'].map(
+        (name) => toolNamed(tools, name).inputSchema,
+      ),
+    );
+    for (const runtimeOwned of [
+      'owner_id',
+      'project_id',
+      'problem_id',
+      'source_ai',
+      'verified_by',
+      'changed_by',
+      'expected_version',
+    ]) {
+      expect(recordingSchemas.includes(runtimeOwned)).toBe(false);
+    }
+  });
+
+  it('tells a caller how idempotency and the Verification gate actually work', async () => {
+    const tools = await publishedTools();
+    for (const name of ['add_event', 'add_verification']) {
+      const description = toolNamed(tools, name).description ?? '';
+      expect(description).toContain('client_event_id');
+      expect(description).toMatch(/once/u);
+      expect(description).toMatch(/reuse/u);
+      expect(description).toContain('on_current_problem');
+    }
+
+    const close = toolNamed(tools, 'close_problem').description ?? '';
+    expect(close).toContain('VERIFIED');
+    expect(close).toMatch(/successful.*Verification/u);
+    expect(close).toMatch(/never retried/u);
+  });
+
   it('never says a tool takes nothing while its schema takes something', async () => {
-    // The drift this test exists to catch, stated once for all four rather
+    // The drift this test exists to catch, stated once for all eight rather
     // than for the one that drifted: whatever a tool accepts, its own words
     // must not deny it.
     for (const tool of await publishedTools()) {

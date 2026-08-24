@@ -44,10 +44,18 @@ import {
   type EnvironmentResource,
 } from './environment.js';
 import {
+  isAppendEventRequest,
+  isEventResource,
+  type AppendEventRequest,
+  type EventResource,
+} from './event.js';
+import {
+  isCloseProblemRequest,
   isCreateProblemRequest,
   isProblemListBody,
   isProblemResource,
   isTransitionProblemStatusRequest,
+  type CloseProblemRequest,
   type CreateProblemRequest,
   type ProblemResource,
   type TransitionProblemStatusRequest,
@@ -65,6 +73,12 @@ import {
   type MemorySearchOutcome,
   type MemorySearchRequest,
 } from './search.js';
+import {
+  isAppendVerificationRequest,
+  isVerificationResource,
+  type AppendVerificationRequest,
+  type VerificationResource,
+} from './verification.js';
 
 /**
  * How long a single request may take before it is abandoned.
@@ -251,6 +265,37 @@ export interface MemoryApiClient {
   ): Promise<ProblemResource>;
 
   /**
+   * Appends one meaningful Event to a Problem.
+   *
+   * `client_event_id` is the caller's owner-wide idempotency key. A replay
+   * returns the first Event written under it, even if a later attempt named a
+   * different Problem or payload, so the returned resource is checked against
+   * the key and not against fields first-write-wins deliberately preserves.
+   */
+  appendEvent(problemId: string, request: AppendEventRequest): Promise<EventResource>;
+
+  /**
+   * Appends one check that was actually carried out.
+   *
+   * Like Events, a Verification is append-only and idempotent under the
+   * caller's `client_event_id`. Recording a successful one does not itself move
+   * the Problem to `VERIFIED`.
+   */
+  appendVerification(
+    problemId: string,
+    request: AppendVerificationRequest,
+  ): Promise<VerificationResource>;
+
+  /**
+   * Concludes or pauses a Problem and records its review atomically.
+   *
+   * The caller supplies the version it read. A conflict is returned as the
+   * ordinary API refusal it is and is never retried; the server remains the
+   * authority on the transition matrix and the successful-Verification gate.
+   */
+  closeProblem(problemId: string, request: CloseProblemRequest): Promise<ProblemResource>;
+
+  /**
    * Finds past memory worth reading for the Problem being worked on.
    *
    * Searches every Project this owner has and returns candidates with the
@@ -287,6 +332,36 @@ export interface MemoryApiClient {
  * The server remains the authority on whether a well-formed id exists.
  */
 const PATH_SAFE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Takes one immutable-by-construction view of a request's own JSON fields.
+ *
+ * Validation, transmission and response checks must all use the same values:
+ * that is especially important for an idempotency key and a compare-and-swap
+ * version. Accessors, symbols and hidden properties are not JSON request data,
+ * and refusing them also avoids evaluating caller code while validating it.
+ */
+function snapshotRequest(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  // A normal object would treat an own `__proto__` key as a prototype write,
+  // which could turn forbidden input into inherited required fields. A null
+  // prototype keeps every key ordinary and visible to the closed-key checks.
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') {
+      return undefined;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)) {
+      return undefined;
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
 
 /** Raised for an argument that could not be part of a request. */
 export class MemoryApiArgumentError extends Error {
@@ -687,6 +762,153 @@ export function createMemoryApiClient(options: MemoryApiClientOptions): MemoryAp
         // far a version moves is the server's, the published contract does not
         // promise a step of one, and a client asserting one would break the
         // first time a transition wrote anything else alongside the status.
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body;
+    },
+
+    async appendEvent(problemId, request): Promise<EventResource> {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError('problem id');
+      }
+      const stableRequest = snapshotRequest(request);
+      if (!isAppendEventRequest(stableRequest)) {
+        throw new MemoryApiArgumentError('event');
+      }
+
+      const payload: Record<string, unknown> = {
+        event_type: stableRequest.event_type,
+        summary: stableRequest.summary,
+        client_event_id: stableRequest.client_event_id,
+      };
+      if ('result' in stableRequest) {
+        payload['result'] = stableRequest.result;
+      }
+      if ('reason' in stableRequest) {
+        payload['reason'] = stableRequest.reason;
+      }
+      if ('source_ai' in stableRequest) {
+        payload['source_ai'] = stableRequest.source_ai;
+      }
+      if ('evidence_ref' in stableRequest) {
+        payload['evidence_ref'] = stableRequest.evidence_ref;
+      }
+
+      const { status, body } = await send(`/v1/problems/${problemId}/events`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (
+        !isEventResource(body) ||
+        body.client_event_id.toLowerCase() !== stableRequest.client_event_id.toLowerCase()
+      ) {
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body;
+    },
+
+    async appendVerification(problemId, request): Promise<VerificationResource> {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError('problem id');
+      }
+      const stableRequest = snapshotRequest(request);
+      if (!isAppendVerificationRequest(stableRequest)) {
+        throw new MemoryApiArgumentError('verification');
+      }
+
+      const payload: Record<string, unknown> = {
+        verification_type: stableRequest.verification_type,
+        result: stableRequest.result,
+        summary: stableRequest.summary,
+        client_event_id: stableRequest.client_event_id,
+      };
+      if ('evidence_ref' in stableRequest) {
+        payload['evidence_ref'] = stableRequest.evidence_ref;
+      }
+      if ('verified_by' in stableRequest) {
+        payload['verified_by'] = stableRequest.verified_by;
+      }
+
+      const { status, body } = await send(`/v1/problems/${problemId}/verifications`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (
+        !isVerificationResource(body) ||
+        body.client_event_id.toLowerCase() !== stableRequest.client_event_id.toLowerCase()
+      ) {
+        throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
+      }
+
+      return body;
+    },
+
+    async closeProblem(problemId, request): Promise<ProblemResource> {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError('problem id');
+      }
+      const stableRequest = snapshotRequest(request);
+      if (!isCloseProblemRequest(stableRequest)) {
+        throw new MemoryApiArgumentError('problem conclusion');
+      }
+
+      // PostgreSQL/HTTP canonicalise UUIDs to lowercase.  Close is deliberately
+      // not retried, so the identity we send and the one we validate must use
+      // that same canonical representation; otherwise a valid uppercase UUID
+      // could commit successfully and then be mistaken for a malformed reply.
+      const canonicalProblemId = problemId.toLowerCase();
+
+      const payload: Record<string, unknown> = {
+        expected_version: stableRequest.expected_version,
+        changed_by: stableRequest.changed_by,
+        target_status: stableRequest.target_status,
+      };
+      if ('fix_kind' in stableRequest) {
+        payload['fix_kind'] = stableRequest.fix_kind;
+      }
+      if ('final_cause_summary' in stableRequest) {
+        payload['final_cause_summary'] = stableRequest.final_cause_summary;
+      }
+      if ('effective_direction' in stableRequest) {
+        payload['effective_direction'] = stableRequest.effective_direction;
+      }
+      if ('dead_end_summary' in stableRequest) {
+        payload['dead_end_summary'] = stableRequest.dead_end_summary;
+      }
+      if ('unresolved_points' in stableRequest) {
+        payload['unresolved_points'] = stableRequest.unresolved_points;
+      }
+
+      const { status, body } = await send(`/v1/problems/${canonicalProblemId}/close`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS,
+      });
+
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+
+      if (
+        !isProblemResource(body) ||
+        body.problem_id !== canonicalProblemId ||
+        body.status !== stableRequest.target_status ||
+        ('fix_kind' in stableRequest && body.fix_kind !== stableRequest.fix_kind)
+      ) {
         throw new MemoryApiProtocolError('RESOURCE_MALFORMED', status);
       }
 

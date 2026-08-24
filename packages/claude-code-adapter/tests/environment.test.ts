@@ -128,9 +128,10 @@ describe('reading the environment', () => {
     // and so nowhere for the credential to be read back from.
     //
     // It has grown several times now — `search`, `listProblems`, the writes a
-    // start needs, and now `createProject` — and this adapter did not change
-    // once: it returns the client it built, so a method the client gains
-    // arrives here for free. What the adapter must *not* have
+    // start needs, `createProject`, and the three current-Problem recording
+    // paths — and this environment edge did not change once: it returns the
+    // client it built, so a method the client gains arrives here for free.
+    // What the adapter must *not* have
     // gained is policy about when to search or what to call itself, which a
     // guard in the server's suite checks.
     expect(Object.keys(client)).toEqual([
@@ -141,6 +142,9 @@ describe('reading the environment', () => {
       'createEnvironment',
       'createProblem',
       'transitionProblemStatus',
+      'appendEvent',
+      'appendVerification',
+      'closeProblem',
       'search',
     ]);
     expect(JSON.stringify(client).includes(TOKEN)).toBe(false);
