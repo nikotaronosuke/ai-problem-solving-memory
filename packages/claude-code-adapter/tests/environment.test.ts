@@ -128,7 +128,7 @@ describe('reading the environment', () => {
     // and so nowhere for the credential to be read back from.
     //
     // It has grown several times now — `search`, `listProblems`, the writes a
-    // start needs, `createProject`, and the three current-Problem recording
+    // start needs, `createProject`, and the four current-Problem write
     // paths — and this environment edge did not change once: it returns the
     // client it built, so a method the client gains arrives here for free.
     // What the adapter must *not* have

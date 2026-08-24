@@ -2329,6 +2329,23 @@ async function addVerificationToCurrentProblem(input) {
     onCurrentProblem: verification.problem_id === current.problem.problem_id
   };
 }
+async function markCurrentProblemFixCandidate(input) {
+  const current = await currentWorkingProblem(input);
+  if ("kind" in current) {
+    return current;
+  }
+  const problem = await input.client.transitionProblemStatus(current.problem.problem_id, {
+    target_status: "FIX_CANDIDATE",
+    expected_version: current.problem.version,
+    changed_by: CLAUDE_CODE_SOURCE_AI
+  });
+  return {
+    kind: "FIX_CANDIDATE_MARKED",
+    problemId: problem.problem_id,
+    status: "FIX_CANDIDATE",
+    version: problem.version
+  };
+}
 async function closeCurrentProblem(input) {
   const current = await currentWorkingProblem(input);
   if ("kind" in current) {
@@ -22632,6 +22649,7 @@ var START_PROBLEM_TOOL = "start_problem";
 var RECALL_SIMILAR_EXPERIENCE_TOOL = "recall_similar_experience";
 var ADD_EVENT_TOOL = "add_event";
 var ADD_VERIFICATION_TOOL = "add_verification";
+var MARK_FIX_CANDIDATE_TOOL = "mark_fix_candidate";
 var CLOSE_PROBLEM_TOOL = "close_problem";
 var MEMORY_TOOLS = [
   CURRENT_PROBLEM_TOOL,
@@ -22641,6 +22659,7 @@ var MEMORY_TOOLS = [
   RECALL_SIMILAR_EXPERIENCE_TOOL,
   ADD_EVENT_TOOL,
   ADD_VERIFICATION_TOOL,
+  MARK_FIX_CANDIDATE_TOOL,
   CLOSE_PROBLEM_TOOL
 ];
 function hostToolName(tool) {
@@ -23286,6 +23305,16 @@ var CLOSE_PROBLEM_OUTPUT_SCHEMA = discriminatedUnion("kind", [
   ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
   ERROR_VARIANT
 ]);
+var MARK_FIX_CANDIDATE_OUTPUT_SCHEMA = discriminatedUnion("kind", [
+  object({
+    kind: literal("FIX_CANDIDATE_MARKED"),
+    problem_id: string2(),
+    status: literal("FIX_CANDIDATE"),
+    version: number2().int().min(1)
+  }).strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
+  ERROR_VARIANT
+]);
 function classify(error2) {
   if (error2 instanceof MissingMemoryCredentialError) {
     return "MEMORY_NOT_CONFIGURED";
@@ -23573,6 +23602,25 @@ async function handleCloseProblem(request, options, input) {
     version: outcome.version
   } : outcome;
 }
+async function handleMarkFixCandidate(request, options) {
+  const outcome = await serveAuthenticated(
+    request,
+    options,
+    MARK_FIX_CANDIDATE_TOOL,
+    async (call) => markCurrentProblemFixCandidate({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      sessionId: call.sessionId,
+      projectDir: call.projectDir
+    })
+  );
+  return outcome.kind === "FIX_CANDIDATE_MARKED" ? {
+    kind: "FIX_CANDIDATE_MARKED",
+    problem_id: outcome.problemId,
+    status: outcome.status,
+    version: outcome.version
+  } : outcome;
+}
 function buildMemoryMcpServer(options) {
   const server = new McpServer({ name: "memory", version: "0.0.0" });
   server.registerTool(
@@ -23665,6 +23713,15 @@ function buildMemoryMcpServer(options) {
     async (args, extra) => resultOf(await handleAddVerification(extra?.mcpReq, options, args))
   );
   server.registerTool(
+    MARK_FIX_CANDIDATE_TOOL,
+    {
+      description: "Mark the current INVESTIGATING problem as FIX_CANDIDATE, ready for an actual Verification. Takes no content or identifiers: the problem, actor, fixed target and optimistic-lock version come from a fresh authenticated server read. Record what the candidate fix is with add_event first. A concurrent change or illegal state is reported and is never retried automatically.",
+      inputSchema: object({}).strict(),
+      outputSchema: MARK_FIX_CANDIDATE_OUTPUT_SCHEMA
+    },
+    async (_args, extra) => resultOf(await handleMarkFixCandidate(extra?.mcpReq, options))
+  );
+  server.registerTool(
     CLOSE_PROBLEM_TOOL,
     {
       description: "Conclude or pause the problem this session is currently working on. The problem, actor and optimistic-lock version come from a fresh authenticated server read, never from you. VERIFIED is refused by the Memory unless this Problem already has a successful Verification. Review fields are summaries only; do not paste credentials, raw output or absolute paths. A concurrent change is reported and is never retried automatically.",
@@ -23705,6 +23762,7 @@ export {
   CLOSE_PROBLEM_OUTPUT_SCHEMA,
   CONTINUE_PROBLEM_OUTPUT_SCHEMA,
   CURRENT_PROBLEM_OUTPUT_SCHEMA,
+  MARK_FIX_CANDIDATE_OUTPUT_SCHEMA,
   RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA,
   RESUME_PROBLEM_OUTPUT_SCHEMA,
   RUNTIME_ERROR_CODES,
@@ -23716,6 +23774,7 @@ export {
   handleCloseProblem,
   handleContinueProblem,
   handleCurrentProblem,
+  handleMarkFixCandidate,
   handleRecallSimilarExperience,
   handleResumeProblem,
   handleStartProblem,

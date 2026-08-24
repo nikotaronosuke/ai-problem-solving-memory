@@ -25,6 +25,7 @@ var START_PROBLEM_TOOL = "start_problem";
 var RECALL_SIMILAR_EXPERIENCE_TOOL = "recall_similar_experience";
 var ADD_EVENT_TOOL = "add_event";
 var ADD_VERIFICATION_TOOL = "add_verification";
+var MARK_FIX_CANDIDATE_TOOL = "mark_fix_candidate";
 var CLOSE_PROBLEM_TOOL = "close_problem";
 var MEMORY_TOOLS = [
   CURRENT_PROBLEM_TOOL,
@@ -34,6 +35,7 @@ var MEMORY_TOOLS = [
   RECALL_SIMILAR_EXPERIENCE_TOOL,
   ADD_EVENT_TOOL,
   ADD_VERIFICATION_TOOL,
+  MARK_FIX_CANDIDATE_TOOL,
   CLOSE_PROBLEM_TOOL
 ];
 function hostToolName(tool) {

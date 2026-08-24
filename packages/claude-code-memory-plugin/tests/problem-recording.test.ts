@@ -1,5 +1,5 @@
 /**
- * The three current-Problem write handlers over their real adapter and client.
+ * The four current-Problem write handlers over their real adapter and client.
  *
  * These tests stop at a small HTTP fixture so they can observe the exact body
  * the Memory receives and independently choose the resource it returns. That
@@ -26,10 +26,16 @@ import {
   CALL_CONTEXT_DIRECTORY,
   CLOSE_PROBLEM_TOOL,
   hostToolName,
+  MARK_FIX_CANDIDATE_TOOL,
   PLUGIN_DATA_ENV,
   type MemoryTool,
 } from '../src/runtime-constants.js';
-import { handleAddEvent, handleAddVerification, handleCloseProblem } from '../src/server.js';
+import {
+  handleAddEvent,
+  handleAddVerification,
+  handleCloseProblem,
+  handleMarkFixCandidate,
+} from '../src/server.js';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 const PROJECT_ID = '22222222-3333-4444-8555-666666666666';
@@ -157,6 +163,10 @@ async function startMemory(): Promise<void> {
         // Deliberately not derived from the request version. The handler maps
         // the resource the client accepted; it does not invent response state.
         answer(response, 200, problem({ status: 'PAUSED', version: 23 }));
+        return;
+      }
+      if (incoming.method === 'POST' && path === `/v1/problems/${PROBLEM_ID}/status-transitions`) {
+        answer(response, 200, problem({ status: 'FIX_CANDIDATE', version: 17 }));
         return;
       }
 
@@ -315,6 +325,23 @@ describe('current-Problem write handlers', () => {
       changed_by: 'claude-code',
       target_status: 'PAUSED',
       fix_kind: null,
+    });
+  });
+
+  it('fixes the transition target and maps the accepted resource version', async () => {
+    await mintFor(MARK_FIX_CANDIDATE_TOOL);
+
+    await expect(handleMarkFixCandidate(request(), options())).resolves.toEqual({
+      kind: 'FIX_CANDIDATE_MARKED',
+      problem_id: PROBLEM_ID,
+      status: 'FIX_CANDIDATE',
+      version: 17,
+    });
+
+    expect(writeTo('/status-transitions').body).toEqual({
+      expected_version: 11,
+      changed_by: 'claude-code',
+      target_status: 'FIX_CANDIDATE',
     });
   });
 });

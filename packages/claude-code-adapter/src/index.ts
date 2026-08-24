@@ -105,6 +105,7 @@ export {
   addEventToCurrentProblem,
   addVerificationToCurrentProblem,
   closeCurrentProblem,
+  markCurrentProblemFixCandidate,
   type AddEventToCurrentProblemInput,
   type AddEventToCurrentProblemOutcome,
   type AddVerificationToCurrentProblemInput,
@@ -112,6 +113,7 @@ export {
   type CloseCurrentProblemInput,
   type CloseCurrentProblemOutcome,
   type CurrentProblemWriteUnavailable,
+  type MarkCurrentProblemFixCandidateOutcome,
 } from './problem-recording.js';
 
 export {

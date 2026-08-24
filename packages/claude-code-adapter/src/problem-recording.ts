@@ -18,13 +18,13 @@ import type {
   ProblemResource,
   VerificationType,
 } from '@ai-problem-solving-memory/api-client';
+import { MemoryApiError } from '@ai-problem-solving-memory/api-client';
 
 import { detectProjectSignals, type DetectProjectSignalsInput } from './project-signals.js';
 import { resolveProject } from './project-resolution.js';
 import { isWorkingProblemStatus } from './problem-resolution.js';
 import { resolveProblemForSession, type ProblemBindingWriter } from './problem-lifecycle.js';
 import { CLAUDE_CODE_SOURCE_AI } from './source-ai.js';
-import { MemoryApiError } from '@ai-problem-solving-memory/api-client';
 
 /** The host facts and deterministic readers every current-Problem write needs. */
 interface CurrentProblemWriteContext {
@@ -211,6 +211,44 @@ export type CloseCurrentProblemOutcome =
       readonly version: number;
     }
   | CurrentProblemWriteUnavailable;
+
+export type MarkCurrentProblemFixCandidateOutcome =
+  | {
+      readonly kind: 'FIX_CANDIDATE_MARKED';
+      readonly problemId: string;
+      readonly status: 'FIX_CANDIDATE';
+      readonly version: number;
+    }
+  | CurrentProblemWriteUnavailable;
+
+/**
+ * Move the current investigation to its one next working state.
+ *
+ * The target is fixed here rather than accepted from a caller. Legality still
+ * belongs to the server's state machine, and a conflict is allowed to escape
+ * without retry because the decision was made against the version just read.
+ */
+export async function markCurrentProblemFixCandidate(
+  input: CurrentProblemWriteContext,
+): Promise<MarkCurrentProblemFixCandidateOutcome> {
+  const current = await currentWorkingProblem(input);
+  if ('kind' in current) {
+    return current;
+  }
+
+  const problem = await input.client.transitionProblemStatus(current.problem.problem_id, {
+    target_status: 'FIX_CANDIDATE',
+    expected_version: current.problem.version,
+    changed_by: CLAUDE_CODE_SOURCE_AI,
+  });
+
+  return {
+    kind: 'FIX_CANDIDATE_MARKED',
+    problemId: problem.problem_id,
+    status: 'FIX_CANDIDATE',
+    version: problem.version,
+  };
+}
 
 /** Conclude or pause the current Problem using the version from the final read. */
 export async function closeCurrentProblem(

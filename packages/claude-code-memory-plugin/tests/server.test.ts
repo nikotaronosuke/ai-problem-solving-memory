@@ -32,6 +32,7 @@ import {
   CALL_CONTEXT_DIRECTORY,
   CURRENT_PROBLEM_TOOL,
   hostToolName,
+  MARK_FIX_CANDIDATE_TOOL,
   MEMORY_TOOLS,
   PLUGIN_DATA_ENV,
   type MemoryTool,
@@ -49,10 +50,12 @@ import {
   handleAddEvent,
   handleAddVerification,
   handleCloseProblem,
+  handleMarkFixCandidate,
   handleRecallSimilarExperience,
   handleResumeProblem,
   handleStartProblem,
   RESUME_PROBLEM_OUTPUT_SCHEMA,
+  MARK_FIX_CANDIDATE_OUTPUT_SCHEMA,
   resultOf,
   runtimeStatePathsOf,
   serveAuthenticated,
@@ -491,6 +494,8 @@ describe('a call context belongs to one operation', () => {
           client_event_id: 'bbbbbbbb-1111-4222-8333-444444444444',
         },
       ),
+    [MARK_FIX_CANDIDATE_TOOL]: (req: unknown) =>
+      handleMarkFixCandidate(req, { environment: environment(), now: () => NOW }),
     close_problem: (req: unknown) =>
       handleCloseProblem(
         req,
@@ -512,6 +517,8 @@ describe('a call context belongs to one operation', () => {
     ['current_problem', 'recall_similar_experience'],
     ['recall_similar_experience', 'current_problem'],
     ['add_event', 'add_verification'],
+    ['add_verification', 'mark_fix_candidate'],
+    ['mark_fix_candidate', 'close_problem'],
     ['add_verification', 'close_problem'],
     ['close_problem', 'add_event'],
     ['recall_similar_experience', 'add_event'],
@@ -611,6 +618,12 @@ describe('what each operation may conclude', () => {
       'NO_CURRENT_PROBLEM',
       'VERIFICATION_RECORDED',
     ]);
+    expect(kindsOf(MARK_FIX_CANDIDATE_OUTPUT_SCHEMA)).toEqual([
+      'CURRENT_PROBLEM_NOT_AVAILABLE',
+      'ERROR',
+      'FIX_CANDIDATE_MARKED',
+      'NO_CURRENT_PROBLEM',
+    ]);
     expect(kindsOf(CLOSE_PROBLEM_OUTPUT_SCHEMA)).toEqual([
       'CURRENT_PROBLEM_NOT_AVAILABLE',
       'ERROR',
@@ -676,6 +689,16 @@ describe('what each operation may conclude', () => {
         verification_id: 'v',
         client_event_id: 'c',
         on_current_problem: true,
+      },
+    ],
+    [
+      'a fix-candidate transition',
+      MARK_FIX_CANDIDATE_OUTPUT_SCHEMA,
+      {
+        kind: 'FIX_CANDIDATE_MARKED',
+        problem_id: 'p',
+        status: 'FIX_CANDIDATE',
+        version: 2,
       },
     ],
     [

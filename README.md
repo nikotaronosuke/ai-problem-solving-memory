@@ -102,7 +102,7 @@ claude plugin marketplace add nikotaronosuke/ai-problem-solving-memory
 claude plugin install problem-solving-memory@ai-problem-solving-memory
 ```
 
-インストール後、main session で次の 8 つが使えます。
+インストール後、main session で次の 9 つが使えます。
 
 | Tool               | 何をするか                                                   |
 | ------------------ | ------------------------------------------------------------ |
@@ -113,10 +113,11 @@ claude plugin install problem-solving-memory@ai-problem-solving-memory
 | `recall_similar_experience` | いま取り組んでいる Problem について、過去の問題解決が何を知っているかを引く |
 | `add_event` | 現在の Problem に HYPOTHESIS / ATTEMPT / DEAD_END / DISCOVERY / FIX / USER_CORRECTION を記録する |
 | `add_verification` | 現在の Problem に、実際に行った検証と成否を記録する |
+| `mark_fix_candidate` | 現在の INVESTIGATING Problem を、検証待ちの FIX_CANDIDATE へ進める |
 | `close_problem` | 現在の Problem を成功Verification要件と楽観ロックを保ったまま結論または一時停止へ進める |
 
 前の 4 つが Problem への入口で、残りは入ったあとに使います。`recall_similar_experience`
-と新しい3つの記録toolでは、どの Project・どの Problem を対象にするかはhostのcall contextと
+とcurrent-Problem actionでは、どの Project・どの Problem を対象にするかはhostのcall contextと
 サーバー再検証から決まり、modelが指定することはできません。Event / Verification の
 `client_event_id` は論理的な1回の追記につき一度だけ発行し、応答不明時の再試行では同じ値を使います。
 
@@ -134,11 +135,11 @@ claude plugin install problem-solving-memory@ai-problem-solving-memory
 token は環境から渡すだけにしてください。commit してはいけません。credential の発行と失効は
 `docs/development.md` の Credentials を参照してください。
 
-Memory が設定されていない場合、8 つの tool はすべて `MEMORY_NOT_CONFIGURED` を返して止まります。
+Memory が設定されていない場合、9 つの tool はすべて `MEMORY_NOT_CONFIGURED` を返して止まります。
 壊れた状態で先に進むことはありません。
 
 現時点のpluginは、Problemへの入口と継続、明示的な過去経験の引き出し、typed Event /
-Verificationの記録、guarded closeを持ちます。意味を判断する自動検索triggerはありません。
+Verificationの記録、guarded FIX_CANDIDATE transition / closeを持ちます。意味を判断する自動検索triggerはありません。
 
 ## Development
 

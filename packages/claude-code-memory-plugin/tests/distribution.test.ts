@@ -215,7 +215,7 @@ describe('the server, run from the installed copy', () => {
     expect(tools.map((tool) => tool.name)).toEqual([...MEMORY_TOOLS]);
   }, 60_000);
 
-  it('refuses all eight without host context, exactly as the source runtime does', async () => {
+  it('refuses all nine without host context, exactly as the source runtime does', async () => {
     const calls = [
       { name: 'current_problem', arguments: {} },
       { name: 'continue_problem', arguments: { project_id: 'p', problem_id: 'q' } },
@@ -257,6 +257,7 @@ describe('the server, run from the installed copy', () => {
           client_event_id: 'bbbbbbbb-1111-4222-8333-444444444444',
         },
       },
+      { name: 'mark_fix_candidate', arguments: {} },
       { name: 'close_problem', arguments: { target_status: 'PAUSED' } },
     ];
 

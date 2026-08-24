@@ -1,5 +1,5 @@
 /**
- * The MCP runtime: eight tools, and the order in which they are allowed to fail.
+ * The MCP runtime: nine tools, and the order in which they are allowed to fail.
  *
  * ## The order is the design
  *
@@ -54,6 +54,7 @@ import {
   addEventToCurrentProblem,
   addVerificationToCurrentProblem,
   closeCurrentProblem,
+  markCurrentProblemFixCandidate,
   recallSimilarExperience,
   createClaudeCodeMemoryClient,
   createProblemBindingStore,
@@ -95,6 +96,7 @@ import {
   RECALL_FINGERPRINT_DIRECTORY,
   RECALL_SIMILAR_EXPERIENCE_TOOL,
   hostToolName,
+  MARK_FIX_CANDIDATE_TOOL,
   PLUGIN_DATA_ENV,
   RESUME_PROBLEM_TOOL,
   START_PROBLEM_TOOL,
@@ -440,6 +442,19 @@ export const CLOSE_PROBLEM_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
   ERROR_VARIANT,
 ]);
 
+export const MARK_FIX_CANDIDATE_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('FIX_CANDIDATE_MARKED'),
+      problem_id: z.string(),
+      status: z.literal('FIX_CANDIDATE'),
+      version: z.number().int().min(1),
+    })
+    .strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
+  ERROR_VARIANT,
+]);
+
 export type RecallSimilarExperienceToolResult = z.infer<
   typeof RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA
 >;
@@ -447,6 +462,7 @@ export type RecallSimilarExperienceToolResult = z.infer<
 export type AddEventToolResult = z.infer<typeof ADD_EVENT_OUTPUT_SCHEMA>;
 export type AddVerificationToolResult = z.infer<typeof ADD_VERIFICATION_OUTPUT_SCHEMA>;
 export type CloseProblemToolResult = z.infer<typeof CLOSE_PROBLEM_OUTPUT_SCHEMA>;
+export type MarkFixCandidateToolResult = z.infer<typeof MARK_FIX_CANDIDATE_OUTPUT_SCHEMA>;
 
 export type ContinueProblemToolResult = z.infer<typeof CONTINUE_PROBLEM_OUTPUT_SCHEMA>;
 export type ResumeProblemToolResult = z.infer<typeof RESUME_PROBLEM_OUTPUT_SCHEMA>;
@@ -462,6 +478,7 @@ type ToolResult =
   | RecallSimilarExperienceToolResult
   | AddEventToolResult
   | AddVerificationToolResult
+  | MarkFixCandidateToolResult
   | CloseProblemToolResult;
 
 /**
@@ -937,6 +954,34 @@ export async function handleCloseProblem(
     : outcome;
 }
 
+/** Marks the current investigation ready for Verification. */
+export async function handleMarkFixCandidate(
+  request: unknown,
+  options: CurrentProblemHandlerOptions,
+): Promise<MarkFixCandidateToolResult> {
+  const outcome = await serveAuthenticated(
+    request,
+    options,
+    MARK_FIX_CANDIDATE_TOOL,
+    async (call) =>
+      markCurrentProblemFixCandidate({
+        client: call.client,
+        bindingStore: call.bindingStore,
+        sessionId: call.sessionId,
+        projectDir: call.projectDir,
+      }),
+  );
+
+  return outcome.kind === 'FIX_CANDIDATE_MARKED'
+    ? {
+        kind: 'FIX_CANDIDATE_MARKED',
+        problem_id: outcome.problemId,
+        status: outcome.status,
+        version: outcome.version,
+      }
+    : outcome;
+}
+
 /** Builds the server. Exported so a test can drive it without a transport. */
 export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): McpServer {
   const server = new McpServer({ name: 'memory', version: '0.0.0' });
@@ -1079,6 +1124,21 @@ export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): Mcp
       outputSchema: ADD_VERIFICATION_OUTPUT_SCHEMA,
     },
     async (args, extra) => resultOf(await handleAddVerification(extra?.mcpReq, options, args)),
+  );
+
+  server.registerTool(
+    MARK_FIX_CANDIDATE_TOOL,
+    {
+      description:
+        'Mark the current INVESTIGATING problem as FIX_CANDIDATE, ready for an actual ' +
+        'Verification. Takes no content or identifiers: the problem, actor, fixed target and ' +
+        'optimistic-lock version come from a fresh authenticated server read. Record what the ' +
+        'candidate fix is with add_event first. A concurrent change or illegal state is ' +
+        'reported and is never retried automatically.',
+      inputSchema: z.object({}).strict(),
+      outputSchema: MARK_FIX_CANDIDATE_OUTPUT_SCHEMA,
+    },
+    async (_args, extra) => resultOf(await handleMarkFixCandidate(extra?.mcpReq, options)),
   );
 
   server.registerTool(
