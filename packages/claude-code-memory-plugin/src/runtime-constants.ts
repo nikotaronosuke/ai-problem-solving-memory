@@ -25,8 +25,9 @@ export const MCP_SERVER_KEY = 'memory';
  * Named for goals rather than for the calls underneath them: which Problem am
  * I on, carry on with this one, bring this paused one back, start a new one.
  * There is deliberately no tool for resolving a Project, creating an
- * Environment or moving a status — those are steps, and a surface made of
- * steps asks the model to assemble a lifecycle it has no way to get right.
+ * Environment or choosing an arbitrary status — those are steps, and a surface
+ * made of steps asks the model to assemble a lifecycle it has no way to get
+ * right.
  */
 export const CURRENT_PROBLEM_TOOL = 'current_problem';
 export const CONTINUE_PROBLEM_TOOL = 'continue_problem';
@@ -42,9 +43,10 @@ export const START_PROBLEM_TOOL = 'start_problem';
  */
 export const RECALL_SIMILAR_EXPERIENCE_TOOL = 'recall_similar_experience';
 
-/** The three evidence/conclusion paths that complete the current Problem surface. */
+/** The four evidence/lifecycle paths that complete the current Problem surface. */
 export const ADD_EVENT_TOOL = 'add_event';
 export const ADD_VERIFICATION_TOOL = 'add_verification';
+export const MARK_FIX_CANDIDATE_TOOL = 'mark_fix_candidate';
 export const CLOSE_PROBLEM_TOOL = 'close_problem';
 
 /** Every tool this runtime exposes. Exactly these, and a guard says so. */
@@ -56,6 +58,7 @@ export const MEMORY_TOOLS = [
   RECALL_SIMILAR_EXPERIENCE_TOOL,
   ADD_EVENT_TOOL,
   ADD_VERIFICATION_TOOL,
+  MARK_FIX_CANDIDATE_TOOL,
   CLOSE_PROBLEM_TOOL,
 ] as const;
 

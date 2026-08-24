@@ -11,6 +11,7 @@ import {
   type MemoryApiClient,
   type ProblemResource,
   type ProjectResource,
+  type TransitionProblemStatusRequest,
   type VerificationResource,
 } from '@ai-problem-solving-memory/api-client';
 
@@ -18,6 +19,7 @@ import {
   addEventToCurrentProblem,
   addVerificationToCurrentProblem,
   closeCurrentProblem,
+  markCurrentProblemFixCandidate,
 } from '../src/problem-recording.js';
 import type { ProblemBindingWriter } from '../src/problem-lifecycle.js';
 import type { GitRunner } from '../src/project-signals.js';
@@ -120,6 +122,7 @@ interface Calls {
   gets: string[];
   events: { problemId: string; request: AppendEventRequest }[];
   verifications: { problemId: string; request: AppendVerificationRequest }[];
+  transitions: { problemId: string; request: TransitionProblemStatusRequest }[];
   closes: { problemId: string; request: CloseProblemRequest }[];
 }
 
@@ -131,10 +134,11 @@ function world(
     binding?: { projectId: string; problemId: string };
     event?: EventResource | Error;
     verification?: VerificationResource | Error;
+    transition?: ProblemResource | Error;
     close?: ProblemResource | Error;
   } = {},
 ): { client: MemoryApiClient; bindingStore: ProblemBindingWriter; calls: Calls } {
-  const calls: Calls = { gets: [], events: [], verifications: [], closes: [] };
+  const calls: Calls = { gets: [], events: [], verifications: [], transitions: [], closes: [] };
   let getIndex = 0;
   const answer = <T>(value: T | Error): Promise<T> =>
     value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
@@ -155,6 +159,13 @@ function world(
     appendVerification: (problemId: string, request: AppendVerificationRequest) => {
       calls.verifications.push({ problemId, request });
       return answer(options.verification ?? verification());
+    },
+    transitionProblemStatus: (problemId: string, request: TransitionProblemStatusRequest) => {
+      calls.transitions.push({ problemId, request });
+      return answer(
+        options.transition ??
+          problem({ status: request.target_status, version: request.expected_version + 1 }),
+      );
     },
     closeProblem: (problemId: string, request: CloseProblemRequest) => {
       calls.closes.push({ problemId, request });
@@ -334,6 +345,40 @@ describe('current-Problem close', () => {
       closeCurrentProblem({ ...context(built), targetStatus: 'PAUSED' }),
     ).rejects.toBeInstanceOf(MemoryApiError);
     expect(built.calls.closes).toHaveLength(1);
+  });
+});
+
+describe('current-Problem fix candidate', () => {
+  it('uses the final read version once and fixes target and actor at the runtime boundary', async () => {
+    const built = world({ gets: [problem({ version: 4 }), problem({ version: 9 })] });
+
+    await expect(markCurrentProblemFixCandidate(context(built))).resolves.toEqual({
+      kind: 'FIX_CANDIDATE_MARKED',
+      problemId: PROBLEM_ID,
+      status: 'FIX_CANDIDATE',
+      version: 10,
+    });
+    expect(built.calls.transitions).toEqual([
+      {
+        problemId: PROBLEM_ID,
+        request: {
+          expected_version: 9,
+          changed_by: CLAUDE_CODE_SOURCE_AI,
+          target_status: 'FIX_CANDIDATE',
+        },
+      },
+    ]);
+  });
+
+  it('does not retry a transition conflict', async () => {
+    const built = world({
+      transition: new MemoryApiError(409, 'VERSION_CONFLICT', 'request'),
+    });
+
+    await expect(markCurrentProblemFixCandidate(context(built))).rejects.toBeInstanceOf(
+      MemoryApiError,
+    );
+    expect(built.calls.transitions).toHaveLength(1);
   });
 });
 

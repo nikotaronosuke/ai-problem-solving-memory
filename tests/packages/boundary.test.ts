@@ -898,7 +898,7 @@ describe('the Claude adapter', () => {
     );
   });
 
-  it('offers exactly eight Memory tools, named for goals rather than for calls', async () => {
+  it('offers exactly nine Memory tools, named for goals rather than for calls', async () => {
     const shipped = await sourcesOf('claude-code-memory-plugin');
     const constants = shipped.find((file) => file.path === 'src/runtime-constants.ts');
     const server = shipped.find((file) => file.path === 'src/server.ts');
@@ -914,10 +914,11 @@ describe('the Claude adapter', () => {
       // on. It is still named for a goal — look up what is already known — and
       // not for the call underneath it.
       'recall_similar_experience',
-      // The remaining three name the evidence or conclusion the caller means,
+      // The remaining four name the evidence or lifecycle decision the caller means,
       // not the HTTP calls used underneath them.
       'add_event',
       'add_verification',
+      'mark_fix_candidate',
       'close_problem',
     ]) {
       expect(`the runtime declares ${tool}:${declared.includes(tool)}`).toBe(
@@ -925,7 +926,7 @@ describe('the Claude adapter', () => {
       );
     }
     expect(`tools registered:${(code.match(/server\.registerTool\(/gu) ?? []).length}`).toBe(
-      'tools registered:8',
+      'tools registered:9',
     );
 
     // No plumbing. A surface made of steps would ask the model to assemble a
@@ -1030,7 +1031,7 @@ describe('the Claude adapter', () => {
     }
   });
 
-  it('mints host identity for exactly the eight tools', async () => {
+  it('mints host identity for exactly the nine tools', async () => {
     const shipped = await sourcesOf('claude-code-memory-plugin');
     const hook = codeOnly(
       shipped.find((file) => file.path === 'src/pre-tool-use.ts')?.source ?? '',

@@ -37,6 +37,7 @@ import {
   closeCurrentProblem,
   continueProblem,
   createProblemBindingStore,
+  markCurrentProblemFixCandidate,
   resolveProblemForSession,
   resumeProblem,
   startNewProblem,
@@ -452,11 +453,15 @@ describe.skipIf(databaseUrl === undefined)('entering a Problem, end to end', () 
       onCurrentProblem: true,
     });
 
-    const fixCandidate = await memory.transitionProblemStatus(created.problem_id, {
-      target_status: 'FIX_CANDIDATE',
-      expected_version: created.version,
-      changed_by: 'integration-test',
+    const fixCandidate = await markCurrentProblemFixCandidate(current);
+    expect(fixCandidate).toMatchObject({
+      kind: 'FIX_CANDIDATE_MARKED',
+      problemId: created.problem_id,
+      status: 'FIX_CANDIDATE',
     });
+    if (fixCandidate.kind !== 'FIX_CANDIDATE_MARKED') {
+      throw new Error('Expected the bound Problem to become a fix candidate.');
+    }
     await expect(
       closeCurrentProblem({ ...current, targetStatus: 'VERIFIED', fixKind: 'ROOT_FIX' }),
     ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });

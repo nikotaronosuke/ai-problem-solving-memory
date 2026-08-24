@@ -208,7 +208,7 @@ describe('what the model is told these tools take', () => {
     }
   });
 
-  it('keeps the three recording tools content-only and closed', async () => {
+  it('keeps the four current-Problem write tools narrow and closed', async () => {
     const tools = await publishedTools();
     const fields = (name: string) => {
       const schema = toolNamed(tools, name).inputSchema;
@@ -231,6 +231,7 @@ describe('what the model is told these tools take', () => {
       'client_event_id',
       'evidence_ref',
     ]);
+    expect(fields('mark_fix_candidate')).toEqual([]);
     expect(fields('close_problem')).toEqual([
       'target_status',
       'fix_kind',
@@ -241,7 +242,7 @@ describe('what the model is told these tools take', () => {
     ]);
 
     const recordingSchemas = JSON.stringify(
-      ['add_event', 'add_verification', 'close_problem'].map(
+      ['add_event', 'add_verification', 'mark_fix_candidate', 'close_problem'].map(
         (name) => toolNamed(tools, name).inputSchema,
       ),
     );
@@ -272,10 +273,16 @@ describe('what the model is told these tools take', () => {
     expect(close).toContain('VERIFIED');
     expect(close).toMatch(/successful.*Verification/u);
     expect(close).toMatch(/never retried/u);
+
+    const mark = toolNamed(tools, 'mark_fix_candidate').description ?? '';
+    expect(mark).toContain('INVESTIGATING');
+    expect(mark).toContain('FIX_CANDIDATE');
+    expect(mark).toContain('add_event');
+    expect(mark).toMatch(/never retried/u);
   });
 
   it('never says a tool takes nothing while its schema takes something', async () => {
-    // The drift this test exists to catch, stated once for all eight rather
+    // The drift this test exists to catch, stated once for all nine rather
     // than for the one that drifted: whatever a tool accepts, its own words
     // must not deny it.
     for (const tool of await publishedTools()) {
