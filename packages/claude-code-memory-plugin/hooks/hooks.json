@@ -50,6 +50,36 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "mcp__plugin_problem-solving-memory_memory__add_event",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__plugin_problem-solving-memory_memory__add_verification",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__plugin_problem-solving-memory_memory__close_problem",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js\"",
+            "timeout": 15
+          }
+        ]
       }
     ]
   }

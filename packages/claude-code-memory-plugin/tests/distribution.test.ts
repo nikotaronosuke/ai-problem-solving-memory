@@ -215,7 +215,7 @@ describe('the server, run from the installed copy', () => {
     expect(tools.map((tool) => tool.name)).toEqual([...MEMORY_TOOLS]);
   }, 60_000);
 
-  it('refuses all four without host context, exactly as the source runtime does', async () => {
+  it('refuses all eight without host context, exactly as the source runtime does', async () => {
     const calls = [
       { name: 'current_problem', arguments: {} },
       { name: 'continue_problem', arguments: { project_id: 'p', problem_id: 'q' } },
@@ -224,6 +224,40 @@ describe('the server, run from the installed copy', () => {
         arguments: { project_id: 'p', problem_id: 'q', target_status: 'INVESTIGATING' },
       },
       { name: 'start_problem', arguments: { project_id: 'p', title: 't', symptoms: 's' } },
+      {
+        name: 'recall_similar_experience',
+        arguments: {
+          lexical_text: 'export empty',
+          semantic_text: 'the scheduled export writes an empty file',
+          current_features: {
+            problem_domain: null,
+            symptom_patterns: [],
+            suspected_boundaries: [],
+            occurrence_conditions: [],
+            successful_directions: [],
+            dead_end_directions: [],
+            environment_facts: [],
+          },
+        },
+      },
+      {
+        name: 'add_event',
+        arguments: {
+          event_type: 'DEAD_END',
+          summary: 'the attempted direction did not work',
+          client_event_id: 'aaaaaaaa-1111-4222-8333-444444444444',
+        },
+      },
+      {
+        name: 'add_verification',
+        arguments: {
+          verification_type: 'TEST',
+          result: false,
+          summary: 'the regression still fails',
+          client_event_id: 'bbbbbbbb-1111-4222-8333-444444444444',
+        },
+      },
+      { name: 'close_problem', arguments: { target_status: 'PAUSED' } },
     ];
 
     const { replies } = await driveInstalledServer([

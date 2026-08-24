@@ -102,6 +102,19 @@ export {
 } from './similar-experience-recall.js';
 
 export {
+  addEventToCurrentProblem,
+  addVerificationToCurrentProblem,
+  closeCurrentProblem,
+  type AddEventToCurrentProblemInput,
+  type AddEventToCurrentProblemOutcome,
+  type AddVerificationToCurrentProblemInput,
+  type AddVerificationToCurrentProblemOutcome,
+  type CloseCurrentProblemInput,
+  type CloseCurrentProblemOutcome,
+  type CurrentProblemWriteUnavailable,
+} from './problem-recording.js';
+
+export {
   continueProblem,
   ProblemLifecycleArgumentError,
   ProblemLifecycleInvariantError,

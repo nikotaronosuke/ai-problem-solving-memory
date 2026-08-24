@@ -42,6 +42,11 @@ export const START_PROBLEM_TOOL = 'start_problem';
  */
 export const RECALL_SIMILAR_EXPERIENCE_TOOL = 'recall_similar_experience';
 
+/** The three evidence/conclusion paths that complete the current Problem surface. */
+export const ADD_EVENT_TOOL = 'add_event';
+export const ADD_VERIFICATION_TOOL = 'add_verification';
+export const CLOSE_PROBLEM_TOOL = 'close_problem';
+
 /** Every tool this runtime exposes. Exactly these, and a guard says so. */
 export const MEMORY_TOOLS = [
   CURRENT_PROBLEM_TOOL,
@@ -49,6 +54,9 @@ export const MEMORY_TOOLS = [
   RESUME_PROBLEM_TOOL,
   START_PROBLEM_TOOL,
   RECALL_SIMILAR_EXPERIENCE_TOOL,
+  ADD_EVENT_TOOL,
+  ADD_VERIFICATION_TOOL,
+  CLOSE_PROBLEM_TOOL,
 ] as const;
 
 export type MemoryTool = (typeof MEMORY_TOOLS)[number];

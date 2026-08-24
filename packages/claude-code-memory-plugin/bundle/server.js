@@ -237,6 +237,83 @@ function isCreateEnvironmentRequest(value) {
   return isJsonObject(value["snapshot"]);
 }
 
+// ../memory-api-client/src/event.ts
+var EVENT_TYPES = [
+  "HYPOTHESIS",
+  "ATTEMPT",
+  "DEAD_END",
+  "DISCOVERY",
+  "FIX",
+  "USER_CORRECTION"
+];
+var EVENT_RESOURCE_FIELDS = [
+  "event_id",
+  "owner_id",
+  "problem_id",
+  "event_type",
+  "summary",
+  "result",
+  "reason",
+  "source_ai",
+  "evidence_ref",
+  "client_event_id",
+  "created_at"
+];
+var APPEND_EVENT_REQUEST_FIELDS = [
+  "event_type",
+  "summary",
+  "client_event_id",
+  "result",
+  "reason",
+  "source_ai",
+  "evidence_ref"
+];
+var REQUIRED_APPEND_EVENT_FIELDS = ["event_type", "summary", "client_event_id"];
+var OPTIONAL_APPEND_EVENT_FIELDS = ["result", "reason", "source_ai", "evidence_ref"];
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isMember(members, value) {
+  return typeof value === "string" && members.includes(value);
+}
+function isNullableString(value) {
+  return value === null || typeof value === "string";
+}
+function isNonBlank(value) {
+  return typeof value === "string" && /\S/u.test(value);
+}
+function isEventResource(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record2 = value;
+  if (Object.keys(record2).length !== EVENT_RESOURCE_FIELDS.length) {
+    return false;
+  }
+  for (const field of EVENT_RESOURCE_FIELDS) {
+    if (!(field in record2)) {
+      return false;
+    }
+  }
+  return typeof record2["event_id"] === "string" && typeof record2["owner_id"] === "string" && typeof record2["problem_id"] === "string" && isMember(EVENT_TYPES, record2["event_type"]) && typeof record2["summary"] === "string" && isNullableString(record2["result"]) && isNullableString(record2["reason"]) && isNullableString(record2["source_ai"]) && isNullableString(record2["evidence_ref"]) && typeof record2["client_event_id"] === "string" && typeof record2["created_at"] === "string";
+}
+function isAppendEventRequest(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record2 = value;
+  const allowed = new Set(APPEND_EVENT_REQUEST_FIELDS);
+  if (!Object.keys(record2).every((field) => allowed.has(field))) {
+    return false;
+  }
+  for (const field of REQUIRED_APPEND_EVENT_FIELDS) {
+    if (!(field in record2)) {
+      return false;
+    }
+  }
+  return isMember(EVENT_TYPES, record2["event_type"]) && isNonBlank(record2["summary"]) && typeof record2["client_event_id"] === "string" && UUID.test(record2["client_event_id"]) && OPTIONAL_APPEND_EVENT_FIELDS.every(
+    (field) => !(field in record2) || isNullableString(record2[field])
+  );
+}
+
 // ../memory-api-client/src/problem.ts
 var PROBLEM_STATUSES = [
   "INVESTIGATING",
@@ -248,6 +325,11 @@ var PROBLEM_STATUSES = [
 var FIX_KINDS = ["ROOT_FIX", "WORKAROUND"];
 var CONFIDENCES = ["HIGH", "MEDIUM", "LOW", "CONFLICTED"];
 var FRESHNESSES = ["CURRENT", "STALE_UNKNOWN", "SUPERSEDED", "INVALID"];
+var CLOSE_PROBLEM_TARGET_STATUSES = [
+  "VERIFIED",
+  "PAUSED",
+  "CLOSED_UNRESOLVED"
+];
 var PROBLEM_RESOURCE_FIELDS = [
   "problem_id",
   "owner_id",
@@ -273,10 +355,10 @@ var PROBLEM_RESOURCE_FIELDS = [
 function isString(value) {
   return typeof value === "string";
 }
-function isNullableString(value) {
+function isNullableString2(value) {
   return value === null || typeof value === "string";
 }
-function isMember(members, value) {
+function isMember2(members, value) {
   return typeof value === "string" && members.includes(value);
 }
 function isRecordVersion(value) {
@@ -295,7 +377,7 @@ function isProblemResource(value) {
       return false;
     }
   }
-  return isString(record2["problem_id"]) && isString(record2["owner_id"]) && isString(record2["project_id"]) && isString(record2["environment_id"]) && isString(record2["title"]) && isString(record2["symptoms"]) && isNullableString(record2["problem_domain"]) && isNullableString(record2["suspected_boundary"]) && isNullableString(record2["source_ai"]) && isMember(PROBLEM_STATUSES, record2["status"]) && (record2["fix_kind"] === null || isMember(FIX_KINDS, record2["fix_kind"])) && typeof record2["importance"] === "boolean" && isMember(CONFIDENCES, record2["confidence"]) && isMember(FRESHNESSES, record2["freshness"]) && typeof record2["memory_read_enabled"] === "boolean" && typeof record2["memory_write_enabled"] === "boolean" && typeof record2["suppressed"] === "boolean" && isRecordVersion(record2["version"]) && isString(record2["created_at"]) && isString(record2["updated_at"]);
+  return isString(record2["problem_id"]) && isString(record2["owner_id"]) && isString(record2["project_id"]) && isString(record2["environment_id"]) && isString(record2["title"]) && isString(record2["symptoms"]) && isNullableString2(record2["problem_domain"]) && isNullableString2(record2["suspected_boundary"]) && isNullableString2(record2["source_ai"]) && isMember2(PROBLEM_STATUSES, record2["status"]) && (record2["fix_kind"] === null || isMember2(FIX_KINDS, record2["fix_kind"])) && typeof record2["importance"] === "boolean" && isMember2(CONFIDENCES, record2["confidence"]) && isMember2(FRESHNESSES, record2["freshness"]) && typeof record2["memory_read_enabled"] === "boolean" && typeof record2["memory_write_enabled"] === "boolean" && typeof record2["suppressed"] === "boolean" && isRecordVersion(record2["version"]) && isString(record2["created_at"]) && isString(record2["updated_at"]);
 }
 function isProblemListBody(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -329,7 +411,7 @@ function isTransitionProblemStatusRequest(value) {
     }
   }
   const version2 = record2["expected_version"];
-  return isMember(PROBLEM_STATUSES, record2["target_status"]) && typeof version2 === "number" && Number.isInteger(version2) && version2 >= 1 && isNonBlank(record2["changed_by"]);
+  return isMember2(PROBLEM_STATUSES, record2["target_status"]) && typeof version2 === "number" && Number.isInteger(version2) && version2 >= 1 && isNonBlank2(record2["changed_by"]);
 }
 var CREATE_PROBLEM_REQUEST_FIELDS = [
   "environment_id",
@@ -345,8 +427,8 @@ var OPTIONAL_CREATE_PROBLEM_FIELDS = [
   "suspected_boundary",
   "source_ai"
 ];
-var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isNonBlank(value) {
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isNonBlank2(value) {
   return typeof value === "string" && /\S/.test(value);
 }
 function isCreateProblemRequest(value) {
@@ -364,14 +446,56 @@ function isCreateProblemRequest(value) {
     }
   }
   const environmentId = record2["environment_id"];
-  if (typeof environmentId !== "string" || !UUID.test(environmentId)) {
+  if (typeof environmentId !== "string" || !UUID2.test(environmentId)) {
     return false;
   }
-  if (!isNonBlank(record2["title"]) || !isNonBlank(record2["symptoms"])) {
+  if (!isNonBlank2(record2["title"]) || !isNonBlank2(record2["symptoms"])) {
     return false;
   }
   return OPTIONAL_CREATE_PROBLEM_FIELDS.every(
-    (field) => !(field in record2) || isNullableString(record2[field])
+    (field) => !(field in record2) || isNullableString2(record2[field])
+  );
+}
+var CLOSE_PROBLEM_REQUEST_FIELDS = [
+  "expected_version",
+  "changed_by",
+  "target_status",
+  "fix_kind",
+  "final_cause_summary",
+  "effective_direction",
+  "dead_end_summary",
+  "unresolved_points"
+];
+var REQUIRED_CLOSE_PROBLEM_FIELDS = ["expected_version", "changed_by", "target_status"];
+var CLOSE_PROBLEM_REVIEW_FIELDS = [
+  "final_cause_summary",
+  "effective_direction",
+  "dead_end_summary",
+  "unresolved_points"
+];
+function isCloseProblemRequest(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record2 = value;
+  const allowed = new Set(CLOSE_PROBLEM_REQUEST_FIELDS);
+  if (!Object.keys(record2).every((field) => allowed.has(field))) {
+    return false;
+  }
+  for (const field of REQUIRED_CLOSE_PROBLEM_FIELDS) {
+    if (!(field in record2)) {
+      return false;
+    }
+  }
+  const expectedVersion = record2["expected_version"];
+  if (typeof expectedVersion !== "number" || !Number.isInteger(expectedVersion) || expectedVersion < 1 || !isNonBlank2(record2["changed_by"]) || !isMember2(CLOSE_PROBLEM_TARGET_STATUSES, record2["target_status"])) {
+    return false;
+  }
+  if ("fix_kind" in record2 && record2["fix_kind"] !== null && !isMember2(FIX_KINDS, record2["fix_kind"])) {
+    return false;
+  }
+  return CLOSE_PROBLEM_REVIEW_FIELDS.every(
+    (field) => !(field in record2) || isNonBlank2(record2[field])
   );
 }
 
@@ -506,13 +630,13 @@ function hasExactKeys(record2, keys) {
   }
   return keys.every((key) => key in record2);
 }
-function isMember2(members, value) {
+function isMember3(members, value) {
   return typeof value === "string" && members.includes(value);
 }
 function isNonBlankString(value, maxLength) {
   return typeof value === "string" && value.trim() !== "" && value.length <= maxLength;
 }
-function isNullableString2(value) {
+function isNullableString3(value) {
   return value === null || typeof value === "string";
 }
 function isRank(value) {
@@ -522,7 +646,7 @@ function isStringArray(value) {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 function isMemberArray(members, value) {
-  return Array.isArray(value) && value.every((entry) => isMember2(members, entry));
+  return Array.isArray(value) && value.every((entry) => isMember3(members, entry));
 }
 function isArrayOf(value, predicate) {
   return Array.isArray(value) && value.every((entry) => predicate(entry));
@@ -570,9 +694,9 @@ function isEvidence(value) {
   if (!isRecord3(value) || !hasExactKeys(value, EVIDENCE_FIELDS)) {
     return false;
   }
-  return isMember2(MEMORY_SEARCH_VERIFICATION_TYPES, value["verification_type"]) && // Both values are kept. A check that failed is evidence too, and a list of
+  return isMember3(MEMORY_SEARCH_VERIFICATION_TYPES, value["verification_type"]) && // Both values are kept. A check that failed is evidence too, and a list of
   // only the passing ones would read as though everything tried had worked.
-  typeof value["result"] === "boolean" && typeof value["summary"] === "string" && isNullableString2(value["evidence_ref"]) && typeof value["created_at"] === "string";
+  typeof value["result"] === "boolean" && typeof value["summary"] === "string" && isNullableString3(value["evidence_ref"]) && typeof value["created_at"] === "string";
 }
 var RANKING_FIELDS = [
   "problem_id",
@@ -590,7 +714,7 @@ function isRanking(value) {
   if (!isRecord3(value) || !hasExactKeys(value, RANKING_FIELDS)) {
     return false;
   }
-  return typeof value["problem_id"] === "string" && typeof value["project_id"] === "string" && isMember2(CONFIDENCES, value["confidence"]) && isMember2(FRESHNESSES, value["freshness"]) && typeof value["suppressed"] === "boolean" && isMember2(MEMORY_SEARCH_PROJECT_RELATIONS, value["project_relation"]) && (value["structural_score"] === null || typeof value["structural_score"] === "number") && isRank(value["hybrid_rank"]) && isMemberArray(MEMORY_SEARCH_COMPARISON_DIMENSIONS, value["matched_dimensions"]) && isRank(value["ranking_rank"]);
+  return typeof value["problem_id"] === "string" && typeof value["project_id"] === "string" && isMember3(CONFIDENCES, value["confidence"]) && isMember3(FRESHNESSES, value["freshness"]) && typeof value["suppressed"] === "boolean" && isMember3(MEMORY_SEARCH_PROJECT_RELATIONS, value["project_relation"]) && (value["structural_score"] === null || typeof value["structural_score"] === "number") && isRank(value["hybrid_rank"]) && isMemberArray(MEMORY_SEARCH_COMPARISON_DIMENSIONS, value["matched_dimensions"]) && isRank(value["ranking_rank"]);
 }
 var REVALIDATION_FIELDS = ["historical_environment", "evidence", "required_checks"];
 function isRequiredChecks(value) {
@@ -618,7 +742,7 @@ function isDeadEndWarning(value) {
   return typeof value["summary"] === "string" && // The nullable fields must be present and null rather than absent: "nobody
   // recorded a reason" and "this contract has no reason field" are different
   // statements, and only one of them is true.
-  isNullableString2(value["result"]) && isNullableString2(value["reason"]) && isNullableString2(value["evidence_ref"]) && typeof value["created_at"] === "string";
+  isNullableString3(value["result"]) && isNullableString3(value["reason"]) && isNullableString3(value["evidence_ref"]) && typeof value["created_at"] === "string";
 }
 var CONFLICT_SUBJECT_FIELDS = [
   "symptoms",
@@ -631,7 +755,7 @@ function isConflictSubject(value) {
   if (!isRecord3(value) || !hasExactKeys(value, CONFLICT_SUBJECT_FIELDS)) {
     return false;
   }
-  return typeof value["symptoms"] === "string" && isNullableString2(value["problem_domain"]) && isNullableString2(value["suspected_boundary"]) && isMember2(PROBLEM_STATUSES, value["status"]) && (value["fix_kind"] === null || isMember2(FIX_KINDS, value["fix_kind"]));
+  return typeof value["symptoms"] === "string" && isNullableString3(value["problem_domain"]) && isNullableString3(value["suspected_boundary"]) && isMember3(PROBLEM_STATUSES, value["status"]) && (value["fix_kind"] === null || isMember3(FIX_KINDS, value["fix_kind"]));
 }
 var CONFLICT_OTHER_FIELDS = [
   "problem_id",
@@ -650,7 +774,7 @@ function isConflictOther(value) {
   if (!isRecord3(value) || !hasExactKeys(value, CONFLICT_OTHER_FIELDS)) {
     return false;
   }
-  return typeof value["problem_id"] === "string" && typeof value["project_id"] === "string" && typeof value["symptoms"] === "string" && isNullableString2(value["problem_domain"]) && isNullableString2(value["suspected_boundary"]) && isMember2(PROBLEM_STATUSES, value["status"]) && (value["fix_kind"] === null || isMember2(FIX_KINDS, value["fix_kind"])) && isMember2(CONFIDENCES, value["confidence"]) && isMember2(FRESHNESSES, value["freshness"]) && isRecord3(value["historical_environment"]) && isArrayOf(value["evidence"], isEvidence);
+  return typeof value["problem_id"] === "string" && typeof value["project_id"] === "string" && typeof value["symptoms"] === "string" && isNullableString3(value["problem_domain"]) && isNullableString3(value["suspected_boundary"]) && isMember3(PROBLEM_STATUSES, value["status"]) && (value["fix_kind"] === null || isMember3(FIX_KINDS, value["fix_kind"])) && isMember3(CONFIDENCES, value["confidence"]) && isMember3(FRESHNESSES, value["freshness"]) && isRecord3(value["historical_environment"]) && isArrayOf(value["evidence"], isEvidence);
 }
 var CONTRADICTION_FIELDS = ["reason", "relation_created_at", "other"];
 function isContradiction(value) {
@@ -691,13 +815,110 @@ function isMemorySearchResponse(value) {
   if (kind !== "SEARCHED" || !hasExactKeys(value, SEARCHED_FIELDS)) {
     return false;
   }
-  return isArrayOf(value["candidates"], isCandidate) && isMember2(MEMORY_SEARCH_SEMANTIC_STATUSES, value["semantic_status"]) && isMember2(MEMORY_SEARCH_STRUCTURAL_STATUSES, value["structural_status"]);
+  return isArrayOf(value["candidates"], isCandidate) && isMember3(MEMORY_SEARCH_SEMANTIC_STATUSES, value["semantic_status"]) && isMember3(MEMORY_SEARCH_STRUCTURAL_STATUSES, value["structural_status"]);
+}
+
+// ../memory-api-client/src/verification.ts
+var VERIFICATION_TYPES = [
+  "TEST",
+  "REAL_DEVICE",
+  "BUILD",
+  "API_RESULT",
+  "DB_RESULT",
+  "USER_CONFIRMATION"
+];
+var VERIFICATION_RESOURCE_FIELDS = [
+  "verification_id",
+  "owner_id",
+  "problem_id",
+  "verification_type",
+  "result",
+  "summary",
+  "evidence_ref",
+  "verified_by",
+  "client_event_id",
+  "created_at"
+];
+var APPEND_VERIFICATION_REQUEST_FIELDS = [
+  "verification_type",
+  "result",
+  "summary",
+  "client_event_id",
+  "evidence_ref",
+  "verified_by"
+];
+var REQUIRED_APPEND_VERIFICATION_FIELDS = [
+  "verification_type",
+  "result",
+  "summary",
+  "client_event_id"
+];
+var OPTIONAL_APPEND_VERIFICATION_FIELDS = ["evidence_ref", "verified_by"];
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isMember4(members, value) {
+  return typeof value === "string" && members.includes(value);
+}
+function isNullableString4(value) {
+  return value === null || typeof value === "string";
+}
+function isNonBlank3(value) {
+  return typeof value === "string" && /\S/u.test(value);
+}
+function isVerificationResource(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record2 = value;
+  if (Object.keys(record2).length !== VERIFICATION_RESOURCE_FIELDS.length) {
+    return false;
+  }
+  for (const field of VERIFICATION_RESOURCE_FIELDS) {
+    if (!(field in record2)) {
+      return false;
+    }
+  }
+  return typeof record2["verification_id"] === "string" && typeof record2["owner_id"] === "string" && typeof record2["problem_id"] === "string" && isMember4(VERIFICATION_TYPES, record2["verification_type"]) && typeof record2["result"] === "boolean" && typeof record2["summary"] === "string" && isNullableString4(record2["evidence_ref"]) && isNullableString4(record2["verified_by"]) && typeof record2["client_event_id"] === "string" && typeof record2["created_at"] === "string";
+}
+function isAppendVerificationRequest(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record2 = value;
+  const allowed = new Set(APPEND_VERIFICATION_REQUEST_FIELDS);
+  if (!Object.keys(record2).every((field) => allowed.has(field))) {
+    return false;
+  }
+  for (const field of REQUIRED_APPEND_VERIFICATION_FIELDS) {
+    if (!(field in record2)) {
+      return false;
+    }
+  }
+  return isMember4(VERIFICATION_TYPES, record2["verification_type"]) && typeof record2["result"] === "boolean" && isNonBlank3(record2["summary"]) && typeof record2["client_event_id"] === "string" && UUID3.test(record2["client_event_id"]) && OPTIONAL_APPEND_VERIFICATION_FIELDS.every(
+    (field) => !(field in record2) || isNullableString4(record2[field])
+  );
 }
 
 // ../memory-api-client/src/client.ts
 var MEMORY_API_REQUEST_TIMEOUT_MS = 1e4;
 var MEMORY_API_SEARCH_TIMEOUT_MS = 3e5;
 var PATH_SAFE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function snapshotRequest(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return void 0;
+  }
+  const snapshot = /* @__PURE__ */ Object.create(null);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") {
+      return void 0;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === void 0 || !descriptor.enumerable || !("value" in descriptor)) {
+      return void 0;
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
+}
 var MemoryApiArgumentError = class extends Error {
   argument;
   constructor(argument) {
@@ -919,6 +1140,119 @@ function createMemoryApiClient(options) {
         throw readApiError(status, body);
       }
       if (!isProblemResource(body) || body.problem_id !== problemId || body.status !== request.target_status) {
+        throw new MemoryApiProtocolError("RESOURCE_MALFORMED", status);
+      }
+      return body;
+    },
+    async appendEvent(problemId, request) {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError("problem id");
+      }
+      const stableRequest = snapshotRequest(request);
+      if (!isAppendEventRequest(stableRequest)) {
+        throw new MemoryApiArgumentError("event");
+      }
+      const payload = {
+        event_type: stableRequest.event_type,
+        summary: stableRequest.summary,
+        client_event_id: stableRequest.client_event_id
+      };
+      if ("result" in stableRequest) {
+        payload["result"] = stableRequest.result;
+      }
+      if ("reason" in stableRequest) {
+        payload["reason"] = stableRequest.reason;
+      }
+      if ("source_ai" in stableRequest) {
+        payload["source_ai"] = stableRequest.source_ai;
+      }
+      if ("evidence_ref" in stableRequest) {
+        payload["evidence_ref"] = stableRequest.evidence_ref;
+      }
+      const { status, body } = await send(`/v1/problems/${problemId}/events`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS
+      });
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+      if (!isEventResource(body) || body.client_event_id.toLowerCase() !== stableRequest.client_event_id.toLowerCase()) {
+        throw new MemoryApiProtocolError("RESOURCE_MALFORMED", status);
+      }
+      return body;
+    },
+    async appendVerification(problemId, request) {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError("problem id");
+      }
+      const stableRequest = snapshotRequest(request);
+      if (!isAppendVerificationRequest(stableRequest)) {
+        throw new MemoryApiArgumentError("verification");
+      }
+      const payload = {
+        verification_type: stableRequest.verification_type,
+        result: stableRequest.result,
+        summary: stableRequest.summary,
+        client_event_id: stableRequest.client_event_id
+      };
+      if ("evidence_ref" in stableRequest) {
+        payload["evidence_ref"] = stableRequest.evidence_ref;
+      }
+      if ("verified_by" in stableRequest) {
+        payload["verified_by"] = stableRequest.verified_by;
+      }
+      const { status, body } = await send(`/v1/problems/${problemId}/verifications`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS
+      });
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+      if (!isVerificationResource(body) || body.client_event_id.toLowerCase() !== stableRequest.client_event_id.toLowerCase()) {
+        throw new MemoryApiProtocolError("RESOURCE_MALFORMED", status);
+      }
+      return body;
+    },
+    async closeProblem(problemId, request) {
+      if (!PATH_SAFE_ID.test(problemId)) {
+        throw new MemoryApiArgumentError("problem id");
+      }
+      const stableRequest = snapshotRequest(request);
+      if (!isCloseProblemRequest(stableRequest)) {
+        throw new MemoryApiArgumentError("problem conclusion");
+      }
+      const canonicalProblemId = problemId.toLowerCase();
+      const payload = {
+        expected_version: stableRequest.expected_version,
+        changed_by: stableRequest.changed_by,
+        target_status: stableRequest.target_status
+      };
+      if ("fix_kind" in stableRequest) {
+        payload["fix_kind"] = stableRequest.fix_kind;
+      }
+      if ("final_cause_summary" in stableRequest) {
+        payload["final_cause_summary"] = stableRequest.final_cause_summary;
+      }
+      if ("effective_direction" in stableRequest) {
+        payload["effective_direction"] = stableRequest.effective_direction;
+      }
+      if ("dead_end_summary" in stableRequest) {
+        payload["dead_end_summary"] = stableRequest.dead_end_summary;
+      }
+      if ("unresolved_points" in stableRequest) {
+        payload["unresolved_points"] = stableRequest.unresolved_points;
+      }
+      const { status, body } = await send(`/v1/problems/${canonicalProblemId}/close`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        timeoutMs: timeoutMs ?? MEMORY_API_REQUEST_TIMEOUT_MS
+      });
+      if (status < 200 || status >= 300) {
+        throw readApiError(status, body);
+      }
+      if (!isProblemResource(body) || body.problem_id !== canonicalProblemId || body.status !== stableRequest.target_status || "fix_kind" in stableRequest && body.fix_kind !== stableRequest.fix_kind) {
         throw new MemoryApiProtocolError("RESOURCE_MALFORMED", status);
       }
       return body;
@@ -1914,6 +2248,110 @@ function defaultDigest(canonical) {
   return createHash2("sha256").update(canonical, "utf8").digest("hex");
 }
 function isProblemNotFound(error2) {
+  return error2 instanceof MemoryApiError && error2.status === 404 && error2.code === "NOT_FOUND";
+}
+
+// ../claude-code-adapter/src/problem-recording.ts
+async function currentWorkingProblem(input) {
+  const signals = await detectProjectSignals({
+    projectDir: input.projectDir,
+    ...input.runGit === void 0 ? {} : { runGit: input.runGit }
+  });
+  const project = await resolveProject(input.client, signals);
+  if (project.kind !== "RESOLVED") {
+    return { kind: "NO_CURRENT_PROBLEM" };
+  }
+  const resolution = await resolveProblemForSession(
+    input.client,
+    input.bindingStore,
+    input.sessionId,
+    project.projectId
+  );
+  if (resolution.kind !== "RESOLVED") {
+    return { kind: "NO_CURRENT_PROBLEM" };
+  }
+  let problem;
+  try {
+    problem = await input.client.getProblem(resolution.problemId);
+  } catch (error2) {
+    if (isProblemNotFound2(error2)) {
+      return { kind: "CURRENT_PROBLEM_NOT_AVAILABLE" };
+    }
+    throw error2;
+  }
+  if (problem.project_id !== project.projectId || !isWorkingProblemStatus(problem.status)) {
+    return { kind: "NO_CURRENT_PROBLEM" };
+  }
+  return { projectId: project.projectId, problem };
+}
+async function addEventToCurrentProblem(input) {
+  const current = await currentWorkingProblem(input);
+  if ("kind" in current) {
+    return current;
+  }
+  const request = {
+    event_type: input.eventType,
+    summary: input.summary,
+    client_event_id: input.clientEventId,
+    source_ai: CLAUDE_CODE_SOURCE_AI,
+    ..."result" in input ? { result: input.result } : {},
+    ..."reason" in input ? { reason: input.reason } : {},
+    ..."evidenceRef" in input ? { evidence_ref: input.evidenceRef } : {}
+  };
+  const event = await input.client.appendEvent(current.problem.problem_id, request);
+  return {
+    kind: "EVENT_RECORDED",
+    problemId: event.problem_id,
+    eventId: event.event_id,
+    clientEventId: event.client_event_id,
+    onCurrentProblem: event.problem_id === current.problem.problem_id
+  };
+}
+async function addVerificationToCurrentProblem(input) {
+  const current = await currentWorkingProblem(input);
+  if ("kind" in current) {
+    return current;
+  }
+  const request = {
+    verification_type: input.verificationType,
+    result: input.result,
+    summary: input.summary,
+    client_event_id: input.clientEventId,
+    verified_by: CLAUDE_CODE_SOURCE_AI,
+    ..."evidenceRef" in input ? { evidence_ref: input.evidenceRef } : {}
+  };
+  const verification = await input.client.appendVerification(current.problem.problem_id, request);
+  return {
+    kind: "VERIFICATION_RECORDED",
+    problemId: verification.problem_id,
+    verificationId: verification.verification_id,
+    clientEventId: verification.client_event_id,
+    onCurrentProblem: verification.problem_id === current.problem.problem_id
+  };
+}
+async function closeCurrentProblem(input) {
+  const current = await currentWorkingProblem(input);
+  if ("kind" in current) {
+    return current;
+  }
+  const problem = await input.client.closeProblem(current.problem.problem_id, {
+    expected_version: current.problem.version,
+    changed_by: CLAUDE_CODE_SOURCE_AI,
+    target_status: input.targetStatus,
+    ..."fixKind" in input ? { fix_kind: input.fixKind } : {},
+    ..."finalCauseSummary" in input ? { final_cause_summary: input.finalCauseSummary } : {},
+    ..."effectiveDirection" in input ? { effective_direction: input.effectiveDirection } : {},
+    ..."deadEndSummary" in input ? { dead_end_summary: input.deadEndSummary } : {},
+    ..."unresolvedPoints" in input ? { unresolved_points: input.unresolvedPoints } : {}
+  });
+  return {
+    kind: "PROBLEM_CLOSED",
+    problemId: problem.problem_id,
+    status: problem.status,
+    version: problem.version
+  };
+}
+function isProblemNotFound2(error2) {
   return error2 instanceof MemoryApiError && error2.status === 404 && error2.code === "NOT_FOUND";
 }
 
@@ -22192,12 +22630,18 @@ var CONTINUE_PROBLEM_TOOL = "continue_problem";
 var RESUME_PROBLEM_TOOL = "resume_problem";
 var START_PROBLEM_TOOL = "start_problem";
 var RECALL_SIMILAR_EXPERIENCE_TOOL = "recall_similar_experience";
+var ADD_EVENT_TOOL = "add_event";
+var ADD_VERIFICATION_TOOL = "add_verification";
+var CLOSE_PROBLEM_TOOL = "close_problem";
 var MEMORY_TOOLS = [
   CURRENT_PROBLEM_TOOL,
   CONTINUE_PROBLEM_TOOL,
   RESUME_PROBLEM_TOOL,
   START_PROBLEM_TOOL,
-  RECALL_SIMILAR_EXPERIENCE_TOOL
+  RECALL_SIMILAR_EXPERIENCE_TOOL,
+  ADD_EVENT_TOOL,
+  ADD_VERIFICATION_TOOL,
+  CLOSE_PROBLEM_TOOL
 ];
 function hostToolName(tool) {
   return `mcp__plugin_${PLUGIN_NAME}_${MCP_SERVER_KEY}__${tool}`;
@@ -22443,11 +22887,11 @@ import { createHash as createHash4 } from "node:crypto";
 import { mkdir as mkdir3, open as open3, readdir, readFile as readFile3, stat as stat2, unlink as unlink3 } from "node:fs/promises";
 import { isAbsolute as isAbsolute4, join as join3 } from "node:path";
 var HOST_CALL_ID_META_KEY = "claudecode/toolUseId";
-function isNonBlank2(value) {
+function isNonBlank4(value) {
   return typeof value === "string" && /\S/.test(value);
 }
 function isAbsolutePath(value) {
-  return isNonBlank2(value) && isAbsolute4(value);
+  return isNonBlank4(value) && isAbsolute4(value);
 }
 function hostCallIdOf(request) {
   if (typeof request !== "object" || request === null) {
@@ -22458,7 +22902,7 @@ function hostCallIdOf(request) {
     return void 0;
   }
   const value = meta2[HOST_CALL_ID_META_KEY];
-  return isNonBlank2(value) ? value : void 0;
+  return isNonBlank4(value) ? value : void 0;
 }
 function callContextFilename(hostCallId, prefix = PENDING_PREFIX) {
   const digest = createHash4("sha256").update(hostCallId, "utf8").digest("hex");
@@ -22490,7 +22934,7 @@ function isHostCallContext(value) {
   return record2["format_version"] === CALL_CONTEXT_FORMAT_VERSION && // Opaque on purpose: a session identifier's syntax is the host's to change,
   // and a second copy of that rule here would refuse good identities the day
   // it moved.
-  isNonBlank2(record2["session_id"]) && isNonBlank2(record2["tool_name"]) && // Absolute, and taken as written. A relative path would be resolved
+  isNonBlank4(record2["session_id"]) && isNonBlank4(record2["tool_name"]) && // Absolute, and taken as written. A relative path would be resolved
   // against whatever process happened to read it, which is exactly the
   // thing a Project must never depend on.
   isAbsolutePath(record2["current_directory"]) && typeof mintedAt === "number" && Number.isInteger(mintedAt) && mintedAt > 0;
@@ -22666,6 +23110,34 @@ var RECALL_FEATURES_SCHEMA = object({
   dead_end_directions: FEATURE_LIST_SCHEMA,
   environment_facts: FEATURE_LIST_SCHEMA
 }).strict();
+var NON_BLANK_TEXT_SCHEMA = string2().refine((value) => /\S/u.test(value), {
+  message: "must contain at least one non-whitespace character"
+});
+var OPTIONAL_NULLABLE_TEXT_SCHEMA = string2().nullable().optional();
+var CLIENT_EVENT_ID_SCHEMA = string2().uuid();
+var ADD_EVENT_INPUT_SCHEMA = object({
+  event_type: _enum(EVENT_TYPES),
+  summary: NON_BLANK_TEXT_SCHEMA,
+  client_event_id: CLIENT_EVENT_ID_SCHEMA,
+  result: OPTIONAL_NULLABLE_TEXT_SCHEMA,
+  reason: OPTIONAL_NULLABLE_TEXT_SCHEMA,
+  evidence_ref: OPTIONAL_NULLABLE_TEXT_SCHEMA
+}).strict();
+var ADD_VERIFICATION_INPUT_SCHEMA = object({
+  verification_type: _enum(VERIFICATION_TYPES),
+  result: boolean2(),
+  summary: NON_BLANK_TEXT_SCHEMA,
+  client_event_id: CLIENT_EVENT_ID_SCHEMA,
+  evidence_ref: OPTIONAL_NULLABLE_TEXT_SCHEMA
+}).strict();
+var CLOSE_PROBLEM_INPUT_SCHEMA = object({
+  target_status: _enum(CLOSE_PROBLEM_TARGET_STATUSES),
+  fix_kind: _enum(FIX_KINDS).nullable().optional(),
+  final_cause_summary: NON_BLANK_TEXT_SCHEMA.optional(),
+  effective_direction: NON_BLANK_TEXT_SCHEMA.optional(),
+  dead_end_summary: NON_BLANK_TEXT_SCHEMA.optional(),
+  unresolved_points: NON_BLANK_TEXT_SCHEMA.optional()
+}).strict();
 var RUNTIME_ERROR_CODES = [
   "HOST_CONTEXT_UNAVAILABLE",
   "MEMORY_NOT_CONFIGURED",
@@ -22776,6 +23248,42 @@ var RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA = discriminatedUnion("kind", [
   object({ kind: literal("MEMORY_READ_DISABLED") }).strict(),
   object({ kind: literal("CURRENT_SOURCE_CHANGED") }).strict(),
   object({ kind: literal("CURRENT_PROBLEM_NOT_AVAILABLE") }).strict(),
+  ERROR_VARIANT
+]);
+var CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS = [
+  object({ kind: literal("NO_CURRENT_PROBLEM") }).strict(),
+  object({ kind: literal("CURRENT_PROBLEM_NOT_AVAILABLE") }).strict()
+];
+var ADD_EVENT_OUTPUT_SCHEMA = discriminatedUnion("kind", [
+  object({
+    kind: literal("EVENT_RECORDED"),
+    problem_id: string2(),
+    event_id: string2(),
+    client_event_id: string2(),
+    on_current_problem: boolean2()
+  }).strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
+  ERROR_VARIANT
+]);
+var ADD_VERIFICATION_OUTPUT_SCHEMA = discriminatedUnion("kind", [
+  object({
+    kind: literal("VERIFICATION_RECORDED"),
+    problem_id: string2(),
+    verification_id: string2(),
+    client_event_id: string2(),
+    on_current_problem: boolean2()
+  }).strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
+  ERROR_VARIANT
+]);
+var CLOSE_PROBLEM_OUTPUT_SCHEMA = discriminatedUnion("kind", [
+  object({
+    kind: literal("PROBLEM_CLOSED"),
+    problem_id: string2(),
+    status: _enum(CLOSE_PROBLEM_TARGET_STATUSES),
+    version: number2().int().min(1)
+  }).strict(),
+  ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
   ERROR_VARIANT
 ]);
 function classify(error2) {
@@ -22989,6 +23497,82 @@ async function handleRecallSimilarExperience(request, options, input) {
     } : { kind: outcome.kind };
   });
 }
+async function handleAddEvent(request, options, input) {
+  const outcome = await serveAuthenticated(
+    request,
+    options,
+    ADD_EVENT_TOOL,
+    async (call) => addEventToCurrentProblem({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      eventType: input.event_type,
+      summary: input.summary,
+      clientEventId: input.client_event_id,
+      ...input.result !== void 0 ? { result: input.result } : {},
+      ...input.reason !== void 0 ? { reason: input.reason } : {},
+      ...input.evidence_ref !== void 0 ? { evidenceRef: input.evidence_ref } : {}
+    })
+  );
+  return outcome.kind === "EVENT_RECORDED" ? {
+    kind: "EVENT_RECORDED",
+    problem_id: outcome.problemId,
+    event_id: outcome.eventId,
+    client_event_id: outcome.clientEventId,
+    on_current_problem: outcome.onCurrentProblem
+  } : outcome;
+}
+async function handleAddVerification(request, options, input) {
+  const outcome = await serveAuthenticated(
+    request,
+    options,
+    ADD_VERIFICATION_TOOL,
+    async (call) => addVerificationToCurrentProblem({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      verificationType: input.verification_type,
+      result: input.result,
+      summary: input.summary,
+      clientEventId: input.client_event_id,
+      ...input.evidence_ref !== void 0 ? { evidenceRef: input.evidence_ref } : {}
+    })
+  );
+  return outcome.kind === "VERIFICATION_RECORDED" ? {
+    kind: "VERIFICATION_RECORDED",
+    problem_id: outcome.problemId,
+    verification_id: outcome.verificationId,
+    client_event_id: outcome.clientEventId,
+    on_current_problem: outcome.onCurrentProblem
+  } : outcome;
+}
+async function handleCloseProblem(request, options, input) {
+  const outcome = await serveAuthenticated(
+    request,
+    options,
+    CLOSE_PROBLEM_TOOL,
+    async (call) => closeCurrentProblem({
+      client: call.client,
+      bindingStore: call.bindingStore,
+      sessionId: call.sessionId,
+      projectDir: call.projectDir,
+      targetStatus: input.target_status,
+      ...input.fix_kind !== void 0 ? { fixKind: input.fix_kind } : {},
+      ...input.final_cause_summary !== void 0 ? { finalCauseSummary: input.final_cause_summary } : {},
+      ...input.effective_direction !== void 0 ? { effectiveDirection: input.effective_direction } : {},
+      ...input.dead_end_summary !== void 0 ? { deadEndSummary: input.dead_end_summary } : {},
+      ...input.unresolved_points !== void 0 ? { unresolvedPoints: input.unresolved_points } : {}
+    })
+  );
+  return outcome.kind === "PROBLEM_CLOSED" ? {
+    kind: "PROBLEM_CLOSED",
+    problem_id: outcome.problemId,
+    status: outcome.status,
+    version: outcome.version
+  } : outcome;
+}
 function buildMemoryMcpServer(options) {
   const server = new McpServer({ name: "memory", version: "0.0.0" });
   server.registerTool(
@@ -23062,6 +23646,33 @@ function buildMemoryMcpServer(options) {
     },
     async (args, extra) => resultOf(await handleRecallSimilarExperience(extra?.mcpReq, options, args))
   );
+  server.registerTool(
+    ADD_EVENT_TOOL,
+    {
+      description: "Record one typed event on the problem this session is currently working on. The project, problem and source assistant come from the authenticated host context; do not supply them. Mint client_event_id once for this logical event and reuse the same UUID after an unanswered attempt. Summarize what happened; do not paste credentials, raw terminal or command output, or absolute paths. The returned record may be an earlier owner-wide idempotency-key replay, so check on_current_problem.",
+      inputSchema: ADD_EVENT_INPUT_SCHEMA,
+      outputSchema: ADD_EVENT_OUTPUT_SCHEMA
+    },
+    async (args, extra) => resultOf(await handleAddEvent(extra?.mcpReq, options, args))
+  );
+  server.registerTool(
+    ADD_VERIFICATION_TOOL,
+    {
+      description: "Record one check that was actually performed on the problem this session is currently working on. result is strictly true or false; absence means no Verification should be recorded. The project, problem and verifying assistant come from the authenticated host context. Mint client_event_id once and reuse the same UUID after an unanswered attempt. Summarize the evidence; do not paste credentials, raw output or absolute paths. The returned record may be an earlier owner-wide key replay, so check on_current_problem.",
+      inputSchema: ADD_VERIFICATION_INPUT_SCHEMA,
+      outputSchema: ADD_VERIFICATION_OUTPUT_SCHEMA
+    },
+    async (args, extra) => resultOf(await handleAddVerification(extra?.mcpReq, options, args))
+  );
+  server.registerTool(
+    CLOSE_PROBLEM_TOOL,
+    {
+      description: "Conclude or pause the problem this session is currently working on. The problem, actor and optimistic-lock version come from a fresh authenticated server read, never from you. VERIFIED is refused by the Memory unless this Problem already has a successful Verification. Review fields are summaries only; do not paste credentials, raw output or absolute paths. A concurrent change is reported and is never retried automatically.",
+      inputSchema: CLOSE_PROBLEM_INPUT_SCHEMA,
+      outputSchema: CLOSE_PROBLEM_OUTPUT_SCHEMA
+    },
+    async (args, extra) => resultOf(await handleCloseProblem(extra?.mcpReq, options, args))
+  );
   return server;
 }
 async function main() {
@@ -23089,6 +23700,9 @@ if (isEntrypoint()) {
   await main();
 }
 export {
+  ADD_EVENT_OUTPUT_SCHEMA,
+  ADD_VERIFICATION_OUTPUT_SCHEMA,
+  CLOSE_PROBLEM_OUTPUT_SCHEMA,
   CONTINUE_PROBLEM_OUTPUT_SCHEMA,
   CURRENT_PROBLEM_OUTPUT_SCHEMA,
   RECALL_SIMILAR_EXPERIENCE_OUTPUT_SCHEMA,
@@ -23097,6 +23711,9 @@ export {
   START_PROBLEM_OUTPUT_SCHEMA,
   buildMemoryMcpServer,
   classify,
+  handleAddEvent,
+  handleAddVerification,
+  handleCloseProblem,
   handleContinueProblem,
   handleCurrentProblem,
   handleRecallSimilarExperience,
