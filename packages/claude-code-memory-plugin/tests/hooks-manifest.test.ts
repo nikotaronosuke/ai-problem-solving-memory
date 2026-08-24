@@ -55,18 +55,36 @@ describe('the shipped hook manifest', () => {
   it('runs the same hook for every one of them', async () => {
     const entries = (await manifest()).hooks.PreToolUse;
 
+    const first = entries[0]?.hooks[0];
+    expect(first).toBeDefined();
     for (const entry of entries) {
       expect(entry.hooks).toHaveLength(1);
       // One implementation, so the tools cannot come to disagree about what a
       // call context is.
-      expect(entry.hooks[0]).toEqual({
-        type: 'command',
-        // The committed distribution bundle, not the workspace build output:
-        // an installed copy has only the former.
-        command: 'node "${CLAUDE_PLUGIN_ROOT}/bundle/pre-tool-use.js"',
-        timeout: 15,
-      });
+      expect(entry.hooks[0]).toEqual(first);
     }
+
+    // The command is an environment-reading launcher, because neither host
+    // expands a placeholder in a hook command line (measured on the real
+    // Codex host; see D-479). It must read the installed root from the
+    // host-supplied variable, run the committed distribution bundle — not the
+    // workspace build output, which an installed copy does not have — through
+    // its exported process entry, and fail closed as a deny rather than as a
+    // spawn error.
+    const command = first!.command;
+    expect(first!.type).toBe('command');
+    expect(first!.timeout).toBe(15);
+    expect(command.startsWith('node -e "')).toBe(true);
+    expect(command).toContain('process.env.CLAUDE_PLUGIN_ROOT');
+    expect(command).toContain("join(root,'bundle','pre-tool-use.js')");
+    expect(command).toContain('runHookProcess()');
+    expect(command).toContain("permissionDecision:'deny'");
+    // No placeholder of any spelling: expansion is exactly what real hosts
+    // were measured not to do.
+    expect(command).not.toContain('${');
+    // The program is shell-safe on both hosts: the only double quotes are the
+    // two wrapping the -e argument itself.
+    expect(command.split('"')).toHaveLength(3);
   });
 
   it('leaves no tool of ours unhooked', async () => {

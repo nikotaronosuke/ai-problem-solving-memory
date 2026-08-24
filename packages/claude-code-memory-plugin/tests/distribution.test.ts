@@ -95,9 +95,20 @@ describe('a plugin directory copied away from the repository', () => {
   it('points its runtime only at paths inside itself', async () => {
     const mcp = await readFile(join(installed, '.mcp.json'), 'utf8');
     const hooks = await readFile(join(installed, 'hooks/hooks.json'), 'utf8');
+    const codex = await readFile(join(installed, '.codex-plugin/plugin.json'), 'utf8');
 
-    for (const configuration of [mcp, hooks]) {
-      expect(configuration).toContain('${CLAUDE_PLUGIN_ROOT}/bundle/');
+    // Claude's MCP config resolves the plugin root through the placeholder
+    // that host substitutes; the Codex manifest resolves it as `cwd: "."`
+    // with a root-relative bundle path, because that host substitutes
+    // nothing (D-479); and the hook command reads the root from the
+    // environment both hosts supply, for the same reason.
+    expect(mcp).toContain('${CLAUDE_PLUGIN_ROOT}/bundle/');
+    expect(codex).toContain('"bundle/server.js"');
+    expect(codex).toContain('"cwd": "."');
+    expect(hooks).toContain('process.env.CLAUDE_PLUGIN_ROOT');
+    expect(hooks).toContain("'bundle','pre-tool-use.js'");
+
+    for (const configuration of [mcp, hooks, codex]) {
       // `dist/` is development build output and is not part of a release; a
       // path leaving the plugin root cannot survive the copy at all.
       expect(`reaches for dist:${configuration.includes('/dist/')}`).toBe('reaches for dist:false');

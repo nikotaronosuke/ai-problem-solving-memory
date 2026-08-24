@@ -11,8 +11,8 @@ var __export = (target, all) => {
 };
 
 // src/server.ts
-import { realpathSync } from "node:fs";
-import { isAbsolute as isAbsolute5, join as join4 } from "node:path";
+import { realpathSync as realpathSync2 } from "node:fs";
+import { isAbsolute as isAbsolute6, join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ../memory-api-client/src/config.ts
@@ -23147,6 +23147,65 @@ async function startFreshProblem(context) {
   } : { kind: "RECONSIDER", reason: outcome.reason, candidates: outcome.candidates };
 }
 
+// src/state-dir-pointer.ts
+import { createHash as createHash5, randomUUID as randomUUID3 } from "node:crypto";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute as isAbsolute5, join as join4 } from "node:path";
+var STATE_DIR_POINTER_FORMAT = 1;
+function stateDirPointerDirectory(home = homedir()) {
+  return join4(home, ".ai-problem-solving-memory", "state-dir-pointers");
+}
+function normalisedRootOf(pluginRoot) {
+  if (typeof pluginRoot !== "string" || pluginRoot.length === 0 || !isAbsolute5(pluginRoot)) {
+    return void 0;
+  }
+  try {
+    return realpathSync(pluginRoot).replaceAll("\\", "/").toLowerCase();
+  } catch {
+    return void 0;
+  }
+}
+function stateDirPointerPathFor(pluginRoot, home) {
+  const normalised = normalisedRootOf(pluginRoot);
+  if (normalised === void 0) {
+    return void 0;
+  }
+  const key = createHash5("sha256").update(normalised, "utf8").digest("hex");
+  return join4(stateDirPointerDirectory(home), `${key}.json`);
+}
+function readStateDirPointerForInstalledRoot() {
+  return readStateDirPointer(process.cwd());
+}
+function readStateDirPointer(pluginRoot, home) {
+  const normalised = normalisedRootOf(pluginRoot);
+  const target = stateDirPointerPathFor(pluginRoot, home);
+  if (normalised === void 0 || target === void 0) {
+    return void 0;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(target, "utf8"));
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return void 0;
+  }
+  const record2 = parsed;
+  if (record2["state_dir_pointer_format"] !== STATE_DIR_POINTER_FORMAT) {
+    return void 0;
+  }
+  if (record2["plugin_root"] !== normalised) {
+    return void 0;
+  }
+  const stateDirectory = record2["state_directory"];
+  if (typeof stateDirectory !== "string" || stateDirectory.length === 0 || !isAbsolute5(stateDirectory)) {
+    return void 0;
+  }
+  return stateDirectory;
+}
+
 // src/server.ts
 var PROJECT_DECISION_SCHEMA = discriminatedUnion("kind", [
   object({ kind: literal("SELECT_EXISTING"), project_id: string2().min(1) }).strict(),
@@ -23375,12 +23434,16 @@ function classify(error2) {
   }
   return "INTERNAL_INVARIANT";
 }
-function runtimeStatePathsOf(environment) {
+function runtimeStatePathsOf(environment, readOwnPointer = readStateDirPointerForInstalledRoot) {
   const pluginData = environment[PLUGIN_DATA_ENV];
-  if (pluginData === void 0 || !isAbsolute5(pluginData)) {
+  if (pluginData !== void 0) {
+    return isAbsolute6(pluginData) ? { pluginData } : void 0;
+  }
+  const pointed = readOwnPointer();
+  if (pointed === void 0 || !isAbsolute6(pointed)) {
     return void 0;
   }
-  return { pluginData };
+  return { pluginData: pointed };
 }
 function resultOf(outcome) {
   const text = outcome.kind === "ERROR" ? `ERROR ${outcome.code}` : outcome.kind;
@@ -23400,7 +23463,7 @@ async function serveAuthenticated(request, options, tool, work) {
     return { kind: "ERROR", code: "HOST_CONTEXT_UNAVAILABLE" };
   }
   const claim = await claimCallContext({
-    directory: join4(paths.pluginData, CALL_CONTEXT_DIRECTORY),
+    directory: join5(paths.pluginData, CALL_CONTEXT_DIRECTORY),
     hostCallId,
     toolNames: hostToolNames(tool),
     now: options.now()
@@ -23416,7 +23479,7 @@ async function serveAuthenticated(request, options, tool, work) {
   try {
     const client = createClaudeCodeMemoryClient(options.environment);
     const bindingStore = createProblemBindingStore({
-      directory: join4(paths.pluginData, BINDINGS_DIRECTORY)
+      directory: join5(paths.pluginData, BINDINGS_DIRECTORY)
     });
     return await work({
       client,
@@ -23548,7 +23611,7 @@ async function handleRecallSimilarExperience(request, options, input) {
       fingerprintStore: createRecallFingerprintStore({
         // The call's own validated directory, not a second reading of the
         // environment. See `AuthenticatedCall.pluginData`.
-        directory: join4(call.pluginData, RECALL_FINGERPRINT_DIRECTORY)
+        directory: join5(call.pluginData, RECALL_FINGERPRINT_DIRECTORY)
       }),
       sessionId: call.sessionId,
       projectDir: call.projectDir,
@@ -23789,7 +23852,7 @@ async function main() {
   const paths = runtimeStatePathsOf(process.env);
   if (paths !== void 0) {
     await sweepCallContexts({
-      directory: join4(paths.pluginData, CALL_CONTEXT_DIRECTORY),
+      directory: join5(paths.pluginData, CALL_CONTEXT_DIRECTORY),
       now: Date.now()
     }).catch(() => void 0);
   }
@@ -23801,7 +23864,7 @@ function isEntrypoint() {
     return false;
   }
   try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+    return realpathSync2(entry) === realpathSync2(fileURLToPath(import.meta.url));
   } catch {
     return false;
   }

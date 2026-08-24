@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-memory-plugin",
+  "name": "problem-solving-memory",
   "version": "0.0.0",
   "description": "Shares one authoritative Problem and its typed evidence across supported AI coding hosts.",
   "author": {
@@ -8,7 +8,14 @@
   "repository": "https://github.com/nikotaronosuke/ai-problem-solving-memory",
   "license": "MIT",
   "keywords": ["mcp", "problem-solving", "memory", "codex"],
-  "mcpServers": "./.mcp.json",
+  "mcpServers": {
+    "memory": {
+      "command": "node",
+      "args": ["bundle/server.js"],
+      "cwd": ".",
+      "env_vars": ["MEMORY_API_URL", "MEMORY_API_TOKEN"]
+    }
+  },
   "interface": {
     "displayName": "Problem-Solving Memory",
     "shortDescription": "Continue the same verified Problem across AI coding sessions.",
