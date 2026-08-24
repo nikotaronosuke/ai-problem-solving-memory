@@ -106,6 +106,7 @@ import {
   runtimeHostOf,
   type MemoryTool,
 } from './runtime-constants.js';
+import { readStateDirPointerForInstalledRoot } from './state-dir-pointer.js';
 
 /**
  * An answer to a Project question, in the smallest form that carries it.
@@ -541,14 +542,35 @@ export interface RuntimeStatePaths {
  * against this process's working directory, which is exactly the thing a
  * Project must never be anchored on.
  */
+/**
+ * The fallback half of state-path resolution: the state-directory pointer for
+ * the installation this process belongs to, or nothing. Injectable so a test
+ * can stand anywhere; the real one is the pointer module's own reader, which
+ * is the single place an installed-root identity may come from.
+ */
+export type ReadOwnStateDirPointer = () => string | undefined;
+
 export function runtimeStatePathsOf(
   environment: Record<string, string | undefined>,
+  readOwnPointer: ReadOwnStateDirPointer = readStateDirPointerForInstalledRoot,
 ): RuntimeStatePaths | undefined {
   const pluginData = environment[PLUGIN_DATA_ENV];
-  if (pluginData === undefined || !isAbsolute(pluginData)) {
+  if (pluginData !== undefined) {
+    // The trusted environment remains first and final: a host that set the
+    // variable said where the state is, and a value it got wrong is a refusal,
+    // never a reason to go looking somewhere else.
+    return isAbsolute(pluginData) ? { pluginData } : undefined;
+  }
+  // No environment at all is the measured Codex shape: its MCP child receives
+  // no host variables, so the hook recorded where the host put the state,
+  // keyed by the installed root this process was started in (`cwd: "."`).
+  // The pointer module fails closed on everything malformed or foreign; a
+  // relative answer is refused here for the same reason the variable is.
+  const pointed = readOwnPointer();
+  if (pointed === undefined || !isAbsolute(pointed)) {
     return undefined;
   }
-  return { pluginData };
+  return { pluginData: pointed };
 }
 
 export function resultOf(outcome: ToolResult): {

@@ -6,8 +6,8 @@
 // type checker, the linter and every test in this repository.
 
 // src/pre-tool-use.ts
-import { realpathSync } from "node:fs";
-import { isAbsolute as isAbsolute2, join as join2 } from "node:path";
+import { realpathSync as realpathSync2 } from "node:fs";
+import { isAbsolute as isAbsolute3, join as join3 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/host-call-context.ts
@@ -117,8 +117,65 @@ async function sweepCallContexts(options) {
   }
 }
 
+// src/state-dir-pointer.ts
+import { createHash as createHash2, randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute as isAbsolute2, join as join2 } from "node:path";
+var STATE_DIR_POINTER_FORMAT = 1;
+function stateDirPointerDirectory(home = homedir()) {
+  return join2(home, ".ai-problem-solving-memory", "state-dir-pointers");
+}
+function normalisedRootOf(pluginRoot) {
+  if (typeof pluginRoot !== "string" || pluginRoot.length === 0 || !isAbsolute2(pluginRoot)) {
+    return void 0;
+  }
+  try {
+    return realpathSync(pluginRoot).replaceAll("\\", "/").toLowerCase();
+  } catch {
+    return void 0;
+  }
+}
+function stateDirPointerPathFor(pluginRoot, home) {
+  const normalised = normalisedRootOf(pluginRoot);
+  if (normalised === void 0) {
+    return void 0;
+  }
+  const key = createHash2("sha256").update(normalised, "utf8").digest("hex");
+  return join2(stateDirPointerDirectory(home), `${key}.json`);
+}
+function writeStateDirPointer(options) {
+  const normalised = normalisedRootOf(options.pluginRoot);
+  const target = stateDirPointerPathFor(options.pluginRoot, options.home);
+  if (normalised === void 0 || target === void 0) {
+    return false;
+  }
+  if (typeof options.stateDirectory !== "string" || options.stateDirectory.length === 0 || !isAbsolute2(options.stateDirectory)) {
+    return false;
+  }
+  const record = {
+    state_dir_pointer_format: STATE_DIR_POINTER_FORMAT,
+    plugin_root: normalised,
+    state_directory: options.stateDirectory
+  };
+  const temporary = `${target}.tmp-${randomUUID()}`;
+  try {
+    mkdirSync(stateDirPointerDirectory(options.home), { recursive: true });
+    writeFileSync(temporary, JSON.stringify(record), "utf8");
+    renameSync(temporary, target);
+    return true;
+  } catch {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+    }
+    return false;
+  }
+}
+
 // src/pre-tool-use.ts
 var HOST_PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
+var HOST_PLUGIN_ROOT_ENV = "CLAUDE_PLUGIN_ROOT";
 var REASONS = {
   ALLOW: "Memory has the session context for this call.",
   SUBAGENT: "Memory works in the main session only.",
@@ -151,14 +208,18 @@ async function runPreToolUse(event, environment, now) {
   const sessionId = input["session_id"];
   const hostCallId = input["tool_use_id"];
   const currentDirectory = input["cwd"];
-  if (!isNonBlank(sessionId) || !isNonBlank(hostCallId) || !isNonBlank(currentDirectory) || !isAbsolute2(currentDirectory)) {
+  if (!isNonBlank(sessionId) || !isNonBlank(hostCallId) || !isNonBlank(currentDirectory) || !isAbsolute3(currentDirectory)) {
     return decide("deny", REASONS.UNUSABLE);
   }
   const pluginData = environment[HOST_PLUGIN_DATA_ENV];
   if (!isNonBlank(pluginData)) {
     return decide("deny", REASONS.UNUSABLE);
   }
-  const directory = join2(pluginData, CALL_CONTEXT_DIRECTORY);
+  const pluginRoot = environment[HOST_PLUGIN_ROOT_ENV];
+  if (isNonBlank(pluginRoot) && isAbsolute3(pluginRoot) && isAbsolute3(pluginData)) {
+    writeStateDirPointer({ pluginRoot, stateDirectory: pluginData });
+  }
+  const directory = join3(pluginData, CALL_CONTEXT_DIRECTORY);
   await sweepCallContexts({ directory, now });
   const minted = await mintCallContext({
     directory,
@@ -180,7 +241,7 @@ async function readEvent() {
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
-async function main() {
+async function runHookProcess() {
   let decision;
   try {
     decision = await runPreToolUse(await readEvent(), process.env, Date.now());
@@ -195,14 +256,15 @@ function isEntrypoint() {
     return false;
   }
   try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+    return realpathSync2(entry) === realpathSync2(fileURLToPath(import.meta.url));
   } catch {
     return false;
   }
 }
 if (isEntrypoint()) {
-  await main();
+  await runHookProcess();
 }
 export {
+  runHookProcess,
   runPreToolUse
 };

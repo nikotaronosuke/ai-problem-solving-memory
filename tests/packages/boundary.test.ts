@@ -636,12 +636,27 @@ describe('the Claude adapter', () => {
 
     // And no second-best source either. `process.cwd()` is where this process
     // happens to be, which is not where the session is; a directory chosen by
-    // the model is a claim about a machine it cannot see.
+    // the model is a claim about a machine it cannot see. One carve-out, as
+    // narrow as its reason: the state-dir-pointer module reads the process
+    // directory exactly once, as the *installed plugin root* the Codex host
+    // resolves `cwd: "."` to — an installation identity fixed at spawn, keyed
+    // into the pointer lookup and nothing else (D-479). It is asserted below
+    // to exist exactly there, exactly once, so it cannot quietly spread.
+    const nonPointerSources = shipped
+      .filter((file) => file.path.startsWith('src/') && file.path !== 'src/state-dir-pointer.ts')
+      .map((file) => `${file.path}\n${codeOnly(file.source)}`)
+      .join('\n');
     for (const forbidden of ['process.cwd(', 'tool_input']) {
-      expect(`the runtime source reaches for ${forbidden}:${sources.includes(forbidden)}`).toBe(
-        `the runtime source reaches for ${forbidden}:false`,
-      );
+      expect(
+        `the runtime source reaches for ${forbidden}:${nonPointerSources.includes(forbidden)}`,
+      ).toBe(`the runtime source reaches for ${forbidden}:false`);
     }
+    expect(`the model chooses a directory:${sources.includes('tool_input')}`).toBe(
+      'the model chooses a directory:false',
+    );
+    const pointerSource = shipped.find((file) => file.path === 'src/state-dir-pointer.ts');
+    expect(pointerSource).toBeDefined();
+    expect(codeOnly(pointerSource!.source).split('process.cwd(')).toHaveLength(2);
 
     // What it does read: the host's own directory for this call, carried in
     // the record the hook minted.
@@ -657,11 +672,17 @@ describe('the Claude adapter', () => {
     // An install copies this directory and nothing around it, so a path that
     // leaves it is a plugin that works here and nowhere else. `dist/` is the
     // ordinary TypeScript build output and is not part of a release at all.
+    // Claude's MCP config resolves the plugin root through the placeholder
+    // that host substitutes; the hook command reads the same root from the
+    // environment both hosts supply, because neither host expands a
+    // placeholder in a hook command line (D-479).
+    expect(mcp).toContain('${CLAUDE_PLUGIN_ROOT}/bundle/');
+    expect(hooks).toContain('process.env.CLAUDE_PLUGIN_ROOT');
+    expect(hooks).toContain("'bundle','pre-tool-use.js'");
     for (const [what, configuration] of [
       ['the MCP configuration', mcp],
       ['the hook configuration', hooks],
     ] as const) {
-      expect(configuration).toContain('${CLAUDE_PLUGIN_ROOT}/bundle/');
       expect(`${what} runs from dist:${configuration.includes('/dist/')}`).toBe(
         `${what} runs from dist:false`,
       );
@@ -786,6 +807,12 @@ describe('the Claude adapter', () => {
         'src/db',
         'node:sqlite',
       ]) {
+        // The one documented exception: the pointer module's single read of
+        // the installed plugin root, held to exactly one occurrence by the
+        // location test above (D-479).
+        if (path === 'src/state-dir-pointer.ts' && forbidden === 'process.cwd') {
+          continue;
+        }
         expect(`${path} reaches for ${forbidden}:${code.includes(forbidden)}`).toBe(
           `${path} reaches for ${forbidden}:false`,
         );

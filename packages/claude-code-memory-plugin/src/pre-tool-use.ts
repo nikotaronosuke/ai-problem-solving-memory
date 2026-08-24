@@ -36,9 +36,17 @@ import { fileURLToPath } from 'node:url';
 
 import { mintCallContext, sweepCallContexts } from './host-call-context.js';
 import { CALL_CONTEXT_DIRECTORY, HOST_TOOL_NAMES } from './runtime-constants.js';
+import { writeStateDirPointer } from './state-dir-pointer.js';
 
 /** The host's variable, read here because a hook is a host process. */
 const HOST_PLUGIN_DATA_ENV = 'CLAUDE_PLUGIN_DATA';
+
+/**
+ * The installed plugin root, read here for exactly one purpose: keying the
+ * state-directory pointer. Measured present in hook processes on both
+ * supported hosts. It decides nothing about the call.
+ */
+const HOST_PLUGIN_ROOT_ENV = 'CLAUDE_PLUGIN_ROOT';
 
 /** What the hook decided, in the host's own vocabulary. */
 export interface PreToolUseDecision {
@@ -130,6 +138,16 @@ export async function runPreToolUse(
     return decide('deny', REASONS.UNUSABLE);
   }
 
+  // The state-directory bridge, for the host whose MCP child receives no
+  // environment: record where this host put the state, keyed by the installed
+  // root both processes can derive. Best-effort by design — on the host that
+  // does not need it nothing reads it, and on the host that does, a missing
+  // record fails closed at the server rather than changing this decision.
+  const pluginRoot = environment[HOST_PLUGIN_ROOT_ENV];
+  if (isNonBlank(pluginRoot) && isAbsolute(pluginRoot) && isAbsolute(pluginData)) {
+    writeStateDirPointer({ pluginRoot, stateDirectory: pluginData });
+  }
+
   const directory = join(pluginData, CALL_CONTEXT_DIRECTORY);
 
   // Litter from calls that were denied or refused before their handler ran.
@@ -163,7 +181,16 @@ async function readEvent(): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-async function main(): Promise<void> {
+/**
+ * The whole hook process: read the host's event, decide, print the decision.
+ *
+ * Exported because the shipped hook command is an environment-reading
+ * launcher: neither host expands a placeholder in a hook command line, so the
+ * command imports this bundle from `CLAUDE_PLUGIN_ROOT` and calls this — and
+ * an import does not satisfy the entrypoint check below, which exists so that
+ * tests can import this module without reading standard input.
+ */
+export async function runHookProcess(): Promise<void> {
   let decision: PreToolUseDecision;
   try {
     decision = await runPreToolUse(await readEvent(), process.env, Date.now());
@@ -195,5 +222,5 @@ function isEntrypoint(): boolean {
 }
 
 if (isEntrypoint()) {
-  await main();
+  await runHookProcess();
 }
