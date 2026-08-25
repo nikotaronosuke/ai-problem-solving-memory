@@ -92,6 +92,7 @@ function searched(candidates: RetrievalMemoryCandidate[] = []): RetrievalSearchO
     candidates,
     semanticStatus: 'USED',
     structuralStatus: 'USED',
+    lexicalRelaxed: false,
   };
 }
 
@@ -483,6 +484,7 @@ describe('how a search outcome becomes a response', () => {
         candidates: [],
         semanticStatus: 'PROVIDER_UNAVAILABLE',
         structuralStatus: 'RERANKER_UNAVAILABLE',
+        lexicalRelaxed: false,
       }),
     );
 

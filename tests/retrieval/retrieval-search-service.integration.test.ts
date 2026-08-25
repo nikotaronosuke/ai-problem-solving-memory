@@ -2138,6 +2138,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
           ],
           semanticStatus: 'USED',
           structuralStatus: 'RERANKER_UNAVAILABLE',
+          lexicalRelaxed: false,
         });
       } catch (error) {
         raised = error;
@@ -2171,6 +2172,7 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
         candidates: [],
         semanticStatus: 'USED',
         structuralStatus: 'USED',
+        lexicalRelaxed: false,
       });
 
       expect(await usageLogsOf(owner.ownerId)).toHaveLength(0);

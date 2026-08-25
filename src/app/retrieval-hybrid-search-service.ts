@@ -107,6 +107,12 @@ export type SemanticChannelStatus = (typeof SEMANTIC_CHANNEL_STATUSES)[number];
 export interface HybridSearchResult {
   readonly candidates: readonly HybridCandidate[];
   readonly semanticStatus: SemanticChannelStatus;
+  /**
+   * Whether the lexical answer came from the relaxed fallback rather than
+   * the strict pass. Internal provenance for the usage record; it changes
+   * nothing downstream and never reaches a response contract.
+   */
+  readonly lexicalRelaxed: boolean;
 }
 
 export interface RetrievalHybridSearchService {
@@ -204,7 +210,7 @@ export function createRetrievalHybridSearchService(
       // round trip and the lexical channel is a single statement. Neither
       // holds a transaction, so there is no connection pinned across the wait.
       const [lexicalSettled, semanticSettled] = await Promise.allSettled([
-        lexicalReader.searchFullText(lexicalQuery),
+        lexicalReader.searchFullTextWithFallback(lexicalQuery),
         vectorService.search(semanticQuery),
       ]);
 
@@ -216,7 +222,8 @@ export function createRetrievalHybridSearchService(
           ? lexicalSettled.reason
           : new Error('The lexical search failed.');
       }
-      const lexicalCandidates: readonly FullTextCandidate[] = lexicalSettled.value;
+      const lexicalCandidates: readonly FullTextCandidate[] = lexicalSettled.value.candidates;
+      const lexicalRelaxed = lexicalSettled.value.mode === 'RELAXED';
 
       let vectorCandidates: readonly VectorCandidate[] = [];
       let semanticStatus: SemanticChannelStatus = 'USED';
@@ -246,6 +253,7 @@ export function createRetrievalHybridSearchService(
       return {
         candidates: fuseHybridCandidates(lexicalCandidates, vectorCandidates, limit),
         semanticStatus,
+        lexicalRelaxed,
       };
     },
   };

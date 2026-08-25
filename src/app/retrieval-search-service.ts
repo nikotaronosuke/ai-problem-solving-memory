@@ -135,6 +135,12 @@ export type RetrievalSearchOutcome =
       readonly candidates: readonly RetrievalMemoryCandidate[];
       readonly semanticStatus: SemanticChannelStatus;
       readonly structuralStatus: StructuralRerankStatus;
+      /**
+       * Whether the lexical channel answered through the relaxed fallback.
+       * Provenance for the usage record only: it is not part of any response
+       * contract and no transport maps it.
+       */
+      readonly lexicalRelaxed: boolean;
     }
   | {
       /** Unknown, deleted, or another owner's. One answer for all three. */
@@ -252,6 +258,7 @@ export function createRetrievalSearchService(
     currentProjectId: ProjectId,
     reranked: StructuralRerankResult,
     semanticStatus: SemanticChannelStatus,
+    lexicalRelaxed: boolean,
   ): Promise<RetrievalSearchOutcome> {
     const ranked = await rankingService.rank({ currentProjectId, structuralResult: reranked });
     // Each stage adds one thing and may drop a Memory that has gone since the
@@ -272,6 +279,7 @@ export function createRetrievalSearchService(
       candidates: await conflictService.enrich(withDirections),
       semanticStatus,
       structuralStatus: ranked.structuralStatus,
+      lexicalRelaxed,
     };
   }
 
@@ -312,6 +320,7 @@ export function createRetrievalSearchService(
         candidates: outcome.candidates.map((candidate) => candidate.ranking),
         semanticStatus: outcome.semanticStatus,
         structuralStatus: outcome.structuralStatus,
+        lexicalRelaxed: outcome.lexicalRelaxed,
       });
     } catch {
       // Whatever it threw stops here. The count is a number this code chose;
@@ -386,8 +395,10 @@ export function createRetrievalSearchService(
       if (cached !== undefined) {
         // Everything expensive skipped, and everything editable re-read. The
         // semantic status is known without being stored: only a search whose
-        // semantic half ran normally was ever eligible to be here.
-        const reused = await rankAndReport(before.projectId, cached, 'USED');
+        // semantic half ran normally was ever eligible to be here. The same
+        // holds for the lexical mode — a relaxed search is never cached — so
+        // `false` is a fact about every entry, not a guess about this one.
+        const reused = await rankAndReport(before.projectId, cached, 'USED', false);
         // A reused search is still a search. The same Memories were offered
         // again, to whoever is searching now, and that is a second observation
         // rather than a repeat of the first.
@@ -438,12 +449,20 @@ export function createRetrievalSearchService(
       // Ranking first, then the cache. A ranking failure means the search did
       // not complete, and a result stored before the last stage succeeded
       // would be a partial answer with a five-minute life.
-      const outcome = await rankAndReport(after.projectId, reranked, hybrid.semanticStatus);
+      const outcome = await rankAndReport(
+        after.projectId,
+        reranked,
+        hybrid.semanticStatus,
+        hybrid.lexicalRelaxed,
+      );
 
       // Only now, and only for a search that ran cleanly end to end. A
       // degraded outcome cached here would keep a provider outage or a skipped
       // credential frozen in place for five minutes after the cause was gone.
-      if (isCacheable(hybrid.semanticStatus, reranked.status)) {
+      // A relaxed lexical answer is deliberately not cached either: every
+      // cached entry being a strict one is what lets the reuse path above
+      // state its lexical mode as a fact rather than store one more field.
+      if (!hybrid.lexicalRelaxed && isCacheable(hybrid.semanticStatus, reranked.status)) {
         cache.set(key, reranked);
       }
 

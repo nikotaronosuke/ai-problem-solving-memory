@@ -195,6 +195,7 @@ function resolverLosingItsUsageRecord(): RetrievalSearchServiceResolver {
             candidates: [],
             semanticStatus: 'USED',
             structuralStatus: 'USED',
+            lexicalRelaxed: false,
           } as const),
       } as RetrievalSearchService);
     },

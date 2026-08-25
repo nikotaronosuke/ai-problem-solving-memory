@@ -290,6 +290,10 @@ describe.skipIf(databaseUrl === undefined)('hybrid candidate retrieval', () => {
           lexicalCalls += 1;
           return owner.lexical.searchFullText(query);
         },
+        searchFullTextWithFallback: (query) => {
+          lexicalCalls += 1;
+          return owner.lexical.searchFullTextWithFallback(query);
+        },
       };
       const hybrid = createRetrievalHybridSearchService(
         countingLexical,
@@ -681,6 +685,7 @@ describe.skipIf(databaseUrl === undefined)('hybrid candidate retrieval', () => {
       const exploding: RetrievalSearchReader = {
         ownerId: owner.ownerId,
         searchFullText: () => Promise.reject(new Error('the lexical statement failed')),
+        searchFullTextWithFallback: () => Promise.reject(new Error('the lexical statement failed')),
       };
 
       const hybrid = createRetrievalHybridSearchService(
@@ -731,6 +736,10 @@ describe.skipIf(databaseUrl === undefined)('hybrid candidate retrieval', () => {
         searchFullText: (query) => {
           depths.push(query.limit ?? -1);
           return owner.lexical.searchFullText(query);
+        },
+        searchFullTextWithFallback: (query) => {
+          depths.push(query.limit ?? -1);
+          return owner.lexical.searchFullTextWithFallback(query);
         },
       };
       const hybrid = createRetrievalHybridSearchService(

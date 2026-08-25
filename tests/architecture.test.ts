@@ -3413,7 +3413,7 @@ describe('search caching', () => {
     // answer would rest on a contradiction, and the ranking uses the second
     // read's value.
     expect(code).toContain('after.projectId !== before.projectId');
-    expect(code).toContain('rankAndReport(after.projectId');
+    expect(code).toMatch(/rankAndReport\(\s*after\.projectId/);
   });
 
   it('reads the Problem again before it keeps anything', async () => {
@@ -3448,7 +3448,7 @@ describe('search caching', () => {
     ]) {
       expect(eligible.includes(degraded), `a ${degraded} search is kept`).toBe(false);
     }
-    expect(code).toContain('if (isCacheable(');
+    expect(code).toContain('if (!hybrid.lexicalRelaxed && isCacheable(');
 
     // And only after the last stage has succeeded. A result stored before
     // ranking ran would be a partial answer with a five-minute life.
@@ -4390,7 +4390,7 @@ describe('dead ends', () => {
     for (const enrichment of ['deadEnd', 'DeadEnd', 'warning']) {
       expect(key.includes(enrichment), `the cache stores ${enrichment}`).toBe(false);
     }
-    const reported = code.indexOf('await rankAndReport(after.projectId');
+    const reported = code.search(/await rankAndReport\(\s*after\.projectId/);
     const stored = code.indexOf('cache.set(key, reranked)');
     expect(reported).toBeGreaterThan(-1);
     expect(stored).toBeGreaterThan(reported);
@@ -4818,7 +4818,7 @@ describe('conflicts', () => {
     // this stage: a result stored before the last stage succeeded would be a
     // partial answer with a five-minute life, and the log must describe what
     // was offered, which is not known until the drops here have happened.
-    const reported = code.indexOf('await rankAndReport(after.projectId');
+    const reported = code.search(/await rankAndReport\(\s*after\.projectId/);
     const stored = code.indexOf('cache.set(key, reranked)');
     expect(reported).toBeGreaterThan(-1);
     expect(stored).toBeGreaterThan(reported);
@@ -5142,7 +5142,7 @@ describe('successful directions', () => {
       expect(key.includes(enrichment), `the cache stores ${enrichment}`).toBe(false);
     }
 
-    const reported = code.indexOf('await rankAndReport(after.projectId');
+    const reported = code.search(/await rankAndReport\(\s*after\.projectId/);
     expect(code.indexOf('cache.set(key, reranked)')).toBeGreaterThan(reported);
     expect(code).toContain('await recordSurfaced(request.currentProblemId, sourceAi, outcome)');
   });
