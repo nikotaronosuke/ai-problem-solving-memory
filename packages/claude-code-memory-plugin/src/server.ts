@@ -584,12 +584,17 @@ export function resultOf(outcome: ToolResult): {
   structuredContent: ToolResult;
   isError?: boolean;
 } {
-  // The text says the category and repeats nothing. A client reads the
-  // structured half; a person reading a transcript needs one word. Exported so
-  // that this — what a transcript ends up holding — is asserted directly.
-  const text = outcome.kind === 'ERROR' ? `ERROR ${outcome.code}` : outcome.kind;
+  // One semantic payload, twice: `structuredContent` stays the canonical
+  // machine-readable result, and the text block carries the same object
+  // serialized — the Streamable-HTTP-era compatibility shape the MCP spec
+  // recommends, because a host is free to show its model only the text
+  // blocks, and one measured host (claude.ai) does exactly that (D-487).
+  // The text used to be the kind alone; that brevity cost a spec-permissible
+  // client every field of every answer, so compatibility now outranks
+  // transcript terseness. Nothing new is serialized here: the outcome is
+  // already the sanitized, schema-bound object the structured half publishes.
   return {
-    content: [{ type: 'text', text }],
+    content: [{ type: 'text', text: JSON.stringify(outcome) }],
     structuredContent: outcome,
     ...(outcome.kind === 'ERROR' ? { isError: true } : {}),
   };
