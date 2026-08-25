@@ -201,9 +201,11 @@ describe.skipIf(databaseUrl === undefined)('the production retrieval runtime', (
     }
     runtime = createRetrievalRuntime({
       pool,
-      summaryGenerator: configured.summaryGenerator,
-      embeddingProvider: configured.embeddingProvider,
-      generationProfile: configured.generationProfile,
+      providers: {
+        summaryGenerator: configured.summaryGenerator,
+        embeddingProvider: configured.embeddingProvider,
+        generationProfile: configured.generationProfile,
+      },
       // Scoped to this file's owners: the database is shared with every
       // other suite in the run, and an unscoped sweep would write artifacts
       // into their fixtures mid-flight. Production keeps the default —
@@ -314,7 +316,7 @@ describe.skipIf(databaseUrl === undefined)('the production retrieval runtime', (
     expect(artifact).toBeDefined();
     expect(artifact?.normalizedSummary).toBe(`a rendering mentioning ${marker}`);
     expect(artifact?.summaryGeneratorId).toBe('openai-responses:gpt-5.6-terra');
-    expect(artifact?.embeddingModel).toBe('text-embedding-3-large');
+    expect(artifact?.semantic?.embeddingModel).toBe('text-embedding-3-large');
     expect(artifact?.sourceFingerprint.startsWith('retrieval-source-v1:')).toBe(true);
 
     // The provider saw the canonical source — and only the canonical source:
@@ -331,12 +333,19 @@ describe.skipIf(databaseUrl === undefined)('the production retrieval runtime', (
     const marker = `marker-${randomUUID().slice(0, 8)}`;
 
     openai.state.failing = true;
-    // The write succeeds — the doorbell's dispatch fails in the background.
+    // The write succeeds — and the provider failure costs the enhancement,
+    // never the artifact: the deterministic rendering stands in immediately,
+    // under its own honest identity and with no vector.
     const problemId = await makeProblem(actor, marker);
     await runtime.settled();
-    expect(await actor.artifacts.getArtifact(problemId as never)).toBeUndefined();
+    const during = await actor.artifacts.getArtifact(problemId as never);
+    expect(during?.summaryGeneratorId).toBe('deterministic');
+    expect(during?.semantic).toBeNull();
+    expect(during?.normalizedSummary).toContain(marker);
 
-    // The provider recovers; the periodic sweep is the retry policy.
+    // The provider recovers; the periodic sweep is the upgrade policy — the
+    // deterministic row fails the semantic profile's embedding expectations
+    // and is regenerated richer.
     openai.state.failing = false;
     await runtime.sweep();
     await runtime.settled();
@@ -344,6 +353,7 @@ describe.skipIf(databaseUrl === undefined)('the production retrieval runtime', (
     const artifact = await actor.artifacts.getArtifact(problemId as never);
     expect(artifact).toBeDefined();
     expect(artifact?.normalizedSummary).toBe(`a rendering mentioning ${marker}`);
+    expect(artifact?.semantic).not.toBeNull();
   });
 
   it('backfills existing Problems for every owner, without a manual step', async () => {
@@ -472,8 +482,14 @@ describe.skipIf(databaseUrl === undefined)('the production retrieval runtime', (
     await runtime.sweep();
     await runtime.settled();
 
+    // The provider never saw it, and nothing regenerated it: the
+    // deterministic stand-in from before the toggle is exactly as it was —
+    // never upgraded — and every artifact-backed search statement excludes a
+    // read-disabled Problem's row at the query itself.
     expect(openai.state.summaryBodies.length).toBe(before);
-    expect(await actor.artifacts.getArtifact(problemId as never)).toBeUndefined();
+    const artifact = await actor.artifacts.getArtifact(problemId as never);
+    expect(artifact?.summaryGeneratorId).toBe('deterministic');
+    expect(artifact?.semantic).toBeNull();
   });
 
   it('leaves a failed write without a doorbell and without a provider call', async () => {

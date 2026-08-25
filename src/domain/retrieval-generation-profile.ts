@@ -24,18 +24,29 @@
 
 import { isBlankText } from './text.js';
 
-/** The generation stack's identity, as reconciliation compares it. */
-export interface RetrievalGenerationProfile {
-  /** Which summary generator implementation produces drafts now. */
-  readonly summaryGeneratorId: string;
-  /** Which version of it — its prompt and schema contract included. */
-  readonly summaryGeneratorVersion: string;
+/** What the configured embedding side is expected to have produced. */
+export interface RetrievalSemanticGenerationExpectation {
   /** Which embedding model produces vectors now. */
   readonly embeddingModel: string;
   /** Which version of it. */
   readonly embeddingModelVersion: string;
   /** How many dimensions those vectors have. */
   readonly embeddingDimensions: number;
+}
+
+/** The generation stack's identity, as reconciliation compares it. */
+export interface RetrievalGenerationProfile {
+  /** Which summary generator implementation produces drafts now. */
+  readonly summaryGeneratorId: string;
+  /** Which version of it — its prompt and schema contract included. */
+  readonly summaryGeneratorVersion: string;
+  /**
+   * The embedding expectation, whole — or `null` for the deterministic
+   * stack, which produces no vectors and, deliberately, claims nothing about
+   * rows that carry one: an artifact a configured provider once enriched
+   * stays as it is rather than being regenerated downward.
+   */
+  readonly semantic: RetrievalSemanticGenerationExpectation | null;
 }
 
 /**
@@ -54,16 +65,21 @@ export function requireRetrievalGenerationProfile(
   if (isBlankText(profile.summaryGeneratorVersion)) {
     throw new Error('A generation profile must name its summary generator version.');
   }
-  if (isBlankText(profile.embeddingModel)) {
-    throw new Error('A generation profile must name its embedding model.');
-  }
-  if (isBlankText(profile.embeddingModelVersion)) {
-    throw new Error('A generation profile must name its embedding model version.');
-  }
-  if (!Number.isInteger(profile.embeddingDimensions) || profile.embeddingDimensions <= 0) {
-    throw new Error(
-      'A generation profile must declare a positive whole number of embedding dimensions.',
-    );
+  if (profile.semantic !== null) {
+    if (isBlankText(profile.semantic.embeddingModel)) {
+      throw new Error('A generation profile must name its embedding model.');
+    }
+    if (isBlankText(profile.semantic.embeddingModelVersion)) {
+      throw new Error('A generation profile must name its embedding model version.');
+    }
+    if (
+      !Number.isInteger(profile.semantic.embeddingDimensions) ||
+      profile.semantic.embeddingDimensions <= 0
+    ) {
+      throw new Error(
+        'A generation profile must declare a positive whole number of embedding dimensions.',
+      );
+    }
   }
   return profile;
 }

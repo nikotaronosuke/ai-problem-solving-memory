@@ -45,9 +45,9 @@ interface ArtifactRow {
   summary_generator_id: string;
   summary_generator_version: string;
   /** `vector` has no driver type, so it arrives as its text form. */
-  embedding: string;
-  embedding_model: string;
-  embedding_model_version: string;
+  embedding: string | null;
+  embedding_model: string | null;
+  embedding_model_version: string | null;
   source_fingerprint: string;
   generated_at: Date;
 }
@@ -61,9 +61,16 @@ function toRecord(row: ArtifactRow): RetrievalArtifactRecord {
     structuralFeatures: row.structural_features,
     summaryGeneratorId: row.summary_generator_id,
     summaryGeneratorVersion: row.summary_generator_version,
-    embedding: parseEmbedding(row.embedding),
-    embeddingModel: row.embedding_model,
-    embeddingModelVersion: row.embedding_model_version,
+    // The schema's all-or-none constraint is what lets one null answer for
+    // the three columns here: a row cannot hold half a rendering.
+    semantic:
+      row.embedding === null || row.embedding_model === null || row.embedding_model_version === null
+        ? null
+        : {
+            embedding: parseEmbedding(row.embedding),
+            embeddingModel: row.embedding_model,
+            embeddingModelVersion: row.embedding_model_version,
+          },
     sourceFingerprint: row.source_fingerprint,
     generatedAt: row.generated_at,
   };
@@ -126,10 +133,11 @@ export async function upsertRetrievalArtifact(
         content.summaryGeneratorId,
         content.summaryGeneratorVersion,
         // Bound as a parameter and cast in the statement. The numbers never
-        // become part of the SQL text.
-        formatEmbedding(content.embedding),
-        content.embeddingModel,
-        content.embeddingModelVersion,
+        // become part of the SQL text. A deterministic artifact binds null
+        // for all three, which the schema's constraint accepts as one state.
+        content.semantic === null ? null : formatEmbedding(content.semantic.embedding),
+        content.semantic === null ? null : content.semantic.embeddingModel,
+        content.semantic === null ? null : content.semantic.embeddingModelVersion,
         content.sourceFingerprint,
         content.generatedAt,
       ],

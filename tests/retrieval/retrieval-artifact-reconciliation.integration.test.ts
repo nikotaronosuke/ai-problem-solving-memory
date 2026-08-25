@@ -43,9 +43,11 @@ const databaseUrl = process.env['DATABASE_URL'];
 const PROFILE: RetrievalGenerationProfile = {
   summaryGeneratorId: 'fixture-summary-generator',
   summaryGeneratorVersion: '1',
-  embeddingModel: 'fixture-model',
-  embeddingModelVersion: '1',
-  embeddingDimensions: 3,
+  semantic: {
+    embeddingModel: 'fixture-model',
+    embeddingModelVersion: '1',
+    embeddingDimensions: 3,
+  },
 };
 
 interface Actor {
@@ -149,9 +151,11 @@ describe.skipIf(databaseUrl === undefined)('artifact reconciliation', () => {
       },
       summaryGeneratorId: overrides.generatorId ?? PROFILE.summaryGeneratorId,
       summaryGeneratorVersion: overrides.generatorVersion ?? PROFILE.summaryGeneratorVersion,
-      embedding: [...(overrides.embedding ?? [1, 0, 0])],
-      embeddingModel: overrides.model ?? PROFILE.embeddingModel,
-      embeddingModelVersion: overrides.modelVersion ?? PROFILE.embeddingModelVersion,
+      semantic: {
+        embedding: [...(overrides.embedding ?? [1, 0, 0])],
+        embeddingModel: overrides.model ?? PROFILE.semantic!.embeddingModel,
+        embeddingModelVersion: overrides.modelVersion ?? PROFILE.semantic!.embeddingModelVersion,
+      },
       sourceFingerprint:
         overrides.fingerprint ?? `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
       generatedAt: new Date('2026-08-17T09:00:00.000Z'),
@@ -276,7 +280,10 @@ describe.skipIf(databaseUrl === undefined)('artifact reconciliation', () => {
     const reader = readerFor(actor);
 
     await expect(
-      reader.findProblemsNeedingGeneration({ ...PROFILE, embeddingModel: '  ' }),
+      reader.findProblemsNeedingGeneration({
+        ...PROFILE,
+        semantic: { ...PROFILE.semantic!, embeddingModel: '  ' },
+      }),
     ).rejects.toThrow();
     await expect(reader.findProblemsNeedingGeneration(PROFILE, 0)).rejects.toThrow();
   });

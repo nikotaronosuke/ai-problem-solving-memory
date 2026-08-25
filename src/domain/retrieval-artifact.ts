@@ -48,6 +48,23 @@ export class InvalidRetrievalArtifactError extends Error {
  */
 export type Embedding = readonly number[];
 
+/**
+ * The semantic half of an artifact: the vector and the identity of what made
+ * it.
+ *
+ * One value on purpose. An embedding without its model is a vector nobody can
+ * compare, and a model without its vector is a claim about nothing — so the
+ * three travel together or not at all, and "not at all" is `null` on the
+ * content rather than three fields that could disagree. The deterministic
+ * rendering stores `null`; nothing about its searchable text is diminished by
+ * that, because the full-text channel never reads these fields.
+ */
+export interface RetrievalArtifactSemanticRendering {
+  readonly embedding: Embedding;
+  readonly embeddingModel: string;
+  readonly embeddingModelVersion: string;
+}
+
 export interface RetrievalArtifactContent {
   readonly normalizedSummary: string;
   readonly keywords: readonly string[];
@@ -63,9 +80,8 @@ export interface RetrievalArtifactContent {
    */
   readonly summaryGeneratorId: string;
   readonly summaryGeneratorVersion: string;
-  readonly embedding: Embedding;
-  readonly embeddingModel: string;
-  readonly embeddingModelVersion: string;
+  /** The semantic rendering, whole — or `null` for a deterministic artifact. */
+  readonly semantic: RetrievalArtifactSemanticRendering | null;
   /**
    * The source state this was built from, opaque to everything here.
    *
@@ -136,10 +152,12 @@ export function toEmbedding(values: readonly number[]): Embedding {
 /**
  * Normalises what a caller supplied, or refuses it.
  *
- * Completeness is checked rather than assumed: a half-built artifact — a
- * summary with no embedding, an embedding with no model — is not a stage this
- * system has. Either a Problem has an artifact that a search can use, or it has
- * none, and none is an ordinary state that every Problem starts in.
+ * Completeness is checked rather than assumed: a half-built semantic
+ * rendering — an embedding with no model, a model with no vector — is not a
+ * stage this system has. The whole rendering may be absent, and that is an
+ * ordinary state: the deterministic artifact carries searchable text and no
+ * vector, and either a Problem has an artifact a search can use or it has
+ * none.
  */
 export function toRetrievalArtifactContent(
   input: RetrievalArtifactContent,
@@ -157,9 +175,17 @@ export function toRetrievalArtifactContent(
       input.summaryGeneratorVersion,
       'summary generator version',
     ),
-    embedding: toEmbedding(input.embedding),
-    embeddingModel: requireText(input.embeddingModel, 'embedding model'),
-    embeddingModelVersion: requireText(input.embeddingModelVersion, 'embedding model version'),
+    semantic:
+      input.semantic === null
+        ? null
+        : {
+            embedding: toEmbedding(input.semantic.embedding),
+            embeddingModel: requireText(input.semantic.embeddingModel, 'embedding model'),
+            embeddingModelVersion: requireText(
+              input.semantic.embeddingModelVersion,
+              'embedding model version',
+            ),
+          },
     sourceFingerprint: requireText(input.sourceFingerprint, 'source fingerprint'),
     generatedAt: input.generatedAt,
   };

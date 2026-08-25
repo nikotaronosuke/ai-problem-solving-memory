@@ -74,9 +74,11 @@ describe('the configured retrieval providers', () => {
     expect(configured.generationProfile).toEqual({
       summaryGeneratorId: configured.summaryGenerator.generatorId,
       summaryGeneratorVersion: configured.summaryGenerator.generatorVersion,
-      embeddingModel: configured.embeddingProvider.modelId,
-      embeddingModelVersion: configured.embeddingProvider.modelVersion,
-      embeddingDimensions: configured.embeddingProvider.dimensions,
+      semantic: {
+        embeddingModel: configured.embeddingProvider.modelId,
+        embeddingModelVersion: configured.embeddingProvider.modelVersion,
+        embeddingDimensions: configured.embeddingProvider.dimensions,
+      },
     });
   });
 

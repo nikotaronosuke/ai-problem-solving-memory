@@ -396,9 +396,11 @@ describe('the generation profile', () => {
     expect(profile).toEqual({
       summaryGeneratorId: generator.generatorId,
       summaryGeneratorVersion: generator.generatorVersion,
-      embeddingModel: embedding.modelId,
-      embeddingModelVersion: embedding.modelVersion,
-      embeddingDimensions: embedding.dimensions,
+      semantic: {
+        embeddingModel: embedding.modelId,
+        embeddingModelVersion: embedding.modelVersion,
+        embeddingDimensions: embedding.dimensions,
+      },
     });
   });
 });

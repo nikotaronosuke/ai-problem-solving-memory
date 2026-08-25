@@ -277,9 +277,11 @@ describe.skipIf(databaseUrl === undefined)('retrieval evaluation', () => {
       structuralFeatures: memory.artifact.features,
       summaryGeneratorId: 'evaluation-summary-generator',
       summaryGeneratorVersion: '1',
-      embedding: [...SEMANTIC_CLASSES[memory.artifact.semanticClass]],
-      embeddingModel: EVALUATION_MODEL.id,
-      embeddingModelVersion: memory.artifact.modelVersion ?? EVALUATION_MODEL.version,
+      semantic: {
+        embedding: [...SEMANTIC_CLASSES[memory.artifact.semanticClass]],
+        embeddingModel: EVALUATION_MODEL.id,
+        embeddingModelVersion: memory.artifact.modelVersion ?? EVALUATION_MODEL.version,
+      },
       sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
       generatedAt: new Date('2026-08-16T09:00:00.000Z'),
     });

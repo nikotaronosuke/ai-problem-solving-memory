@@ -216,9 +216,11 @@ describe.skipIf(databaseUrl === undefined)('structural reranking', () => {
         structuralFeatures: options.features ?? rawFeatures(),
         summaryGeneratorId: 'fixture-summary-generator',
         summaryGeneratorVersion: '1',
-        embedding: [1, 0, 0],
-        embeddingModel: 'fixture-embedding-model',
-        embeddingModelVersion: '2',
+        semantic: {
+          embedding: [1, 0, 0],
+          embeddingModel: 'fixture-embedding-model',
+          embeddingModelVersion: '2',
+        },
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-16T14:00:00.000Z'),
       });

@@ -757,7 +757,7 @@ describe('the delete path', () => {
     // wait on a provider. The start call sits after the listen, and nothing
     // in the entrypoint awaits the runtime.
     const listenAt = source.indexOf('await app.listen(');
-    const startAt = source.indexOf('retrievalRuntime?.start()');
+    const startAt = source.indexOf('retrievalRuntime.start()');
     expect(listenAt).toBeGreaterThan(-1);
     expect(startAt).toBeGreaterThan(listenAt);
     expect(`awaited:${/await\s+retrievalRuntime/.test(source)}`).toBe('awaited:false');
@@ -4837,7 +4837,7 @@ describe('conflicts', () => {
     const migrations = join(process.cwd(), 'supabase', 'migrations');
     const files = await readdir(migrations);
 
-    expect(files).toHaveLength(17);
+    expect(files).toHaveLength(18);
 
     const credentials = files.find((file) => file.includes('clients_credentials'));
     expect(credentials).toBeDefined();

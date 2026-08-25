@@ -129,12 +129,14 @@ describe.skipIf(databaseUrl === undefined)('lexical search over retrieval artifa
       normalizedSummary: options.summary,
       keywords: [...options.keywords],
       structuralFeatures: options.structuralFeatures ?? { boundary: 'configuration' },
-      // Complete, because a partial artifact is not a state this system has.
-      embedding: [0.5, 0.25, 0.125],
       summaryGeneratorId: 'fixture-summary-generator',
       summaryGeneratorVersion: '1',
-      embeddingModel: 'fixture-model',
-      embeddingModelVersion: '1',
+      // Complete, because a partial artifact is not a state this system has.
+      semantic: {
+        embedding: [0.5, 0.25, 0.125],
+        embeddingModel: 'fixture-model',
+        embeddingModelVersion: '1',
+      },
       sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
       generatedAt: new Date('2026-08-16T10:00:00.000Z'),
     });
@@ -420,11 +422,13 @@ describe.skipIf(databaseUrl === undefined)('lexical search over retrieval artifa
         normalizedSummary: 'the betaword appears here now',
         keywords: ['betakeyword'],
         structuralFeatures: { boundary: 'configuration' },
-        embedding: [0.1, 0.2],
         summaryGeneratorId: 'fixture-summary-generator',
         summaryGeneratorVersion: '1',
-        embeddingModel: 'fixture-model',
-        embeddingModelVersion: '2',
+        semantic: {
+          embedding: [0.1, 0.2],
+          embeddingModel: 'fixture-model',
+          embeddingModelVersion: '2',
+        },
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-16T11:00:00.000Z'),
       });

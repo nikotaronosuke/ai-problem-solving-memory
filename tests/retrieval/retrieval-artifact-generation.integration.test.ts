@@ -298,14 +298,14 @@ describe.skipIf(databaseUrl === undefined)('generating and storing a retrieval a
       );
       expect(stored?.keywords).toEqual(['callback', 'deployment']);
       expect(stored?.structuralFeatures['problem_domain']).toBe('deployment');
-      expect(stored?.embedding).toEqual([0.5, -0.25, 0.125]);
+      expect(stored?.semantic?.embedding).toEqual([0.5, -0.25, 0.125]);
       // Four provenance axes, each answering its own question: what was read,
       // who wrote the text, what vectorised it, when the content was complete.
       expect(stored?.sourceFingerprint).toMatch(/^retrieval-source-v1:/);
       expect(stored?.summaryGeneratorId).toBe('scripted-summary-generator');
       expect(stored?.summaryGeneratorVersion).toBe('7');
-      expect(stored?.embeddingModel).toBe('fixture-embedding-model');
-      expect(stored?.embeddingModelVersion).toBe('2');
+      expect(stored?.semantic?.embeddingModel).toBe('fixture-embedding-model');
+      expect(stored?.semantic?.embeddingModelVersion).toBe('2');
       expect(stored?.generatedAt).toEqual(FIXED_NOW);
 
       // And the Memory it was derived from is byte for byte as it was.
@@ -372,10 +372,10 @@ describe.skipIf(databaseUrl === undefined)('generating and storing a retrieval a
       expect(Number(count.rows[0]?.n)).toBe(1);
 
       const stored = await actor.artifacts.getArtifact(problemId);
-      expect(stored?.embedding).toEqual([0.9, 0.8, 0.7]);
+      expect(stored?.semantic?.embedding).toEqual([0.9, 0.8, 0.7]);
       expect(stored?.summaryGeneratorId).toBe('newer-summary-generator');
       expect(stored?.summaryGeneratorVersion).toBe('8');
-      expect(stored?.embeddingModelVersion).toBe('3');
+      expect(stored?.semantic?.embeddingModelVersion).toBe('3');
 
       // The lexical document followed the replacement, with no trigger and no
       // application involvement.
@@ -501,9 +501,11 @@ describe.skipIf(databaseUrl === undefined)('generating and storing a retrieval a
           structuralFeatures: {},
           summaryGeneratorId: 'fixture-summary-generator',
           summaryGeneratorVersion: '1',
-          embedding: [0, 0, 0],
-          embeddingModel: 'fixture-embedding-model',
-          embeddingModelVersion: '1',
+          semantic: {
+            embedding: [0, 0, 0],
+            embeddingModel: 'fixture-embedding-model',
+            embeddingModelVersion: '1',
+          },
           sourceFingerprint: 'retrieval-source-v1:whatever',
           generatedAt: FIXED_NOW,
         }),

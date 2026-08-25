@@ -23,23 +23,27 @@ import type { RetrievalRuntimeDependencies } from '../../src/runtime/retrieval-r
 
 /** A generator/provider pair no test here ever lets reach a network. */
 const PORTS = {
-  summaryGenerator: {
-    generatorId: 'scripted-generator',
-    generatorVersion: '1',
-    generate: () => Promise.resolve({}),
-  },
-  embeddingProvider: {
-    modelId: 'scripted-model',
-    modelVersion: '1',
-    dimensions: 3,
-    embed: () => Promise.resolve([1, 0, 0]),
-  },
-  generationProfile: {
-    summaryGeneratorId: 'scripted-generator',
-    summaryGeneratorVersion: '1',
-    embeddingModel: 'scripted-model',
-    embeddingModelVersion: '1',
-    embeddingDimensions: 3,
+  providers: {
+    summaryGenerator: {
+      generatorId: 'scripted-generator',
+      generatorVersion: '1',
+      generate: () => Promise.resolve({}),
+    },
+    embeddingProvider: {
+      modelId: 'scripted-model',
+      modelVersion: '1',
+      dimensions: 3,
+      embed: () => Promise.resolve([1, 0, 0]),
+    },
+    generationProfile: {
+      summaryGeneratorId: 'scripted-generator',
+      summaryGeneratorVersion: '1',
+      semantic: {
+        embeddingModel: 'scripted-model',
+        embeddingModelVersion: '1',
+        embeddingDimensions: 3,
+      },
+    },
   },
 } as const;
 
@@ -300,17 +304,20 @@ describe('the retrieval runtime', () => {
     const runtime = createRetrievalRuntime({
       pool: sourcefulPool as never,
       ...PORTS,
-      summaryGenerator: {
-        ...PORTS.summaryGenerator,
-        generate: () => {
-          inFlight += 1;
-          peak = Math.max(peak, inFlight);
-          return new Promise((resolve) => {
-            finishers.push(() => {
-              inFlight -= 1;
-              resolve({});
+      providers: {
+        ...PORTS.providers,
+        summaryGenerator: {
+          ...PORTS.providers.summaryGenerator,
+          generate: () => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            return new Promise((resolve) => {
+              finishers.push(() => {
+                inFlight -= 1;
+                resolve({});
+              });
             });
-          });
+          },
         },
       },
     });

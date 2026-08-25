@@ -381,9 +381,11 @@ describe.skipIf(databaseUrl === undefined)(
         structuralFeatures: { ...FEATURES },
         summaryGeneratorId: 'fixture-summary-generator',
         summaryGeneratorVersion: '1',
-        embedding: VECTOR,
-        embeddingModel: EMBEDDING_MODEL,
-        embeddingModelVersion: EMBEDDING_MODEL,
+        semantic: {
+          embedding: VECTOR,
+          embeddingModel: EMBEDDING_MODEL,
+          embeddingModelVersion: EMBEDDING_MODEL,
+        },
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-17T09:00:00.000Z'),
       });

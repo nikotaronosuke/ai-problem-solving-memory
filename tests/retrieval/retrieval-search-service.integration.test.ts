@@ -334,9 +334,11 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
         },
         summaryGeneratorId: 'fixture-summary-generator',
         summaryGeneratorVersion: '1',
-        embedding: [1, 0, 0],
-        embeddingModel: MODEL.id,
-        embeddingModelVersion: MODEL.version,
+        semantic: {
+          embedding: [1, 0, 0],
+          embeddingModel: MODEL.id,
+          embeddingModelVersion: MODEL.version,
+        },
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-16T14:00:00.000Z'),
       });
@@ -375,9 +377,11 @@ describe.skipIf(databaseUrl === undefined)('retrieval search', () => {
       },
       summaryGeneratorId: 'fixture-summary-generator',
       summaryGeneratorVersion: '1',
-      embedding: [1, 0, 0],
-      embeddingModel: MODEL.id,
-      embeddingModelVersion: MODEL.version,
+      semantic: {
+        embedding: [1, 0, 0],
+        embeddingModel: MODEL.id,
+        embeddingModelVersion: MODEL.version,
+      },
       sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
       generatedAt: new Date('2026-08-16T14:05:00.000Z'),
     });

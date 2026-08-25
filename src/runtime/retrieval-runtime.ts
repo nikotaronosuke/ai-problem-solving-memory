@@ -34,6 +34,7 @@
  * surfaces at most as a closed diagnostic word.
  */
 
+import { createDeterministicSummaryGenerator } from '../app/deterministic-summary-generator.js';
 import { createRetrievalArtifactGenerationService } from '../app/retrieval-artifact-generation-service.js';
 import type { RetrievalArtifactMaintenance } from '../app/retrieval-artifact-maintenance.js';
 import {
@@ -44,15 +45,28 @@ import {
   createRetrievalGenerationCoordinator,
   type RetrievalGenerationCoordinator,
 } from '../app/retrieval-generation-coordinator.js';
-import { createRetrievalSummaryService } from '../app/retrieval-summary-service.js';
+import {
+  createRetrievalSummaryService,
+  RetrievalSummaryGenerationFailedError,
+} from '../app/retrieval-summary-service.js';
 import type { RetrievalSummaryGenerator } from '../app/retrieval-summary-service.js';
 import { listOwnerIdsWithReadableProblems } from '../db/owner-discovery.js';
 import type { DatabasePool } from '../db/pool.js';
 import { createTransactionRunner } from '../db/transaction.js';
+import {
+  DETERMINISTIC_RENDERER_ID,
+  DETERMINISTIC_RENDERER_VERSION,
+} from '../domain/deterministic-retrieval-renderer.js';
 import type { OwnerId } from '../domain/owner.js';
 import type { ProblemId } from '../domain/problem.js';
-import type { EmbeddingProvider } from '../domain/retrieval-embedding.js';
-import type { RetrievalGenerationProfile } from '../domain/retrieval-generation-profile.js';
+import {
+  EmbeddingGenerationFailedError,
+  type EmbeddingProvider,
+} from '../domain/retrieval-embedding.js';
+import {
+  requireRetrievalGenerationProfile,
+  type RetrievalGenerationProfile,
+} from '../domain/retrieval-generation-profile.js';
 import { resolveOwnerContextFor } from '../owner/context.js';
 import {
   createRetrievalArtifactReconciliationReader,
@@ -101,13 +115,25 @@ const NODE_SCHEDULER: RetrievalRuntimeScheduler = {
   },
 };
 
-export interface RetrievalRuntimeDependencies {
-  /** The pool. Owner contexts, readers and transactions are built on it. */
-  readonly pool: DatabasePool;
-  /** The configured stack's ports, already vendor-anonymous. */
+/** The optional enhancement: a configured provider stack's ports. */
+export interface RetrievalEnhancementProviders {
   readonly summaryGenerator: RetrievalSummaryGenerator;
   readonly embeddingProvider: EmbeddingProvider;
   readonly generationProfile: RetrievalGenerationProfile;
+}
+
+export interface RetrievalRuntimeDependencies {
+  /** The pool. Owner contexts, readers and transactions are built on it. */
+  readonly pool: DatabasePool;
+  /**
+   * The configured provider stack, if there is one. Absent is the ordinary
+   * Tier-0 answer: deterministic generation runs either way, so a Problem is
+   * findable by the free lexical channel whether or not anything costs money.
+   * Present, the providers *enhance* — richer summary, an embedding — and a
+   * provider failure falls back to the deterministic rendering rather than
+   * leaving the Problem unfindable.
+   */
+  readonly providers?: RetrievalEnhancementProviders;
   /** Diagnostics, closed words only. Optional, contained if it throws. */
   readonly onEvent?: (event: RetrievalRuntimeEvent) => void;
   /** Overrides for tests. Production takes the defaults. */
@@ -207,9 +233,7 @@ export function createRetrievalRuntime(
 ): RetrievalRuntime {
   const {
     pool,
-    summaryGenerator,
-    embeddingProvider,
-    generationProfile,
+    providers,
     onEvent,
     scheduler = NODE_SCHEDULER,
     reconciliationIntervalMs = RETRIEVAL_RECONCILIATION_INTERVAL_MS,
@@ -223,6 +247,18 @@ export function createRetrievalRuntime(
 
   const transactionRunner = createTransactionRunner(pool);
   const gate = createGenerationGate(processGenerationBound);
+
+  // What reconciliation expects of a current artifact. With providers, their
+  // own profile; without, the deterministic identity with no semantic
+  // expectation — under which an enriched artifact from an earlier provider
+  // is deliberately left standing rather than regenerated downward.
+  const generationProfile =
+    providers?.generationProfile ??
+    requireRetrievalGenerationProfile({
+      summaryGeneratorId: DETERMINISTIC_RENDERER_ID,
+      summaryGeneratorVersion: DETERMINISTIC_RENDERER_VERSION,
+      semantic: null,
+    });
 
   /**
    * Owner runtimes, keyed by owner, cached as promises so concurrent first
@@ -250,22 +286,53 @@ export function createRetrievalRuntime(
     // a cast. An owner that is gone throws here, and the caller drops the
     // request.
     const ownerContext = await resolveOwnerContextFor(pool, ownerId);
+    const sourceReader = createRetrievalSummarySourceReader(pool, ownerContext);
 
-    const generation = createRetrievalArtifactGenerationService(
-      createRetrievalSummaryService(
-        createRetrievalSummarySourceReader(pool, ownerContext),
-        summaryGenerator,
-      ),
-      embeddingProvider,
+    // Always constructible: no provider, no configuration, no network. This
+    // is what makes "no artifact because nobody paid" not a state.
+    const deterministic = createRetrievalArtifactGenerationService(
+      createRetrievalSummaryService(sourceReader, createDeterministicSummaryGenerator()),
+      null,
       transactionRunner,
       ownerContext,
     );
+
+    const enhanced =
+      providers === undefined
+        ? undefined
+        : createRetrievalArtifactGenerationService(
+            createRetrievalSummaryService(sourceReader, providers.summaryGenerator),
+            providers.embeddingProvider,
+            transactionRunner,
+            ownerContext,
+          );
+
+    // The fail-soft invariant, fixed here and nowhere subtler: a provider
+    // failure — summariser or embedder — costs the enhancement, never the
+    // artifact. Only the two provider-failure classes fall back; every other
+    // error is a real fault and still surfaces as a failed run.
+    const generateArtifact = async (problemId: ProblemId) => {
+      if (enhanced === undefined) {
+        return deterministic.generateArtifact(problemId);
+      }
+      try {
+        return await enhanced.generateArtifact(problemId);
+      } catch (error) {
+        if (
+          error instanceof RetrievalSummaryGenerationFailedError ||
+          error instanceof EmbeddingGenerationFailedError
+        ) {
+          return deterministic.generateArtifact(problemId);
+        }
+        throw error;
+      }
+    };
 
     const coordinator = createRetrievalGenerationCoordinator(
       // The process-wide gate wraps the whole generation — provider calls
       // and the short final transaction alike — so whatever the number of
       // owners, at most `processGenerationBound` generations are in flight.
-      (problemId) => gate(() => generation.generateArtifact(problemId)),
+      (problemId) => gate(() => generateArtifact(problemId)),
       {
         onRunFinished: (outcome) => {
           report(

@@ -141,9 +141,11 @@ describe.skipIf(databaseUrl === undefined)('artifact invalidation on canonical w
       },
       summaryGeneratorId: 'fixture-summary-generator',
       summaryGeneratorVersion: '1',
-      embedding: [1, 0, 0],
-      embeddingModel: 'fixture-model',
-      embeddingModelVersion: '1',
+      semantic: {
+        embedding: [1, 0, 0],
+        embeddingModel: 'fixture-model',
+        embeddingModelVersion: '1',
+      },
       sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
       generatedAt: new Date('2026-08-17T09:00:00.000Z'),
     });
@@ -317,9 +319,11 @@ describe.skipIf(databaseUrl === undefined)('artifact invalidation on canonical w
         },
         summaryGeneratorId: 'fixture-summary-generator',
         summaryGeneratorVersion: '1',
-        embedding: [0, 1, 0],
-        embeddingModel: 'fixture-model',
-        embeddingModelVersion: '1',
+        semantic: {
+          embedding: [0, 1, 0],
+          embeddingModel: 'fixture-model',
+          embeddingModelVersion: '1',
+        },
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-17T10:00:00.000Z'),
       });
@@ -380,9 +384,11 @@ describe.skipIf(databaseUrl === undefined)('artifact invalidation on canonical w
         },
         summaryGeneratorId: 'fixture-summary-generator',
         summaryGeneratorVersion: '1',
-        embedding: [0, 0, 1],
-        embeddingModel: 'fixture-model',
-        embeddingModelVersion: '1',
+        semantic: {
+          embedding: [0, 0, 1],
+          embeddingModel: 'fixture-model',
+          embeddingModelVersion: '1',
+        },
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-17T10:30:00.000Z'),
       });
