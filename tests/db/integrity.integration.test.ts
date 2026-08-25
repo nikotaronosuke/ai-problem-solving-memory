@@ -474,6 +474,12 @@ describe.skipIf(databaseUrl === undefined)('schema integrity', () => {
         'projects.platform',
         'projects.repo',
         'projects.repo_subpath',
+        // The semantic rendering is genuinely optional: a deterministic
+        // artifact has no vector and says so with NULL, and the all-or-none
+        // check constraint keeps the three from ever disagreeing.
+        'retrieval_artifacts.embedding',
+        'retrieval_artifacts.embedding_model',
+        'retrieval_artifacts.embedding_model_version',
         // A memory that was merely found or read has no outcome yet, and
         // inventing one would be worse than leaving it open.
         'usage_logs.result',

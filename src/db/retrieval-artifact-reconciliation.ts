@@ -123,6 +123,44 @@ export const ARTIFACT_RECONCILIATION_STATEMENT = `
    limit $9`;
 
 /**
+ * The deterministic stack's membership, deliberately narrower.
+ *
+ * With no embedding side configured, staleness means: no artifact, an
+ * incompatible source schema, an outdated structural schema, or a
+ * deterministic artifact written by a superseded deterministic version.
+ * An artifact another generator wrote — a provider's summary carrying a
+ * semantic rendering — is *not* in the answer: it still describes the
+ * current canonical source, and regenerating it here would replace an
+ * enriched rendering with a poorer one for no correctness gain. The day a
+ * provider is configured again, the semantic statement above finds every
+ * deterministic row through its embedding expectations and upgrades it.
+ */
+export const ARTIFACT_RECONCILIATION_DETERMINISTIC_STATEMENT = `
+  select pr.problem_id as problem_id,
+         case
+           when ra.problem_id is null then 'ARTIFACT_MISSING'
+           when not starts_with(ra.source_fingerprint, $2) then 'SOURCE_SCHEMA_INCOMPATIBLE'
+           else 'GENERATION_PROFILE_OUTDATED'
+         end as reason
+    from public.problems pr
+    left join public.retrieval_artifacts ra
+      on ra.owner_id = pr.owner_id
+     and ra.problem_id = pr.problem_id
+   where pr.owner_id = $1
+     and pr.memory_read_enabled
+     and (
+          ra.problem_id is null
+       or not starts_with(ra.source_fingerprint, $2)
+       or ra.structural_features->>'schema_version' is distinct from $5
+       or (
+            ra.summary_generator_id = $3
+        and ra.summary_generator_version is distinct from $4
+          )
+     )
+   order by pr.created_at asc, pr.problem_id asc
+   limit $6`;
+
+/**
  * The Problems whose artifact the configured stack should generate, oldest
  * first, bounded.
  *
@@ -141,17 +179,27 @@ export async function findProblemsNeedingArtifactGeneration(
     throw new Error('A reconciliation scan limit must be a positive whole number.');
   }
 
-  const result = await executor.query<FindingRow>(ARTIFACT_RECONCILIATION_STATEMENT, [
-    context.ownerId,
-    RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
-    expected.summaryGeneratorId,
-    expected.summaryGeneratorVersion,
-    expected.embeddingModel,
-    expected.embeddingModelVersion,
-    expected.embeddingDimensions,
-    STRUCTURAL_FEATURE_SCHEMA_VERSION,
-    limit,
-  ]);
+  const result =
+    expected.semantic === null
+      ? await executor.query<FindingRow>(ARTIFACT_RECONCILIATION_DETERMINISTIC_STATEMENT, [
+          context.ownerId,
+          RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
+          expected.summaryGeneratorId,
+          expected.summaryGeneratorVersion,
+          STRUCTURAL_FEATURE_SCHEMA_VERSION,
+          limit,
+        ])
+      : await executor.query<FindingRow>(ARTIFACT_RECONCILIATION_STATEMENT, [
+          context.ownerId,
+          RETRIEVAL_SOURCE_FINGERPRINT_CURRENT_PREFIX,
+          expected.summaryGeneratorId,
+          expected.summaryGeneratorVersion,
+          expected.semantic.embeddingModel,
+          expected.semantic.embeddingModelVersion,
+          expected.semantic.embeddingDimensions,
+          STRUCTURAL_FEATURE_SCHEMA_VERSION,
+          limit,
+        ]);
 
   return result.rows.map((row) => ({
     problemId: row.problem_id as ProblemId,

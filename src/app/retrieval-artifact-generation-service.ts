@@ -101,12 +101,16 @@ export interface RetrievalArtifactGenerationService {
  */
 export function createRetrievalArtifactGenerationService(
   summaryService: RetrievalSummaryService,
-  embeddingProvider: EmbeddingProvider,
+  // `null` is the deterministic stack: the artifact stores its searchable
+  // text with no semantic rendering, which the schema holds as one state.
+  embeddingProvider: EmbeddingProvider | null,
   transactionRunner: DatabaseTransactionRunner,
   ownerContext: OwnerContext,
   now: () => Date = () => new Date(),
 ): RetrievalArtifactGenerationService {
-  requireEmbeddingProviderIdentity(embeddingProvider);
+  if (embeddingProvider !== null) {
+    requireEmbeddingProviderIdentity(embeddingProvider);
+  }
 
   return {
     async generateArtifact(problemId): Promise<GenerateRetrievalArtifactOutcome> {
@@ -122,15 +126,18 @@ export function createRetrievalArtifactGenerationService(
       // stored as `normalized_summary`, so the embedding's input is always
       // reproducible from the row it ends up in. Nothing else is sent: no
       // keywords (the lexical channel's), no features (the structural task's),
-      // no identifiers.
-      let embedded: unknown;
-      try {
-        embedded = await embeddingProvider.embed({ text: summary.draft.normalizedSummary });
-      } catch {
-        throw new EmbeddingGenerationFailedError();
+      // no identifiers. With no provider there is no call to make and no
+      // rendering to store — not a degraded run, the ordinary Tier-0 one.
+      let embedding: ReturnType<typeof toProviderEmbedding> | null = null;
+      if (embeddingProvider !== null) {
+        let embedded: unknown;
+        try {
+          embedded = await embeddingProvider.embed({ text: summary.draft.normalizedSummary });
+        } catch {
+          throw new EmbeddingGenerationFailedError();
+        }
+        embedding = toProviderEmbedding(embedded, embeddingProvider);
       }
-
-      const embedding = toProviderEmbedding(embedded, embeddingProvider);
 
       // The moment the complete content first existed: summary and embedding
       // both in hand, both checked. Not the insert time — the row may commit
@@ -184,9 +191,14 @@ export function createRetrievalArtifactGenerationService(
           structuralFeatures: summary.draft.structuralFeatures,
           summaryGeneratorId: summary.generatorId,
           summaryGeneratorVersion: summary.generatorVersion,
-          embedding,
-          embeddingModel: embeddingProvider.modelId,
-          embeddingModelVersion: embeddingProvider.modelVersion,
+          semantic:
+            embeddingProvider === null || embedding === null
+              ? null
+              : {
+                  embedding,
+                  embeddingModel: embeddingProvider.modelId,
+                  embeddingModelVersion: embeddingProvider.modelVersion,
+                },
           sourceFingerprint: summary.draft.sourceFingerprint,
           generatedAt,
         });

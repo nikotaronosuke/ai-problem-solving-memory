@@ -18,7 +18,7 @@ describe('startup summary', () => {
       nodeVersion: 'v22.0.0',
       host: '127.0.0.1',
       port: 4000,
-      retrievalGeneration: 'DISABLED',
+      retrievalGeneration: 'DETERMINISTIC',
     });
   });
 
@@ -27,7 +27,7 @@ describe('startup summary', () => {
 
     expect(formatStartupSummary(summary)).toBe(
       `${SERVICE_NAME} starting | node=v22.0.0 | env=development | log=info | ` +
-        `host=127.0.0.1 | port=3000 | retrieval-generation=ENABLED`,
+        `host=127.0.0.1 | port=3000 | retrieval-generation=SEMANTIC`,
     );
   });
 

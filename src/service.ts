@@ -37,18 +37,20 @@ export interface StartupSummary {
   /**
    * Whether a retrieval generation stack is configured, as one closed word.
    *
-   * The one operational fact somebody needs when artifacts are not
-   * appearing. Deliberately a boolean-shaped word and nothing else: no
-   * vendor, no model, and no field that could ever hold a credential — the
-   * provider configuration is not part of `AppEnv` at all, precisely so it
-   * cannot end up in a line built for pasting into an issue.
+   * The one operational fact somebody needs when artifacts look poorer than
+   * expected. Generation itself always runs — the deterministic rendering
+   * needs nothing configured — so the question is which stack is producing
+   * artifacts. Deliberately one closed word and nothing else: no vendor, no
+   * model, and no field that could ever hold a credential — the provider
+   * configuration is not part of `AppEnv` at all, precisely so it cannot end
+   * up in a line built for pasting into an issue.
    */
-  readonly retrievalGeneration: 'ENABLED' | 'DISABLED';
+  readonly retrievalGeneration: 'SEMANTIC' | 'DETERMINISTIC';
 }
 
 export function buildStartupSummary(
   env: AppEnv,
-  retrievalGenerationEnabled = false,
+  retrievalProvidersConfigured = false,
   nodeVersion = process.version,
 ): StartupSummary {
   return {
@@ -58,7 +60,7 @@ export function buildStartupSummary(
     nodeVersion,
     host: env.host,
     port: env.port,
-    retrievalGeneration: retrievalGenerationEnabled ? 'ENABLED' : 'DISABLED',
+    retrievalGeneration: retrievalProvidersConfigured ? 'SEMANTIC' : 'DETERMINISTIC',
   };
 }
 

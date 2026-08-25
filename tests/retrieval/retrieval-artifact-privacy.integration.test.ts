@@ -77,13 +77,15 @@ describe.skipIf(databaseUrl === undefined)('a retrieval artifact holding a crede
       normalizedSummary: 'an ordinary summary of an ordinary problem',
       keywords: ['deployment', 'callback'],
       structuralFeatures: { boundary: 'configuration' },
-      // Always present, so a rejection is known to discard a *complete*
-      // candidate rather than one that was going to fail anyway.
-      embedding: [0.5, 0.25, 0.125],
       summaryGeneratorId: 'fixture-summary-generator',
       summaryGeneratorVersion: '1',
-      embeddingModel: 'fixture-model',
-      embeddingModelVersion: '1',
+      // Always present, so a rejection is known to discard a *complete*
+      // candidate rather than one that was going to fail anyway.
+      semantic: {
+        embedding: [0.5, 0.25, 0.125],
+        embeddingModel: 'fixture-model',
+        embeddingModelVersion: '1',
+      },
       sourceFingerprint: 'source-state-A',
       generatedAt: new Date('2026-08-15T10:00:00.000Z'),
       ...overrides,
@@ -191,7 +193,17 @@ describe.skipIf(databaseUrl === undefined)('a retrieval artifact holding a crede
       'a structural feature key',
       () => artifactFor({ structuralFeatures: { [SECRET.inFeatureKey]: 'present' } }),
     ],
-    ['the embedding model name', () => artifactFor({ embeddingModel: SECRET.inKeyword })],
+    [
+      'the embedding model name',
+      () =>
+        artifactFor({
+          semantic: {
+            embedding: [0.5, 0.25, 0.125],
+            embeddingModel: SECRET.inKeyword,
+            embeddingModelVersion: '1',
+          },
+        }),
+    ],
     ['the source fingerprint', () => artifactFor({ sourceFingerprint: SECRET.inSummary })],
   ])('is refused when %s carries one', async (_label, build) => {
     const before = await artifactCount();
@@ -258,12 +270,34 @@ describe.skipIf(databaseUrl === undefined)('a retrieval artifact holding a crede
     // saves cleanly and breaks every later search is the worst outcome, so
     // NaN and Infinity are refused rather than stored.
     await expect(
-      artifacts.upsertArtifact(artifactFor({ embedding: [1, Number.NaN, 3] })),
+      artifacts.upsertArtifact(
+        artifactFor({
+          semantic: {
+            embedding: [1, Number.NaN, 3],
+            embeddingModel: 'fixture-model',
+            embeddingModelVersion: '1',
+          },
+        }),
+      ),
     ).rejects.toThrow();
     await expect(
-      artifacts.upsertArtifact(artifactFor({ embedding: [1, Number.POSITIVE_INFINITY] })),
+      artifacts.upsertArtifact(
+        artifactFor({
+          semantic: {
+            embedding: [1, Number.POSITIVE_INFINITY],
+            embeddingModel: 'fixture-model',
+            embeddingModelVersion: '1',
+          },
+        }),
+      ),
     ).rejects.toThrow();
-    await expect(artifacts.upsertArtifact(artifactFor({ embedding: [] }))).rejects.toThrow();
+    await expect(
+      artifacts.upsertArtifact(
+        artifactFor({
+          semantic: { embedding: [], embeddingModel: 'fixture-model', embeddingModelVersion: '1' },
+        }),
+      ),
+    ).rejects.toThrow();
 
     expect(await artifactCount()).toBe(1);
     expect(randomUUID).toBeDefined();

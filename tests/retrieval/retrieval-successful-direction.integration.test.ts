@@ -219,9 +219,11 @@ describe.skipIf(databaseUrl === undefined)('retrieval successful directions', ()
         structuralFeatures: features(directions),
         summaryGeneratorId: 'fixture-summary-generator',
         summaryGeneratorVersion: '1',
-        embedding: [1, 0, 0],
-        embeddingModel: MODEL.id,
-        embeddingModelVersion: MODEL.version,
+        semantic: {
+          embedding: [1, 0, 0],
+          embeddingModel: MODEL.id,
+          embeddingModelVersion: MODEL.version,
+        },
         sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
         generatedAt: new Date('2026-08-16T14:00:00.000Z'),
       });

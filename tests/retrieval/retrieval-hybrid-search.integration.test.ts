@@ -158,9 +158,11 @@ describe.skipIf(databaseUrl === undefined)('hybrid candidate retrieval', () => {
       structuralFeatures: { boundary: 'configuration' },
       summaryGeneratorId: 'fixture-summary-generator',
       summaryGeneratorVersion: '1',
-      embedding: [...options.embedding],
-      embeddingModel: options.model ?? MODEL.id,
-      embeddingModelVersion: MODEL.version,
+      semantic: {
+        embedding: [...options.embedding],
+        embeddingModel: options.model ?? MODEL.id,
+        embeddingModelVersion: MODEL.version,
+      },
       sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
       generatedAt: new Date('2026-08-16T14:00:00.000Z'),
     });

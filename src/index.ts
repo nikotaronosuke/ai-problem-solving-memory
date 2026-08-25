@@ -65,21 +65,27 @@ async function main(): Promise<void> {
   const env = loadEnv();
   const pool = createPool(resolveDatabaseConfig({ nodeEnv: env.nodeEnv }));
 
-  // The retrieval stack, if one is configured. `enabled: false` is the
-  // ordinary answer for a server without the provider credential: everything
-  // below composes exactly as it always has, no maintenance runtime exists,
-  // and no timer or outbound request can occur. The composition root learns
-  // whether a stack exists and never which vendor it is.
+  // The provider stack, if one is configured — and the maintenance runtime
+  // either way. `enabled: false` is the ordinary answer for a server without
+  // the provider credential: generation still runs, deterministically, so a
+  // Problem is findable by the free lexical channel with nothing configured
+  // and nothing outbound. Providers, when present, enhance that baseline.
+  // The composition root learns whether a stack exists and never which
+  // vendor it is.
   const configuredRetrieval = createConfiguredRetrievalProviders(process.env);
-  const retrievalRuntime = configuredRetrieval.enabled
-    ? createRetrievalRuntime({
-        pool,
-        summaryGenerator: configuredRetrieval.summaryGenerator,
-        embeddingProvider: configuredRetrieval.embeddingProvider,
-        generationProfile: configuredRetrieval.generationProfile,
-      })
-    : undefined;
-  const maintenance = retrievalRuntime?.maintenance;
+  const retrievalRuntime = createRetrievalRuntime({
+    pool,
+    ...(configuredRetrieval.enabled
+      ? {
+          providers: {
+            summaryGenerator: configuredRetrieval.summaryGenerator,
+            embeddingProvider: configuredRetrieval.embeddingProvider,
+            generationProfile: configuredRetrieval.generationProfile,
+          },
+        }
+      : {}),
+  });
+  const maintenance = retrievalRuntime.maintenance;
 
   // Search, unlike maintenance, exists either way. Its two provider ports are
   // optional all the way down: with no configured stack the lexical channel
@@ -144,7 +150,7 @@ async function main(): Promise<void> {
       // the door is closing; then stop accepting requests; then take the
       // database away. An in-flight generation is not waited for — its
       // failure leaves absence, which the next startup sweep repairs.
-      retrievalRuntime?.stop();
+      retrievalRuntime.stop();
       await app.close();
       await closePool(pool);
     } catch {
@@ -184,7 +190,7 @@ async function main(): Promise<void> {
   // and the crash recovery, it runs in the background, and ordinary CRUD
   // availability never waits on a provider. Its failures stay inside the
   // runtime as closed diagnostics and cannot become a startup failure.
-  retrievalRuntime?.start();
+  retrievalRuntime.start();
 }
 
 try {

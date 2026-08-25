@@ -118,11 +118,13 @@ describe.skipIf(databaseUrl === undefined)('a problem’s retrieval artifact', (
       normalizedSummary: 'a callback fails only after deployment',
       keywords: ['callback', 'deployment', 'redirect'],
       structuralFeatures: { boundary: 'configuration', shape: 'environment-dependent' },
-      embedding: [0.25, -0.5, 0.125],
       summaryGeneratorId: 'fixture-summary-generator',
       summaryGeneratorVersion: '1',
-      embeddingModel: 'fixture-model',
-      embeddingModelVersion: '1',
+      semantic: {
+        embedding: [0.25, -0.5, 0.125],
+        embeddingModel: 'fixture-model',
+        embeddingModelVersion: '1',
+      },
       sourceFingerprint: 'source-state-A',
       generatedAt: new Date('2026-08-15T10:00:00.000Z'),
       ...overrides,
@@ -193,11 +195,11 @@ describe.skipIf(databaseUrl === undefined)('a problem’s retrieval artifact', (
       expect(read).toEqual(written);
       // Provenance survives the round trip. Model and version are free text,
       // and the fingerprint is opaque — stored and compared, never parsed.
-      expect(read?.embeddingModel).toBe('fixture-model');
-      expect(read?.embeddingModelVersion).toBe('1');
+      expect(read?.semantic?.embeddingModel).toBe('fixture-model');
+      expect(read?.semantic?.embeddingModelVersion).toBe('1');
       expect(read?.sourceFingerprint).toBe('source-state-A');
       expect(read?.generatedAt.toISOString()).toBe('2026-08-15T10:00:00.000Z');
-      expect(read?.embedding).toEqual([0.25, -0.5, 0.125]);
+      expect(read?.semantic?.embedding).toEqual([0.25, -0.5, 0.125]);
       expect(read?.keywords).toEqual(['callback', 'deployment', 'redirect']);
       expect(read?.structuralFeatures).toEqual({
         boundary: 'configuration',
@@ -234,11 +236,13 @@ describe.skipIf(databaseUrl === undefined)('a problem’s retrieval artifact', (
         artifactFor(actor.problemId, {
           normalizedSummary: 'a second reading of the same problem',
           keywords: ['second'],
-          embedding: [0.75, 0.25, 0.5, 0.125],
           summaryGeneratorId: 'fixture-summary-generator',
           summaryGeneratorVersion: '1',
-          embeddingModel: 'fixture-model-2',
-          embeddingModelVersion: '4',
+          semantic: {
+            embedding: [0.75, 0.25, 0.5, 0.125],
+            embeddingModel: 'fixture-model-2',
+            embeddingModelVersion: '4',
+          },
           sourceFingerprint: 'source-state-B',
           generatedAt: new Date('2026-08-15T11:00:00.000Z'),
         }),
@@ -252,7 +256,7 @@ describe.skipIf(databaseUrl === undefined)('a problem’s retrieval artifact', (
       expect(read).toEqual(second);
       expect(read?.normalizedSummary).toBe('a second reading of the same problem');
       expect(read?.sourceFingerprint).toBe('source-state-B');
-      expect(read?.embedding).toEqual([0.75, 0.25, 0.5, 0.125]);
+      expect(read?.semantic?.embedding).toEqual([0.75, 0.25, 0.5, 0.125]);
     });
 
     it('accepts an earlier generated_at, because storage does not judge freshness', async () => {
@@ -284,17 +288,35 @@ describe.skipIf(databaseUrl === undefined)('a problem’s retrieval artifact', (
       const short = await makeActor('short-vector');
       const long = await makeActor('long-vector');
 
-      await short.artifacts.upsertArtifact(artifactFor(short.problemId, { embedding: [1, 2, 3] }));
+      await short.artifacts.upsertArtifact(
+        artifactFor(short.problemId, {
+          semantic: {
+            embedding: [1, 2, 3],
+            embeddingModel: 'fixture-model',
+            embeddingModelVersion: '1',
+          },
+        }),
+      );
       await long.artifacts.upsertArtifact(
-        artifactFor(long.problemId, { embedding: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6] }),
+        artifactFor(long.problemId, {
+          semantic: {
+            embedding: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+            embeddingModel: 'fixture-model',
+            embeddingModelVersion: '1',
+          },
+        }),
       );
 
       // The column is an untyped `vector`, which is what keeps a model change
       // from being a schema change. Two Problems mid-migration hold different
       // dimensions; one Problem never holds two artifacts, which is why this
       // is written across two rather than as a second write to one.
-      expect((await short.artifacts.getArtifact(short.problemId))?.embedding).toHaveLength(3);
-      expect((await long.artifacts.getArtifact(long.problemId))?.embedding).toHaveLength(6);
+      expect(
+        (await short.artifacts.getArtifact(short.problemId))?.semantic?.embedding,
+      ).toHaveLength(3);
+      expect((await long.artifacts.getArtifact(long.problemId))?.semantic?.embedding).toHaveLength(
+        6,
+      );
     });
   });
 

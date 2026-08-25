@@ -152,9 +152,11 @@ describe.skipIf(databaseUrl === undefined)('semantic search over retrieval artif
       structuralFeatures: { boundary: 'configuration' },
       summaryGeneratorId: 'fixture-summary-generator',
       summaryGeneratorVersion: '1',
-      embedding: [...embedding],
-      embeddingModel: options.model ?? MODEL.id,
-      embeddingModelVersion: options.version ?? MODEL.version,
+      semantic: {
+        embedding: [...embedding],
+        embeddingModel: options.model ?? MODEL.id,
+        embeddingModelVersion: options.version ?? MODEL.version,
+      },
       sourceFingerprint: `retrieval-source-v1:${randomUUID().replace(/-/g, '')}`,
       generatedAt: new Date('2026-08-16T13:00:00.000Z'),
     });
