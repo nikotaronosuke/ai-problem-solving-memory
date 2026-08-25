@@ -727,11 +727,12 @@ describe('what each operation may conclude', () => {
   });
 });
 
-describe('what a transcript is left holding', () => {
-  it('says the category and repeats nothing back', () => {
-    // The text half is read by a person, and by whatever logs a session. It is
-    // the one place an answer could be restated in full, so it says one word
-    // and the structured half carries the rest.
+describe('what a tool result carries on both halves (D-487)', () => {
+  it('serializes the whole semantic answer into the text block', () => {
+    // The structured half is canonical; the text half is the same object,
+    // serialized, so a host that shows its model only text blocks still
+    // hands over every field. Measured need: claude.ai renders exactly the
+    // text blocks, and the kind-only text cost it the candidate ids.
     const answer = {
       kind: 'CURRENT_PROBLEM',
       project_id: 'p',
@@ -740,36 +741,73 @@ describe('what a transcript is left holding', () => {
 
     const result = resultOf(answer);
 
-    expect(result.content).toEqual([{ type: 'text', text: 'CURRENT_PROBLEM' }]);
     expect(result.structuredContent).toBe(answer);
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]?.type).toBe('text');
+    expect(JSON.parse(result.content[0]!.text)).toEqual(answer);
     expect('isError' in result).toBe(false);
   });
 
-  it('says the code and nothing about what went wrong', () => {
-    // A failure is where a message would come from — an exception's text, a
-    // response body, a path. The text is the category and the code, both of
-    // which are already a closed list.
+  it('keeps a failure marked and still text-recoverable', () => {
     const result = resultOf({ kind: 'ERROR', code: 'MEMORY_UNAVAILABLE' });
 
-    expect(result.content).toEqual([{ type: 'text', text: 'ERROR MEMORY_UNAVAILABLE' }]);
     expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0]!.text)).toEqual({
+      kind: 'ERROR',
+      code: 'MEMORY_UNAVAILABLE',
+    });
   });
 
-  it.each([...RUNTIME_ERROR_CODES])('renders %s as two words', (code) => {
+  it.each([...RUNTIME_ERROR_CODES])('round-trips ERROR %s through the text half', (code) => {
     const rendered = resultOf({ kind: 'ERROR', code }).content;
 
     expect(rendered).toHaveLength(1);
-    expect(rendered[0]?.text.split(' ')).toEqual(['ERROR', code]);
+    expect(JSON.parse(rendered[0]!.text)).toEqual({ kind: 'ERROR', code });
   });
 
-  it('never renders a candidate list into the text', () => {
-    const result = resultOf({
+  it('hands a text-only client the full candidate list', () => {
+    // The inversion of the old pin, deliberately: candidates must now be in
+    // the text, because the one client that could not see the structured
+    // half is exactly the one that needed these ids to continue.
+    const answer = {
       kind: 'PROBLEM_CANDIDATES',
       project_id: 'p',
       candidates: [{ problem_id: 'q', status: 'PAUSED', title: PLANTED_TITLE }],
-    });
+    } as const;
 
-    expect(result.content).toEqual([{ type: 'text', text: 'PROBLEM_CANDIDATES' }]);
+    const parsed = JSON.parse(resultOf(answer).content[0]!.text) as typeof answer;
+
+    expect(parsed).toEqual(answer);
+    expect(parsed.candidates[0]?.problem_id).toBe('q');
+    expect(parsed.candidates[0]?.status).toBe('PAUSED');
+    expect(parsed.candidates[0]?.title).toBe(PLANTED_TITLE);
+  });
+
+  it.each([
+    ['a write refusal', { kind: 'NO_CURRENT_PROBLEM' }],
+    ['a degraded verification', { kind: 'CAPABILITY_UNAVAILABLE' }],
+    ['a memory refusal', { kind: 'ERROR', code: 'MEMORY_REFUSED' }],
+    [
+      'a recall outcome',
+      {
+        kind: 'RECALLED',
+        candidate_count: 2,
+        semantic_status: 'PROVIDER_UNAVAILABLE',
+        structural_status: 'NOT_NEEDED',
+      },
+    ],
+    [
+      'an event record',
+      {
+        kind: 'EVENT_RECORDED',
+        problem_id: 'p',
+        event_id: 'e',
+        client_event_id: 'c',
+        on_current_problem: true,
+      },
+    ],
+  ] as const)('lets a text-only client recover %s in full', (_label, outcome) => {
+    expect(JSON.parse(resultOf(outcome as never).content[0]!.text)).toEqual(outcome);
   });
 });
 

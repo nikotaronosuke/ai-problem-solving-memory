@@ -23452,9 +23452,8 @@ function runtimeStatePathsOf(environment, readOwnPointer = readStateDirPointerFo
   return { pluginData: pointed };
 }
 function resultOf(outcome) {
-  const text = outcome.kind === "ERROR" ? `ERROR ${outcome.code}` : outcome.kind;
   return {
-    content: [{ type: "text", text }],
+    content: [{ type: "text", text: JSON.stringify(outcome) }],
     structuredContent: outcome,
     ...outcome.kind === "ERROR" ? { isError: true } : {}
   };
