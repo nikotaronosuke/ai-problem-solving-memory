@@ -612,7 +612,11 @@ describe('what each operation may conclude', () => {
       'EVENT_RECORDED',
       'NO_CURRENT_PROBLEM',
     ]);
+    // CAPABILITY_UNAVAILABLE is add_verification's alone (P9-03): only the
+    // evidence-recording operation degrades at an entry point whose callers
+    // cannot have performed the check; no other mutation may borrow it.
     expect(kindsOf(ADD_VERIFICATION_OUTPUT_SCHEMA)).toEqual([
+      'CAPABILITY_UNAVAILABLE',
       'CURRENT_PROBLEM_NOT_AVAILABLE',
       'ERROR',
       'NO_CURRENT_PROBLEM',

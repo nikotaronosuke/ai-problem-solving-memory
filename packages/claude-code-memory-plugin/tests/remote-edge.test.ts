@@ -20,18 +20,24 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { createMemoryApiClient } from '@ai-problem-solving-memory/api-client';
+import { CLAUDE_CODE_RUNTIME_PROVENANCE } from '@ai-problem-solving-memory/claude-code-adapter';
+
 import {
+  createInMemoryBindingStore,
   createRemoteEdgeHandler,
+  REMOTE_UNAVAILABLE_VERIFICATION_TYPES,
   RemoteEdgeConfigError,
   resolveRemoteEdgeConfig,
 } from '../src/remote-edge.js';
-import { handleCurrentProblem } from '../src/server.js';
+import { handleAddVerification, handleCurrentProblem } from '../src/server.js';
 
 const OWNER_ID = '99999999-8888-4777-8666-555555555555';
 const PROJECT_ID = '22222222-3333-4444-8555-666666666666';
 const PROBLEM_ID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const EVENT_ID = 'cccccccc-1111-4222-8333-444444444444';
 const EVENT_KEY = 'eeeeeeee-1111-4222-8333-444444444444';
+const VERIFICATION_ID = 'dddddddd-1111-4222-8333-444444444444';
 const NOW = 1_800_000_000_000;
 const REMOTE = 'https://github.com/acme/widget.git';
 const ALLOWED_ORIGIN = 'https://allowed.example';
@@ -148,6 +154,21 @@ async function startMemory(): Promise<void> {
           reason: null,
           source_ai: 'remote-mcp',
           evidence_ref: null,
+          client_event_id: EVENT_KEY,
+          created_at: '2026-01-03T00:00:00.000Z',
+        });
+        return;
+      }
+      if (incoming.method === 'POST' && path === `/v1/problems/${PROBLEM_ID}/verifications`) {
+        answer(response, 201, {
+          verification_id: VERIFICATION_ID,
+          owner_id: OWNER_ID,
+          problem_id: PROBLEM_ID,
+          verification_type: 'USER_CONFIRMATION',
+          result: true,
+          summary: 'the user confirmed the fix works',
+          evidence_ref: null,
+          verified_by: 'remote-mcp',
           client_event_id: EVENT_KEY,
           created_at: '2026-01-03T00:00:00.000Z',
         });
@@ -447,6 +468,110 @@ describe('the remote edge over the one core', () => {
     );
     expect(outcome).toEqual({ kind: 'ERROR', code: 'MEMORY_REFUSED' });
     expect(received.filter((one) => one.path.endsWith('/close'))).toHaveLength(1);
+  });
+});
+
+describe('capability degradation at the remote edge (P9-03)', () => {
+  it('declares exactly the execution-grounded verification types as unavailable', () => {
+    // Pinned as a list: widening it silently would degrade a capability the
+    // remote host has, and narrowing it would let a fabricated check through.
+    expect([...REMOTE_UNAVAILABLE_VERIFICATION_TYPES]).toEqual([
+      'TEST',
+      'REAL_DEVICE',
+      'BUILD',
+      'API_RESULT',
+      'DB_RESULT',
+    ]);
+    expect(REMOTE_UNAVAILABLE_VERIFICATION_TYPES).not.toContain('USER_CONFIRMATION');
+  });
+
+  it.each(['TEST', 'REAL_DEVICE', 'BUILD', 'API_RESULT', 'DB_RESULT'] as const)(
+    'answers CAPABILITY_UNAVAILABLE for a remote %s verification and writes nothing',
+    async (verificationType) => {
+      const outcome = await structuredContentOf(
+        await edge()(
+          mcpRequest(
+            toolCall('add_verification', {
+              verification_type: verificationType,
+              result: true,
+              summary: 'a check no remote session could have run',
+              client_event_id: EVENT_KEY,
+            }),
+          ),
+        ),
+      );
+      expect(outcome).toEqual({ kind: 'CAPABILITY_UNAVAILABLE' });
+      // Refused before the adapter: past the credential check, the Memory
+      // heard nothing at all — no resolution, and certainly no write.
+      expect(received.map((one) => one.path)).toEqual(['/v1/me']);
+    },
+  );
+
+  it('still records USER_CONFIRMATION — the one evidence channel a remote chat has', async () => {
+    const handle = edge();
+    await structuredContentOf(
+      await handle(
+        mcpRequest(
+          toolCall('continue_problem', { project_id: PROJECT_ID, problem_id: PROBLEM_ID }),
+        ),
+      ),
+    );
+
+    const outcome = await structuredContentOf(
+      await handle(
+        mcpRequest(
+          toolCall('add_verification', {
+            verification_type: 'USER_CONFIRMATION',
+            result: true,
+            summary: 'the user confirmed the fix works',
+            client_event_id: EVENT_KEY,
+          }),
+        ),
+      ),
+    );
+    expect(outcome).toEqual({
+      kind: 'VERIFICATION_RECORDED',
+      problem_id: PROBLEM_ID,
+      verification_id: VERIFICATION_ID,
+      client_event_id: EVENT_KEY,
+      on_current_problem: true,
+    });
+    const write = received.find((one) => one.path.endsWith('/verifications'));
+    expect(write).toBeDefined();
+    expect(write!.body['verification_type']).toBe('USER_CONFIRMATION');
+  });
+
+  it('does not degrade anything when no unavailable types are declared', async () => {
+    // A local-shaped establishment — same call, no degradation declared —
+    // must reach the Memory with the very type the remote edge refuses.
+    const bindingStore = createInMemoryBindingStore();
+    await bindingStore.writeBinding('local-session', PROJECT_ID, PROBLEM_ID);
+    const outcome = await handleAddVerification(
+      { method: 'tools/call' },
+      {
+        environment: {},
+        now: () => NOW,
+        establishCall: () =>
+          Promise.resolve({
+            client: createMemoryApiClient({ credential: GOOD_TOKEN, baseUrl }),
+            bindingStore,
+            sessionId: 'local-session',
+            projectDir,
+            runtimeProvenance: CLAUDE_CODE_RUNTIME_PROVENANCE,
+            pluginData: stateDir,
+          }),
+      },
+      {
+        verification_type: 'TEST',
+        result: true,
+        summary: 'the suite ran green on this machine',
+        client_event_id: EVENT_KEY,
+      },
+    );
+    // Not CAPABILITY_UNAVAILABLE: the check travelled to the Memory. (The
+    // recorded shape itself is the fixture's business, asserted above.)
+    expect(outcome.kind).not.toBe('CAPABILITY_UNAVAILABLE');
+    expect(received.some((one) => one.path.endsWith('/verifications'))).toBe(true);
   });
 });
 

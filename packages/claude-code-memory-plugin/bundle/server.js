@@ -23391,6 +23391,12 @@ var ADD_VERIFICATION_OUTPUT_SCHEMA = discriminatedUnion("kind", [
     client_event_id: string2(),
     on_current_problem: boolean2()
   }).strict(),
+  // The entry point serving this call cannot ground this kind of check: a
+  // host with no reach to the code, machine, or tests the Problem lives on
+  // cannot have performed it, so nothing is recorded and the Verification
+  // gate downstream is left exactly as strict as it was. An ordinary typed
+  // answer, not a failure — and deliberately carrying nothing.
+  object({ kind: literal("CAPABILITY_UNAVAILABLE") }).strict(),
   ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
   ERROR_VARIANT
 ]);
@@ -23681,18 +23687,23 @@ async function handleAddVerification(request, options, input) {
     request,
     options,
     ADD_VERIFICATION_TOOL,
-    async (call) => addVerificationToCurrentProblem({
-      client: call.client,
-      bindingStore: call.bindingStore,
-      sessionId: call.sessionId,
-      projectDir: call.projectDir,
-      runtimeProvenance: call.runtimeProvenance,
-      verificationType: input.verification_type,
-      result: input.result,
-      summary: input.summary,
-      clientEventId: input.client_event_id,
-      ...input.evidence_ref !== void 0 ? { evidenceRef: input.evidence_ref } : {}
-    })
+    async (call) => {
+      if ((call.unavailableVerificationTypes ?? []).includes(input.verification_type)) {
+        return { kind: "CAPABILITY_UNAVAILABLE" };
+      }
+      return addVerificationToCurrentProblem({
+        client: call.client,
+        bindingStore: call.bindingStore,
+        sessionId: call.sessionId,
+        projectDir: call.projectDir,
+        runtimeProvenance: call.runtimeProvenance,
+        verificationType: input.verification_type,
+        result: input.result,
+        summary: input.summary,
+        clientEventId: input.client_event_id,
+        ...input.evidence_ref !== void 0 ? { evidenceRef: input.evidence_ref } : {}
+      });
+    }
   );
   return outcome.kind === "VERIFICATION_RECORDED" ? {
     kind: "VERIFICATION_RECORDED",
@@ -23833,7 +23844,7 @@ function buildMemoryMcpServer(options) {
   server.registerTool(
     ADD_VERIFICATION_TOOL,
     {
-      description: "Record one check that was actually performed on the problem this session is currently working on. result is strictly true or false; absence means no Verification should be recorded. The project, problem and verifying assistant come from the authenticated host context. Mint client_event_id once and reuse the same UUID after an unanswered attempt. Summarize the evidence; do not paste credentials, raw output or absolute paths. The returned record may be an earlier owner-wide key replay, so check on_current_problem.",
+      description: "Record one check that was actually performed on the problem this session is currently working on. result is strictly true or false; absence means no Verification should be recorded. The project, problem and verifying assistant come from the authenticated host context. Mint client_event_id once and reuse the same UUID after an unanswered attempt. Summarize the evidence; do not paste credentials, raw output or absolute paths. The returned record may be an earlier owner-wide key replay, so check on_current_problem. An entry point whose sessions cannot reach the code, machine, or tests answers CAPABILITY_UNAVAILABLE for execution-grounded types and records nothing \u2014 a check you could not perform is not evidence.",
       inputSchema: ADD_VERIFICATION_INPUT_SCHEMA,
       outputSchema: ADD_VERIFICATION_OUTPUT_SCHEMA
     },
