@@ -430,6 +430,12 @@ export const ADD_VERIFICATION_OUTPUT_SCHEMA = z.discriminatedUnion('kind', [
       on_current_problem: z.boolean(),
     })
     .strict(),
+  // The entry point serving this call cannot ground this kind of check: a
+  // host with no reach to the code, machine, or tests the Problem lives on
+  // cannot have performed it, so nothing is recorded and the Verification
+  // gate downstream is left exactly as strict as it was. An ordinary typed
+  // answer, not a failure — and deliberately carrying nothing.
+  z.object({ kind: z.literal('CAPABILITY_UNAVAILABLE') }).strict(),
   ...CURRENT_PROBLEM_WRITE_UNAVAILABLE_VARIANTS,
   ERROR_VARIANT,
 ]);
@@ -636,6 +642,19 @@ export interface AuthenticatedCall {
    * record and no Memory request.
    */
   readonly pluginData: string;
+  /**
+   * The verification types this entry point's callers cannot honestly claim
+   * to have performed, if any.
+   *
+   * A transport whose sessions have no reach to the code, real machine, or
+   * tests a Problem lives on declares the execution-grounded checks here;
+   * `add_verification` answers `CAPABILITY_UNAVAILABLE` for exactly those
+   * and records nothing. This degrades evidence capability at the edge only
+   * — the core's state machine and Verification gate stay untouched, so a
+   * Problem worked remotely reaches VERIFIED only through evidence somebody
+   * could actually produce. Absent — the local case — nothing is degraded.
+   */
+  readonly unavailableVerificationTypes?: readonly (typeof VERIFICATION_TYPES)[number][];
 }
 
 /**
@@ -966,19 +985,30 @@ export async function handleAddVerification(
   options: CurrentProblemHandlerOptions,
   input: z.infer<typeof ADD_VERIFICATION_INPUT_SCHEMA>,
 ): Promise<AddVerificationToolResult> {
-  const outcome = await serveAuthenticated(request, options, ADD_VERIFICATION_TOOL, async (call) =>
-    addVerificationToCurrentProblem({
-      client: call.client,
-      bindingStore: call.bindingStore,
-      sessionId: call.sessionId,
-      projectDir: call.projectDir,
-      runtimeProvenance: call.runtimeProvenance,
-      verificationType: input.verification_type,
-      result: input.result,
-      summary: input.summary,
-      clientEventId: input.client_event_id,
-      ...(input.evidence_ref !== undefined ? { evidenceRef: input.evidence_ref } : {}),
-    }),
+  const outcome = await serveAuthenticated(
+    request,
+    options,
+    ADD_VERIFICATION_TOOL,
+    async (call) => {
+      // The capability seam, before the adapter: a check this entry point's
+      // callers cannot have performed is refused whole, so nothing reaches the
+      // Memory and no downstream rule needs to know the transport existed.
+      if ((call.unavailableVerificationTypes ?? []).includes(input.verification_type)) {
+        return { kind: 'CAPABILITY_UNAVAILABLE' as const };
+      }
+      return addVerificationToCurrentProblem({
+        client: call.client,
+        bindingStore: call.bindingStore,
+        sessionId: call.sessionId,
+        projectDir: call.projectDir,
+        runtimeProvenance: call.runtimeProvenance,
+        verificationType: input.verification_type,
+        result: input.result,
+        summary: input.summary,
+        clientEventId: input.client_event_id,
+        ...(input.evidence_ref !== undefined ? { evidenceRef: input.evidence_ref } : {}),
+      });
+    },
   );
 
   return outcome.kind === 'VERIFICATION_RECORDED'
@@ -1196,7 +1226,10 @@ export function buildMemoryMcpServer(options: CurrentProblemHandlerOptions): Mcp
         'recorded. The project, problem and verifying assistant come from the authenticated host ' +
         'context. Mint client_event_id once and reuse the same UUID after an unanswered attempt. ' +
         'Summarize the evidence; do not paste credentials, raw output or absolute paths. The ' +
-        'returned record may be an earlier owner-wide key replay, so check on_current_problem.',
+        'returned record may be an earlier owner-wide key replay, so check on_current_problem. ' +
+        'An entry point whose sessions cannot reach the code, machine, or tests answers ' +
+        'CAPABILITY_UNAVAILABLE for execution-grounded types and records nothing — a check you ' +
+        'could not perform is not evidence.',
       inputSchema: ADD_VERIFICATION_INPUT_SCHEMA,
       outputSchema: ADD_VERIFICATION_OUTPUT_SCHEMA,
     },

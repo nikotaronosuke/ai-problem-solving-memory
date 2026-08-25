@@ -85,6 +85,29 @@ export const REMOTE_EDGE_ENDPOINT = '/mcp';
 
 const DEFAULT_PORT = 3200;
 
+/**
+ * The verification types a remote session cannot honestly claim (P9-03).
+ *
+ * A remote chat host has no shell, no filesystem and no process on the
+ * machine the declared workspace lives on, so a test run, a build, a real
+ * device, an API observation against the operator's systems, or a database
+ * read are checks its sessions cannot have performed — recording one would
+ * be a fabricated Verification, which is exactly what capability
+ * degradation exists to refuse. `USER_CONFIRMATION` is deliberately NOT
+ * degraded: the human's confirmation arrives through the remote
+ * conversation itself, a capability this transport genuinely has. The
+ * core's Verification gate is untouched either way — a remotely-worked
+ * Problem reaches VERIFIED only on evidence somebody could actually
+ * produce (the user confirming, or a local session running the check).
+ */
+export const REMOTE_UNAVAILABLE_VERIFICATION_TYPES = [
+  'TEST',
+  'REAL_DEVICE',
+  'BUILD',
+  'API_RESULT',
+  'DB_RESULT',
+] as const;
+
 /** Bounded request bodies: a tool call is small, and a stream of gigabytes is not one. */
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -328,6 +351,8 @@ export function createRemoteEdgeHandler(
         projectDir: config.workspaceDirectory,
         runtimeProvenance: REMOTE_MCP_RUNTIME_PROVENANCE,
         pluginData: config.stateDirectory,
+        // The declared capability degradation (P9-03): see the constant.
+        unavailableVerificationTypes: REMOTE_UNAVAILABLE_VERIFICATION_TYPES,
       });
 
     // A fresh, per-request server over the same core registry. The empty
