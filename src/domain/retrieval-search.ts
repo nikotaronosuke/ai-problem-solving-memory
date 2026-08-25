@@ -87,6 +87,84 @@ export const MAX_SEARCH_LIMIT = 50;
  */
 export const MAX_SEARCH_TEXT_LENGTH = 1000;
 
+/**
+ * The word the relaxed form joins terms with.
+ *
+ * `or` is the one alternation `websearch_to_tsquery` understands, which is
+ * the whole trick: the relaxed query is still ordinary text handed to the
+ * same safe parser through the same bound parameter. Nothing here builds
+ * `tsquery` syntax, quotes a lexeme, or escapes anything — a token that means
+ * nothing to the parser is a term, exactly as it is in the strict form.
+ */
+export const RELAXED_LEXICAL_JOINER = ' or ';
+
+/**
+ * The relaxed form of a lexical query, or nothing when relaxing would change
+ * nothing.
+ *
+ * The strict grammar requires every term to appear, so one word-form the
+ * document does not contain empties the whole answer — that is the measured
+ * Tier-0 failure this form repairs. The derivation is deliberately dumb and
+ * deterministic: split on whitespace, drop what could not be a term (empty
+ * pieces, pieces with no letter or digit, the parser's own `or`, and a
+ * leading `-`, which would otherwise turn one term into an exclusion that
+ * matches almost everything inside an alternation), de-duplicate keeping
+ * first appearances, and join with `or`. No stemming, no stop-list, no
+ * weighting — which words matter is the ranking stage's question, answered by
+ * `ts_rank_cd` preferring documents that match more of the alternation.
+ *
+ * `undefined` means "do not search again": fewer than two distinct terms
+ * survived, or the relaxed text is the query the strict pass already ran.
+ * The result respects `MAX_SEARCH_TEXT_LENGTH` by keeping a prefix of the
+ * surviving terms, so it can always be re-resolved by the ordinary resolver.
+ */
+export function relaxedLexicalTextOf(text: string): string | undefined {
+  const pieces = text.split(/\s+/u);
+  const seen = new Set<string>();
+  const terms: string[] = [];
+  for (const piece of pieces) {
+    // Quotes are dropped from every token, not just from its edges. A phrase
+    // split on whitespace leaves its quote marks on the outer tokens, and two
+    // surviving marks with `or` between them would reassemble into a *phrase*
+    // containing the word `or` — a stricter query smuggled into the relaxed
+    // form. The exclusion prefix goes for the reason above the function.
+    const term = piece.replace(/["']/gu, '').replace(/^-+/u, '');
+    if (term.length === 0 || term.toLowerCase() === 'or' || !/[\p{L}\p{N}]/u.test(term)) {
+      continue;
+    }
+    if (!seen.has(term)) {
+      seen.add(term);
+      terms.push(term);
+    }
+  }
+
+  if (terms.length < 2) {
+    return undefined;
+  }
+
+  const kept: string[] = [];
+  let length = 0;
+  for (const term of terms) {
+    const added = kept.length === 0 ? term.length : RELAXED_LEXICAL_JOINER.length + term.length;
+    if (length + added > MAX_SEARCH_TEXT_LENGTH) {
+      break;
+    }
+    kept.push(term);
+    length += added;
+  }
+  if (kept.length < 2) {
+    return undefined;
+  }
+
+  const relaxed = kept.join(RELAXED_LEXICAL_JOINER);
+  // Re-running the same question is not a fallback. A query that was already
+  // an alternation of these terms relaxes to itself, and is left alone.
+  if (relaxed === text.split(/\s+/u).filter(Boolean).join(' ')) {
+    return undefined;
+  }
+  return relaxed;
+}
+
 /** What a caller is asking for. */
 export interface FullTextSearchQuery {
   readonly text: string;

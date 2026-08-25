@@ -233,6 +233,7 @@ describe('the client against the real search route', () => {
       candidates: [candidate()],
       semanticStatus: 'USED',
       structuralStatus: 'USED',
+      lexicalRelaxed: false,
     });
 
     // Written out on the client's side of the wire, so this asserts agreement
@@ -325,6 +326,7 @@ describe('the client against the real search route', () => {
       candidates: [],
       semanticStatus: 'PROVIDER_UNAVAILABLE',
       structuralStatus: 'RERANKER_UNAVAILABLE',
+      lexicalRelaxed: false,
     });
 
     // Every channel unavailable and no candidates is still an ordinary answer,
@@ -381,6 +383,7 @@ describe('the client against the real search route', () => {
       candidates: [],
       semanticStatus: 'USED',
       structuralStatus: 'NOT_NEEDED',
+      lexicalRelaxed: false,
     });
 
     expect(outcome).toMatchObject({ kind: 'SEARCHED' });

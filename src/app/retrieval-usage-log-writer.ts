@@ -52,6 +52,8 @@ export interface RecordSearchedInput {
   readonly candidates: readonly RankedMemoryCandidate[];
   readonly semanticStatus: SemanticChannelStatus;
   readonly structuralStatus: StructuralRerankStatus;
+  /** Whether the lexical channel answered through the relaxed fallback. */
+  readonly lexicalRelaxed: boolean;
 }
 
 export interface RetrievalUsageLogWriter {
@@ -151,6 +153,7 @@ export function composeSearchedReason(
   candidate: RankedMemoryCandidate,
   semanticStatus: SemanticChannelStatus,
   structuralStatus: StructuralRerankStatus,
+  lexicalRelaxed = false,
 ): string {
   // The status decides, not just the list. A rerank that did not run produces
   // no dimensions, so the two agree in practice — but "in practice" here means
@@ -164,13 +167,18 @@ export function composeSearchedReason(
       ? NO_COMPARISON_DIMENSIONS
       : candidate.matchedDimensions.join(',');
 
+  // Said only when true. A strict search's reason reads exactly as it always
+  // has, so nothing that parses or compares existing rows moves — and the
+  // word appears only where the weaker grammar actually produced the answer.
+  const lexical = lexicalRelaxed ? '; lexical=RELAXED' : '';
+
   return (
     `${SEARCHED_REASON_PREFIX}; ` +
     `ranking_rank=${String(candidate.rankingRank)}; ` +
     `project_relation=${candidate.projectRelation}; ` +
     `semantic_status=${semanticStatus}; ` +
     `structural_status=${structuralStatus}; ` +
-    `comparison_dimensions=${dimensions}.`
+    `comparison_dimensions=${dimensions}${lexical}.`
   );
 }
 
@@ -227,7 +235,12 @@ export function createRetrievalUsageLogWriter(
             sourceAi,
             action: SEARCHED,
             memoryId: candidate.problemId,
-            reason: composeSearchedReason(candidate, input.semanticStatus, input.structuralStatus),
+            reason: composeSearchedReason(
+              candidate,
+              input.semanticStatus,
+              input.structuralStatus,
+              input.lexicalRelaxed,
+            ),
             // A memory that has just been found has no outcome yet, and
             // "searched successfully" is not one — it would record the
             // search's own success as though it were the Memory's.
