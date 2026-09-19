@@ -132,7 +132,7 @@ local / remoteでVerificationの門を変えて緩めるのではなく、
 
 「remoteだから仕方ない」で証拠の定義を弱めない判断です。
 
-**Evidence:** [refuse checks remote sessions cannot have run](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/f862b67)
+**Evidence:** [refuse checks remote sessions cannot have run](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/f862b67ab2b6e131d0f495f82085347458dcce07)
 
 ---
 
@@ -190,7 +190,7 @@ canonical MemoryとTier 0検索は維持します。
 厳密lexical queryで0件だった場合のみ、一度だけ条件を緩める設計も追加しました。
 最初から曖昧検索へ倒すのではなく、「strictで何も無かった」という条件をgateにしています。
 
-**Evidence:** [deterministic Tier 0 retrieval](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/c08824e) / [relax lexical query only after zero results](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/7ba143a)
+**Evidence:** [deterministic Tier 0 retrieval](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/c08824ead613b7b5d345f8d42de8c2dd87739ef9) / [relax lexical query only after zero results](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/7ba143a38702be7d9a21854215d6604a9588e385)
 
 ---
 
@@ -275,7 +275,7 @@ remote host向けにも第二のMemory contractを作らず、
 hostによって能力差はありますが、
 Problem truthまでhostごとに分岐させない判断です。
 
-**Evidence:** [Codex continues the same Problem](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/4c00d57a4082cb5abf8d74a35ae8d31f8cb22ca0) / [serve one MCP core to remote hosts](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/33f23ea)
+**Evidence:** [Codex continues the same Problem](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/4c00d57a4082cb5abf8d74a35ae8d31f8cb22ca0) / [serve one MCP core to remote hosts](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/33f23eabb389dde8fb2c12f9deb04b7c9431d2ed)
 
 ---
 
