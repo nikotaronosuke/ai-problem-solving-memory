@@ -1,5 +1,7 @@
 # AI Problem-Solving Memory
 
+[English](README.en.md) | 日本語
+
 複数のAIが**同じ「問題」を、状態と証拠ごと安全に引き継ぐ**ための Problem Control / Consistency Layer です。会話を保存する汎用AI Memoryではありません。
 
 ```mermaid
