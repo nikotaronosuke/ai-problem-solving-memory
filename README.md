@@ -15,6 +15,9 @@ VERIFIED      成功した Verification があるときだけ、この状態へ�
 
 この「同じ problem_id を引き継ぐ」流れは、Claude Code ↔ Codex と、Claude Code → Claude.ai(remote MCP)の組み合わせで、同じ Problem を継続できることをそれぞれ実環境で確認しています。AI同士が会話履歴を自動で共有したり、勝手に何でも覚えたりする仕組みではありません。**記録は明示的で、状態遷移はサーバーが守ります。**
 
+> **なぜこの設計にしたか:** [Owner Decision Log](docs/OWNER_DECISIONS.md)  
+> Problemを正本にした理由、FIXとVerificationを分けた理由、自動判断・provider依存・Memory障害時の設計など、採用/却下した判断をまとめています。
+
 ## 何を解決するのか
 
 AIと開発していると、こうなりがちです。
