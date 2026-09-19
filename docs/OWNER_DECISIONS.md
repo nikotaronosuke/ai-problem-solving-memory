@@ -306,6 +306,8 @@ Memoryが持つ責務は、
 
 これは機能不足ではなく、Problemの正本と実行runtimeを混ぜないための境界です。
 
+**Evidence:** [Memory does not run the caller's main work](https://github.com/nikotaronosuke/ai-problem-solving-memory/commit/56d6e2d5fb6caf62b3bffa792f6fd47110e95279)
+
 ---
 
 ## このプロジェクトで優先したもの
