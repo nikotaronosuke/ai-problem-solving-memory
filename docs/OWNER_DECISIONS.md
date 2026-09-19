@@ -1,5 +1,7 @@
 # Owner Decision Log
 
+日本語 | [English](OWNER_DECISIONS.en.md)
+
 AI Problem-Solving Memory は、AIに「何でも覚えさせる」ための汎用Memoryではありません。
 
 このプロジェクトでは、複数のAIが同じ問題を引き継げるようにしつつ、**Memory自身が勝手に判断したり、成功を断定したり、ユーザーの本作業を止めたりしないこと**を重視して設計しています。
