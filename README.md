@@ -2,16 +2,20 @@
 
 複数のAIが**同じ「問題」を、状態と証拠ごと安全に引き継ぐ**ための Problem Control / Consistency Layer です。会話を保存する汎用AI Memoryではありません。
 
-```text
-Claude Code   問題を開始。仮説を試し、行き詰まり(DEAD_END)を記録
-   ↓ 同じ problem_id
-別のAI        同じ Problem をサーバー経由で正規に継続。
-(例: Codex)   過去の似た経験を明示的に引き、DISCOVERY を記録
-   ↓ 同じ problem_id
-Claude Code   修正を実装し、実際に走らせたテストを Verification として記録
-   ↓
-VERIFIED      成功した Verification があるときだけ、この状態へ進める
+```mermaid
+flowchart LR
+    C["Claude Code"] -->|"start / continue"| M["Problem Control<br/>authoritative Problem state"]
+    X["Codex"] -->|"same problem_id"| M
+    R["Remote host"] -->|"same MCP contract"| M
+
+    M --> E["Typed Events<br/>HYPOTHESIS / ATTEMPT / DEAD_END / DISCOVERY / FIX"]
+    M --> V["Verification"]
+    V -->|"successful evidence required"| S["VERIFIED"]
+
+    P["Past Problems"] -->|"explicit recall"| M
 ```
+
+**会話そのものではなく、Problem identity・状態・証拠をAI間で共有します。**
 
 この「同じ problem_id を引き継ぐ」流れは、Claude Code ↔ Codex と、Claude Code → Claude.ai(remote MCP)の組み合わせで、同じ Problem を継続できることをそれぞれ実環境で確認しています。AI同士が会話履歴を自動で共有したり、勝手に何でも覚えたりする仕組みではありません。**記録は明示的で、状態遷移はサーバーが守ります。**
 
