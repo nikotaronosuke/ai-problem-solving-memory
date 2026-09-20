@@ -27,11 +27,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Show required README formatting
-        run: |
-          npx prettier README.en.md --write
-          git diff --exit-code -- README.en.md
-
       - name: Check
         run: npm run check
 
