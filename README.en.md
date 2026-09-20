@@ -94,12 +94,12 @@ Transport may be at-least-once, while the Memory effect remains idempotent.
 
 ## Current host integrations
 
-| Host | Path | Status |
-| --- | --- | --- |
-| **Claude Code** | local MCP plugin | used and accepted in real workflows |
-| **Codex** | same MCP core / same Problem state | accepted in an installed host; can continue a Problem started in Claude Code |
-| **Claude.ai** | remote MCP (Streamable HTTP + bearer) | accepted in a real host; remote-only limitations are enforced |
-| **ChatGPT** | remote MCP-compatible design | full-write acceptance is **not completed / deferred** |
+| Host            | Path                                  | Status                                                                       |
+| --------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| **Claude Code** | local MCP plugin                      | used and accepted in real workflows                                          |
+| **Codex**       | same MCP core / same Problem state    | accepted in an installed host; can continue a Problem started in Claude Code |
+| **Claude.ai**   | remote MCP (Streamable HTTP + bearer) | accepted in a real host; remote-only limitations are enforced                |
+| **ChatGPT**     | remote MCP-compatible design          | full-write acceptance is **not completed / deferred**                        |
 
 All supported local / remote paths use the same core tool contract.
 There is no separate "Claude memory" and "Codex memory".
@@ -108,17 +108,17 @@ There is no separate "Claude memory" and "Codex memory".
 
 The public tool surface is intentionally small:
 
-| Tool | Purpose |
-| --- | --- |
-| `current_problem` | Resolve what Problem this session is working on, or what needs to be decided first |
-| `continue_problem` | Continue an already-open Problem |
-| `resume_problem` | Resume a paused Problem |
-| `start_problem` | Start a new Problem |
-| `recall_similar_experience` | Retrieve relevant past experience for the current Problem |
-| `add_event` | Append a typed HYPOTHESIS / ATTEMPT / DEAD_END / DISCOVERY / FIX / USER_CORRECTION |
-| `add_verification` | Record a verification attempt and result |
-| `mark_fix_candidate` | Move an investigating Problem to FIX_CANDIDATE |
-| `close_problem` | Conclude or pause while preserving verification and optimistic-lock rules |
+| Tool                        | Purpose                                                                            |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `current_problem`           | Resolve what Problem this session is working on, or what needs to be decided first |
+| `continue_problem`          | Continue an already-open Problem                                                   |
+| `resume_problem`            | Resume a paused Problem                                                            |
+| `start_problem`             | Start a new Problem                                                                |
+| `recall_similar_experience` | Retrieve relevant past experience for the current Problem                          |
+| `add_event`                 | Append a typed HYPOTHESIS / ATTEMPT / DEAD_END / DISCOVERY / FIX / USER_CORRECTION |
+| `add_verification`          | Record a verification attempt and result                                           |
+| `mark_fix_candidate`        | Move an investigating Problem to FIX_CANDIDATE                                     |
+| `close_problem`             | Conclude or pause while preserving verification and optimistic-lock rules          |
 
 The model does not choose arbitrary Project / Problem ids for current-Problem actions.
 Target resolution comes from host context plus server revalidation.
@@ -253,7 +253,7 @@ Examples:
 For related design and implementation details, see:
 
 - [Design decisions](docs/design-decisions.en.md) — retrospective summary tied to dated evidence commits
-- [Retrieval design](docs/retrieval.md) *(Japanese)*
+- [Retrieval design](docs/retrieval.md) _(Japanese)_
 - [Development guide](docs/development.md)
 
 ## Development status
