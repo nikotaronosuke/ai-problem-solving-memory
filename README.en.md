@@ -2,6 +2,10 @@
 
 English | [日本語](README.md)
 
+[![CI](https://github.com/nikotaronosuke/ai-problem-solving-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/nikotaronosuke/ai-problem-solving-memory/actions/workflows/ci.yml)
+
+CI runs type checks, linting, formatting, bundle checks, and tests that do not require the database. Database integration tests require a local Supabase environment and are currently skipped in CI.
+
 AI Problem-Solving Memory is a **Problem Control / Consistency Layer** for AI coding agents.
 
 It is not a generic chat-memory system.
