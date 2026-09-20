@@ -24,9 +24,6 @@ flowchart LR
 
 **The unit of continuity is the Problem, not the conversation transcript.**
 
-> **Why is it designed this way?** Read the [Owner Decision Log](docs/OWNER_DECISIONS.en.md).  
-> It explains why server state is authoritative, why FIX and Verification are separate, why recall is explicit, and why Memory failure must not stop the caller's main work.
-
 ## What problem does it solve?
 
 AI-assisted development often loses continuity across sessions and models:
@@ -253,10 +250,9 @@ Examples:
 - remote hosts cannot claim local execution evidence
 - Memory outages do not own the caller's main workflow
 
-For the reasoning and evidence links, see:
+For related design and implementation details, see:
 
-- [Owner Decision Log](docs/OWNER_DECISIONS.en.md)
-- [Original Japanese Owner Decision Log](docs/OWNER_DECISIONS.md)
+- [Design decisions](docs/design-decisions.en.md) — retrospective summary tied to dated evidence commits
 - [Retrieval design](docs/retrieval.md) *(Japanese)*
 - [Development guide](docs/development.md)
 
@@ -270,8 +266,6 @@ The README intentionally distinguishes implemented, accepted, deferred, and unsu
 ## AI-assisted development
 
 The implementation was developed with AI coding and research tools.
-
-Product boundaries, state semantics, evidence rules, acceptance criteria, and final trade-off decisions are owned by the project owner.
 
 ## License
 

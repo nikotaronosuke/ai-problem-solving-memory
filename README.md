@@ -21,9 +21,6 @@ flowchart LR
 
 この「同じ problem_id を引き継ぐ」流れは、Claude Code ↔ Codex と、Claude Code → Claude.ai(remote MCP)の組み合わせで、同じ Problem を継続できることをそれぞれ実環境で確認しています。AI同士が会話履歴を自動で共有したり、勝手に何でも覚えたりする仕組みではありません。**記録は明示的で、状態遷移はサーバーが守ります。**
 
-> **なぜこの設計にしたか:** [Owner Decision Log](docs/OWNER_DECISIONS.md)  
-> Problemを正本にした理由、FIXとVerificationを分けた理由、自動判断・provider依存・Memory障害時の設計など、採用/却下した判断をまとめています。
-
 ## 何を解決するのか
 
 AIと開発していると、こうなりがちです。
@@ -217,6 +214,7 @@ npm run credential:revoke -- --credential-id <uuid>
 
 ## 詳細ドキュメント
 
+- [docs/design-decisions.md](docs/design-decisions.md) — コミット履歴をもとに後から整理した設計判断
 - [docs/development.md](docs/development.md) — コマンド一覧・構成・規約・credential
 - [docs/api-contract.md](docs/api-contract.md) — HTTP API の意味論
 - [docs/retrieval.md](docs/retrieval.md) — 検索の設計と、サーバーが判断しないこと
