@@ -95,7 +95,7 @@ Transport may be at-least-once, while the Memory effect remains idempotent.
 ## Current host integrations
 
 | Host | Path | Status |
-|---|---|---|
+| --- | --- | --- |
 | **Claude Code** | local MCP plugin | used and accepted in real workflows |
 | **Codex** | same MCP core / same Problem state | accepted in an installed host; can continue a Problem started in Claude Code |
 | **Claude.ai** | remote MCP (Streamable HTTP + bearer) | accepted in a real host; remote-only limitations are enforced |
