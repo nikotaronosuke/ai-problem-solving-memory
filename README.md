@@ -2,6 +2,10 @@
 
 [English](README.en.md) | 日本語
 
+[![CI](https://github.com/nikotaronosuke/ai-problem-solving-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/nikotaronosuke/ai-problem-solving-memory/actions/workflows/ci.yml)
+
+CIでは型チェック・lint・整形・bundle整合性・DBを必要としないテストを実行します。DB統合テストはローカルのSupabase環境が必要なため、現在のCIではskipされます。
+
 複数のAIが**同じ「問題」を、状態と証拠ごと安全に引き継ぐ**ための Problem Control / Consistency Layer です。会話を保存する汎用AI Memoryではありません。
 
 ```mermaid
