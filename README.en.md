@@ -109,7 +109,7 @@ There is no separate "Claude memory" and "Codex memory".
 The public tool surface is intentionally small:
 
 | Tool | Purpose |
-|---|---|
+| --- | --- |
 | `current_problem` | Resolve what Problem this session is working on, or what needs to be decided first |
 | `continue_problem` | Continue an already-open Problem |
 | `resume_problem` | Resume a paused Problem |
