@@ -3,8 +3,9 @@
  *
  * This repository holds the implementation and the documentation somebody
  * outside the project needs in order to use or contribute to it. Development
- * state — what is being worked on, what was decided and why, what was rejected,
- * research notes — belongs elsewhere, and the failure mode is quiet: a new
+ * working state and private research notes belong elsewhere. Stable public
+ * documentation — including deliberately published retrospective design
+ * decisions — must be named here explicitly. The failure mode is quiet: a new
  * internal document arrives during an ordinary task, nothing breaks, and it is
  * published from then on.
  *
@@ -26,9 +27,12 @@ const run = promisify(execFile);
 
 const ALLOWED_MARKDOWN = [
   'CLAUDE.md',
+  'README.en.md',
   'README.md',
   'db/README.md',
   'docs/api-contract.md',
+  'docs/design-decisions.en.md',
+  'docs/design-decisions.md',
   'docs/development.md',
   'docs/retrieval.md',
 ] as const;
